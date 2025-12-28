@@ -754,7 +754,7 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 			case <-iterCtx.Done():
 				toolsCancelled = true
 				lastExecutedToolIdx = idx
-				content := "Error: operation cancelled by user"
+				var content string
 				if toolErr == nil {
 					resultJSON, _ := json.MarshalIndent(toolResult, "", "  ")
 					content = string(resultJSON)

@@ -178,6 +178,6 @@ func (t *RestoreFileTool) Call(ctx context.Context, args json.RawMessage) (any, 
 		"content":       contentStr,
 		"was_truncated": wasTruncated,
 		"total_lines":   totalLines,
-		"message":       fmt.Sprintf("File restored to original state. Content shown below (you can now edit this file)."),
+		"message":       "File restored to original state. Content shown below (you can now edit this file).",
 	}, nil
 }
