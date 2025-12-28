@@ -22,6 +22,7 @@ type SetupConfig struct {
 	Logger        DebugLogger // Optional debug logger (can be nil)
 	TempFileMgr   *TempFileManager
 	PlanManager   *PlanManager
+	ToolCtx       *ToolContext // Shared mutable state for tools (created if nil)
 }
 
 // SetupRegistry creates and configures the tool registry based on config.
@@ -29,6 +30,12 @@ type SetupConfig struct {
 func SetupRegistry(sc SetupConfig) *Registry {
 	registry := NewRegistry()
 	cfg := sc.Cfg
+
+	// Create ToolContext if not provided
+	toolCtx := sc.ToolCtx
+	if toolCtx == nil {
+		toolCtx = NewToolContext()
+	}
 
 	// Helper for conditional debug logging
 	debug := func(msg string) {
@@ -39,7 +46,7 @@ func SetupRegistry(sc SetupConfig) *Registry {
 
 	// Enable tools based on config
 	if cfg.Tools.Read.Enabled {
-		readFileTool := NewReadFileTool(cfg)
+		readFileTool := NewReadFileTool(cfg, toolCtx)
 		registry.Enable(readFileTool)
 		debug(fmt.Sprintf("Enabled tool: %s", readFileTool.Name()))
 	}
@@ -50,45 +57,45 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		editMode := cfg.Tools.Edit.GetEditMode()
 		switch editMode {
 		case "searchreplace":
-			editTool = NewSearchReplaceEditTool(cfg)
+			editTool = NewSearchReplaceEditTool(cfg, toolCtx)
 			debug(fmt.Sprintf("Enabled tool: %s (mode: searchreplace)", editTool.Name()))
 		case "patch":
-			editTool = NewPatchEditTool(cfg)
+			editTool = NewPatchEditTool(cfg, toolCtx)
 			debug(fmt.Sprintf("Enabled tool: %s (mode: patch)", editTool.Name()))
 		default: // "unified" or empty - unified is the default
-			editTool = NewUnifiedEditTool(cfg)
+			editTool = NewUnifiedEditTool(cfg, toolCtx)
 			debug(fmt.Sprintf("Enabled tool: %s (mode: unified)", editTool.Name()))
 		}
 		registry.Enable(editTool)
 
 		// Write tool is enabled alongside Edit (uses same permission checks)
-		writeFileTool := NewWriteFileTool(cfg)
+		writeFileTool := NewWriteFileTool(cfg, toolCtx)
 		registry.Enable(writeFileTool)
 		debug(fmt.Sprintf("Enabled tool: %s", writeFileTool.Name()))
 
 		// Write.confirm and Write.cancel for overwrite confirmation
-		confirmWriteTool := NewConfirmWriteTool(cfg)
+		confirmWriteTool := NewConfirmWriteTool(cfg, toolCtx)
 		registry.Enable(confirmWriteTool)
 		debug(fmt.Sprintf("Enabled tool: %s", confirmWriteTool.Name()))
 
-		cancelWriteTool := NewCancelWriteTool(cfg)
+		cancelWriteTool := NewCancelWriteTool(cfg, toolCtx)
 		registry.Enable(cancelWriteTool)
 		debug(fmt.Sprintf("Enabled tool: %s", cancelWriteTool.Name()))
 
 		// edit.confirm and edit.cancel only available when edit is enabled AND preview_mode is true
 		if cfg.Tools.Edit.PreviewMode {
-			confirmEditTool := NewConfirmEditTool(cfg)
+			confirmEditTool := NewConfirmEditTool(cfg, toolCtx)
 			registry.Enable(confirmEditTool)
 			debug(fmt.Sprintf("Enabled tool: %s", confirmEditTool.Name()))
 
-			cancelEditTool := NewCancelEditTool(cfg)
+			cancelEditTool := NewCancelEditTool(cfg, toolCtx)
 			registry.Enable(cancelEditTool)
 			debug(fmt.Sprintf("Enabled tool: %s", cancelEditTool.Name()))
 		}
 	}
 
 	if cfg.Tools.RestoreFile.Enabled && sc.CheckpointMgr != nil && sc.CheckpointMgr.Enabled() {
-		restoreFileTool := NewRestoreFileTool(cfg, sc.CheckpointMgr)
+		restoreFileTool := NewRestoreFileTool(cfg, sc.CheckpointMgr, toolCtx)
 		registry.Enable(restoreFileTool)
 		debug(fmt.Sprintf("Enabled tool: %s", restoreFileTool.Name()))
 	}

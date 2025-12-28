@@ -797,41 +797,44 @@ func TestStreamingLineReplace(t *testing.T) {
 }
 
 func TestPendingEdit(t *testing.T) {
+	// Create a test ToolContext for isolation
+	toolCtx := NewToolContext()
+
 	// Test StorePendingEdit and ClearPendingEditForPath
 	t.Run("store and clear", func(t *testing.T) {
 		// Store a pending edit (with edit line range 1-1)
-		StorePendingEdit("test.txt", "/full/path/test.txt", "old", "new", "diff", false, 1, 1)
+		StorePendingEdit(toolCtx, "test.txt", "/full/path/test.txt", "old", "new", "diff", false, 1, 1)
 
 		// Verify it was stored
-		path := GetPendingEditPath()
+		path := toolCtx.GetPendingEditPath()
 		if path != "test.txt" {
 			t.Errorf("GetPendingEditPath() = %q, want 'test.txt'", path)
 		}
 
 		// Clear it
-		ClearPendingEditForPath("test.txt")
+		ClearPendingEditForPath(toolCtx, "test.txt")
 
 		// Verify it was cleared
-		path = GetPendingEditPath()
+		path = toolCtx.GetPendingEditPath()
 		if path != "" {
 			t.Errorf("GetPendingEditPath() after clear = %q, want empty", path)
 		}
 	})
 
 	t.Run("clear wrong path does nothing", func(t *testing.T) {
-		StorePendingEdit("test.txt", "/full/path/test.txt", "old", "new", "diff", false, 1, 1)
+		StorePendingEdit(toolCtx, "test.txt", "/full/path/test.txt", "old", "new", "diff", false, 1, 1)
 
 		// Clear a different path
-		ClearPendingEditForPath("other.txt")
+		ClearPendingEditForPath(toolCtx, "other.txt")
 
 		// Original should still be there
-		path := GetPendingEditPath()
+		path := toolCtx.GetPendingEditPath()
 		if path != "test.txt" {
 			t.Errorf("GetPendingEditPath() = %q, want 'test.txt'", path)
 		}
 
 		// Clean up
-		ClearPendingEditForPath("test.txt")
+		ClearPendingEditForPath(toolCtx, "test.txt")
 	})
 }
 

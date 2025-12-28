@@ -276,6 +276,9 @@ func main() {
 		}
 	}
 
+	// Create shared tool context for this session
+	toolCtx := tools.NewToolContext()
+
 	// Setup tool registry using the new setup function
 	registry := tools.SetupRegistry(tools.SetupConfig{
 		Cfg:           cfg,
@@ -284,6 +287,7 @@ func main() {
 		Logger:        writer, // Writer implements DebugLogger
 		TempFileMgr:   tempFileMgr,
 		PlanManager:   planManager,
+		ToolCtx:       toolCtx,
 	})
 
 	// Generate system prompt using the prompt generator
@@ -301,6 +305,7 @@ func main() {
 		ContextMgr:        contextMgr,
 		ContextMiddleware: contextMiddleware,
 		PlanManager:       planManager,
+		ToolCtx:           toolCtx,
 	})
 
 	// Run benchmark mode if requested

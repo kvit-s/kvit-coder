@@ -28,6 +28,7 @@ type Runner struct {
 	contextMgr        *ctxtools.Manager
 	contextMiddleware *ctxtools.Middleware
 	planManager       *tools.PlanManager
+	toolCtx           *tools.ToolContext
 }
 
 // RunnerOptions contains all dependencies for creating a Runner
@@ -41,6 +42,7 @@ type RunnerOptions struct {
 	ContextMgr        *ctxtools.Manager
 	ContextMiddleware *ctxtools.Middleware
 	PlanManager       *tools.PlanManager
+	ToolCtx           *tools.ToolContext
 }
 
 // RunConfig contains per-run configuration options
@@ -69,6 +71,7 @@ func NewRunner(opts RunnerOptions) *Runner {
 		contextMgr:        opts.ContextMgr,
 		contextMiddleware: opts.ContextMiddleware,
 		planManager:       opts.PlanManager,
+		toolCtx:           opts.ToolCtx,
 	}
 }
 
@@ -161,7 +164,7 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 		tasksToolExecuted := false
 
 		// Increment message ID for read-before-edit tracking
-		tools.GetReadTracker().NextMessage()
+		r.toolCtx.ReadTracker.NextMessage()
 
 		// Create cancellable context for this iteration
 		iterCtx, iterCancel := context.WithCancel(ctx)
@@ -571,7 +574,7 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 			}
 			pendingState := tools.AnalyzePendingEditState(roles, contents, toolNames)
 
-			if blockErr := tools.CheckPendingEditBlockWithState(tc.Function.Name, pendingState, r.cfg); blockErr != nil {
+			if blockErr := tools.CheckPendingEditBlockWithState(tc.Function.Name, pendingState, r.cfg, r.toolCtx); blockErr != nil {
 				btResult := r.handleToolError(blockErr, tc, backtracker, rollbackPoint, promptTokens, completionTokens, requestCost)
 				if btResult.shouldBacktrack {
 					shouldBacktrack = true

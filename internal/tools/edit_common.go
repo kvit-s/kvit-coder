@@ -34,6 +34,7 @@ type EditTool interface {
 type BaseEditTool struct {
 	Config        *config.Config
 	WorkspaceRoot string
+	ToolCtx       *ToolContext
 }
 
 // GetConfig returns the tool's config
@@ -131,7 +132,7 @@ func (b *BaseEditTool) CheckReadBeforeEdit(path string) error {
 	}
 
 	// Skip check if there's a pending edit for this same file
-	pendingPath := GetPendingEditPath()
+	pendingPath := b.ToolCtx.GetPendingEditPath()
 	if pendingPath != "" && pendingPath == path {
 		return nil
 	}
@@ -147,7 +148,8 @@ func (b *BaseEditTool) CheckReadBeforeEdit(path string) error {
 		return nil
 	}
 
-	if !globalReadTracker.WasReadRecently(fullPath, globalReadTracker.CurrentMessageID(), b.Config.Tools.Edit.ReadBeforeEditMsgs) {
+	tracker := b.ToolCtx.ReadTracker
+	if !tracker.WasReadRecently(fullPath, tracker.CurrentMessageID(), b.Config.Tools.Edit.ReadBeforeEditMsgs) {
 		return SemanticErrorWithDetails(
 			fmt.Sprintf("file not read recently: you must use read on '%s' before editing it (within last %d tool calls)", path, b.Config.Tools.Edit.ReadBeforeEditMsgs),
 			map[string]any{
@@ -292,11 +294,10 @@ func BuildEditPreviewResult(path, diff, newContent string, editStartLine, editEn
 	return result
 }
 
-// StorePendingEdit stores a computed edit for preview mode
-// editStartLine and editEndLine are 1-based line numbers in the new content
-func StorePendingEdit(path, fullPath, oldContent, newContent, diff string, isNewFile bool, editStartLine, editEndLine int) {
-	pendingEditMu.Lock()
-	globalPendingEdit = &pendingEdit{
+// StorePendingEdit stores a computed edit for preview mode using the provided ToolContext.
+// editStartLine and editEndLine are 1-based line numbers in the new content.
+func StorePendingEdit(toolCtx *ToolContext, path, fullPath, oldContent, newContent, diff string, isNewFile bool, editStartLine, editEndLine int) {
+	toolCtx.SetPendingEdit(&pendingEdit{
 		path:          path,
 		fullPath:      fullPath,
 		oldContent:    oldContent,
@@ -305,17 +306,12 @@ func StorePendingEdit(path, fullPath, oldContent, newContent, diff string, isNew
 		isNewFile:     isNewFile,
 		editStartLine: editStartLine,
 		editEndLine:   editEndLine,
-	}
-	pendingEditMu.Unlock()
+	})
 }
 
-// ClearPendingEditForPath clears any pending edit for a specific path
-func ClearPendingEditForPath(path string) {
-	pendingEditMu.Lock()
-	if globalPendingEdit != nil && globalPendingEdit.path == path {
-		globalPendingEdit = nil
-	}
-	pendingEditMu.Unlock()
+// ClearPendingEditForPath clears any pending edit for a specific path using the provided ToolContext.
+func ClearPendingEditForPath(toolCtx *ToolContext, path string) {
+	toolCtx.ClearPendingEditIfPath(path)
 }
 
 // extractPathFromArgs extracts the path field from JSON arguments
@@ -731,7 +727,7 @@ func FinalizeEdit(b *BaseEditTool, path, fullPath, oldContent, newContent, diff 
 
 	// Preview mode: store pending edit and return preview result
 	if b.Config.Tools.Edit.PreviewMode {
-		StorePendingEdit(path, fullPath, oldContent, newContent, diff, isNewFile, editStartLine, editEndLine)
+		StorePendingEdit(b.ToolCtx, path, fullPath, oldContent, newContent, diff, isNewFile, editStartLine, editEndLine)
 		return BuildEditPreviewResult(path, diff, newContent, editStartLine, editEndLine, isNewFile), nil
 	}
 

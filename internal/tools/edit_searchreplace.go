@@ -83,11 +83,12 @@ type SearchReplaceEditTool struct {
 }
 
 // NewSearchReplaceEditTool creates a new SearchReplaceEditTool
-func NewSearchReplaceEditTool(cfg *config.Config) *SearchReplaceEditTool {
+func NewSearchReplaceEditTool(cfg *config.Config, toolCtx *ToolContext) *SearchReplaceEditTool {
 	return &SearchReplaceEditTool{
 		BaseEditTool: BaseEditTool{
 			Config:        cfg,
 			WorkspaceRoot: cfg.Workspace.Root,
+			ToolCtx:       toolCtx,
 		},
 	}
 }
@@ -195,7 +196,7 @@ func (t *SearchReplaceEditTool) Call(ctx context.Context, args json.RawMessage) 
 	}
 
 	// Clear any pending edit for this file (LLM is revising)
-	ClearPendingEditForPath(params.Path)
+	ClearPendingEditForPath(t.ToolCtx, params.Path)
 
 	// If start_line provided, use streaming approach (works for any file size)
 	if params.StartLine != nil {
@@ -380,16 +381,7 @@ func (t *SearchReplaceEditTool) callLargeFileAuto(ctx context.Context, fullPath,
 
 	// Preview mode
 	if t.Config.Tools.Edit.PreviewMode {
-		pendingEditMu.Lock()
-		globalPendingEdit = &pendingEdit{
-			path:       path,
-			fullPath:   fullPath,
-			oldContent: rangeContent,
-			newContent: newRangeContent,
-			diff:       diff,
-			isNewFile:  false,
-		}
-		pendingEditMu.Unlock()
+		StorePendingEdit(t.ToolCtx, path, fullPath, rangeContent, newRangeContent, diff, false, matchStartLine, matchEndLine)
 
 		return map[string]any{
 			"status":           "pending_confirmation",
@@ -531,17 +523,7 @@ func (t *SearchReplaceEditTool) callWithLineHint(ctx context.Context, fullPath, 
 	if t.Config.Tools.Edit.PreviewMode {
 		// For preview mode with large files, we need to apply differently
 		// Store enough info to apply the streaming edit
-		pendingEditMu.Lock()
-		globalPendingEdit = &pendingEdit{
-			path:       path,
-			fullPath:   fullPath,
-			oldContent: rangeContent,   // Just the range
-			newContent: newRangeContent, // Just the range
-			diff:       diff,
-			isNewFile:  false,
-		}
-		// Store line info for streaming apply (using a hack - encode in diff)
-		pendingEditMu.Unlock()
+		StorePendingEdit(t.ToolCtx, path, fullPath, rangeContent, newRangeContent, diff, false, matchStartLine, matchEndLine)
 
 		return map[string]any{
 			"status":           "pending_confirmation",
