@@ -1,0 +1,1267 @@
+# LLM Tool Usage Benchmarks
+# See benchmarks.md for detailed documentation
+
+benchmarks:
+  # ============================================
+  # Search Tool Benchmarks
+  # ============================================
+
+  - id: S1
+    name: "Simple Pattern Search"
+    category: search
+    goal: "Find a specific function definition"
+    setup:
+      - file: "functions.go"
+        content: |
+          package main
+
+          func init() {}
+
+          func processData() {}
+
+          func calculateTotal(items []int) int {
+              sum := 0
+              for _, item := range items {
+                  sum += item
+              }
+              return sum
+          }
+
+          func formatOutput() {}
+    task: "Show surrounding code where `calculateTotal` function is defined in the codebase"
+    validation:
+      - type: output_contains
+        expected: "func calculateTotal(items []int)"
+    tags: ["basic", "regex", "path"]
+
+  - id: S2
+    name: "Multi-Pattern Search"
+    category: search
+    goal: "Find multiple related items"
+    setup:
+      - file: "file1.go"
+        content: |
+          package main
+          // TODO: implement authentication
+          func auth() {}
+      - file: "file2.go"
+        content: |
+          package main
+          // TODO: add validation
+          // TODO: handle errors
+          func validate() {}
+      - file: "utils/helper.go"
+        content: |
+          package utils
+          // TODO: optimize this
+          func helper() {}
+      - file: "config/settings.go"
+        content: |
+          package config
+          // TODO: load from env
+          // TODO: add defaults
+          // TODO: validate config
+          func loadConfig() {}
+    task: "How many TODO comments are in the codebase"
+    validation:
+      - type: output_contains
+        expected: "7"
+    tags: ["pattern", "multi-result"]
+
+  - id: S3
+    name: "Search with File Filtering"
+    category: search
+    goal: "Search in specific file types"
+    setup:
+      - file: "models.go"
+        content: |
+          package main
+
+          type User struct {
+              Name string
+              Age  int
+          }
+
+          type Config struct {
+              Host string
+              Port int
+          }
+      - file: "notes.txt"
+        content: |
+          struct notes:
+          - User struct is for user data
+          - Config struct is for settings
+      - file: "readme.md"
+        content: |
+          # Structs
+          We define struct types in Go files.
+      - file: "helpers.go"
+        content: |
+          package main
+
+          func formatString(s string) string {
+              return "struct" + s
+          }
+
+          func add(a, b int) int {
+              return a + b
+          }
+    task: "Give me comma separated list of all go files that have struct definitions. Just the file names - nothing else, not explanations."
+    validation:
+      - type: output_contains
+        expected: "models.go"
+      - type: output_not_contains
+        expected: "notes.txt"
+      - type: output_not_contains
+        expected: "readme.md"
+      - type: output_not_contains
+        expected: "helpers.go"
+    tags: ["filter", "file-type"]
+
+  - id: S4
+    name: "Search Truncation Recovery"
+    category: search
+    goal: "Handle large search results requiring refinement"
+    setup:
+      # folder1: 50 files (config_001.go through config_050.go)
+      - file: "folder1/config_001.go"
+        content: "package folder1\n// Config file 001\ntype Config struct{}"
+      - file: "folder1/config_002.go"
+        content: "package folder1\n// Config file 002\ntype Config struct{}"
+      - file: "folder1/config_003.go"
+        content: "package folder1\n// Config file 003\ntype Config struct{}"
+      - file: "folder1/config_004.go"
+        content: "package folder1\n// Config file 004\ntype Config struct{}"
+      - file: "folder1/config_005.go"
+        content: "package folder1\n// Config file 005\ntype Config struct{}"
+      - file: "folder1/config_006.go"
+        content: "package folder1\n// Config file 006\ntype Config struct{}"
+      - file: "folder1/config_007.go"
+        content: "package folder1\n// Config file 007\ntype Config struct{}"
+      - file: "folder1/config_008.go"
+        content: "package folder1\n// Config file 008\ntype Config struct{}"
+      - file: "folder1/config_009.go"
+        content: "package folder1\n// Config file 009\ntype Config struct{}"
+      - file: "folder1/config_010.go"
+        content: "package folder1\n// Config file 010\ntype Config struct{}"
+      - file: "folder1/config_011.go"
+        content: "package folder1\n// Config file 011\ntype Config struct{}"
+      - file: "folder1/config_012.go"
+        content: "package folder1\n// Config file 012\ntype Config struct{}"
+      - file: "folder1/config_013.go"
+        content: "package folder1\n// Config file 013\ntype Config struct{}"
+      - file: "folder1/config_014.go"
+        content: "package folder1\n// Config file 014\ntype Config struct{}"
+      - file: "folder1/config_015.go"
+        content: "package folder1\n// Config file 015\ntype Config struct{}"
+      - file: "folder1/config_016.go"
+        content: "package folder1\n// Config file 016\ntype Config struct{}"
+      - file: "folder1/config_017.go"
+        content: "package folder1\n// Config file 017\ntype Config struct{}"
+      - file: "folder1/config_018.go"
+        content: "package folder1\n// Config file 018\ntype Config struct{}"
+      - file: "folder1/config_019.go"
+        content: "package folder1\n// Config file 019\ntype Config struct{}"
+      - file: "folder1/config_020.go"
+        content: "package folder1\n// Config file 020\ntype Config struct{}"
+      - file: "folder1/config_021.go"
+        content: "package folder1\n// Config file 021\ntype Config struct{}"
+      - file: "folder1/config_022.go"
+        content: "package folder1\n// Config file 022\ntype Config struct{}"
+      - file: "folder1/config_023.go"
+        content: "package folder1\n// Config file 023\ntype Config struct{}"
+      - file: "folder1/config_024.go"
+        content: "package folder1\n// Config file 024\ntype Config struct{}"
+      - file: "folder1/config_025.go"
+        content: "package folder1\n// Config file 025\ntype Config struct{}"
+      - file: "folder1/config_026.go"
+        content: "package folder1\n// Config file 026\ntype Config struct{}"
+      - file: "folder1/config_027.go"
+        content: "package folder1\n// Config file 027\ntype Config struct{}"
+      - file: "folder1/config_028.go"
+        content: "package folder1\n// Config file 028\ntype Config struct{}"
+      - file: "folder1/config_029.go"
+        content: "package folder1\n// Config file 029\ntype Config struct{}"
+      - file: "folder1/config_030.go"
+        content: "package folder1\n// Config file 030\ntype Config struct{}"
+      - file: "folder1/config_031.go"
+        content: "package folder1\n// Config file 031\ntype Config struct{}"
+      - file: "folder1/config_032.go"
+        content: "package folder1\n// Config file 032\ntype Config struct{}"
+      - file: "folder1/config_033.go"
+        content: "package folder1\n// Config file 033\ntype Config struct{}"
+      - file: "folder1/config_034.go"
+        content: "package folder1\n// Config file 034\ntype Config struct{}"
+      - file: "folder1/config_035.go"
+        content: "package folder1\n// Config file 035\ntype Config struct{}"
+      - file: "folder1/config_036.go"
+        content: "package folder1\n// Config file 036\ntype Config struct{}"
+      - file: "folder1/config_037.go"
+        content: "package folder1\n// Config file 037\ntype Config struct{}"
+      - file: "folder1/config_038.go"
+        content: "package folder1\n// Config file 038\ntype Config struct{}"
+      - file: "folder1/config_039.go"
+        content: "package folder1\n// Config file 039\ntype Config struct{}"
+      - file: "folder1/config_040.go"
+        content: "package folder1\n// Config file 040\ntype Config struct{}"
+      - file: "folder1/config_041.go"
+        content: "package folder1\n// Config file 041\ntype Config struct{}"
+      - file: "folder1/config_042.go"
+        content: "package folder1\n// Config file 042\ntype Config struct{}"
+      - file: "folder1/config_043.go"
+        content: "package folder1\n// Config file 043\ntype Config struct{}"
+      - file: "folder1/config_044.go"
+        content: "package folder1\n// Config file 044\ntype Config struct{}"
+      - file: "folder1/config_045.go"
+        content: "package folder1\n// Config file 045\ntype Config struct{}"
+      - file: "folder1/config_046.go"
+        content: "package folder1\n// Config file 046\ntype Config struct{}"
+      - file: "folder1/config_047.go"
+        content: "package folder1\n// Config file 047\ntype Config struct{}"
+      - file: "folder1/config_048.go"
+        content: "package folder1\n// Config file 048\ntype Config struct{}"
+      - file: "folder1/config_049.go"
+        content: "package folder1\n// Config file 049\ntype Config struct{}"
+      - file: "folder1/config_050.go"
+        content: "package folder1\n// Config file 050\ntype Config struct{}"
+      # folder2: 50 files (config_051.go through config_100.go)
+      - file: "folder2/config_051.go"
+        content: "package folder2\n// Config file 051\ntype Config struct{}"
+      - file: "folder2/config_052.go"
+        content: "package folder2\n// Config file 052\ntype Config struct{}"
+      - file: "folder2/config_053.go"
+        content: "package folder2\n// Config file 053\ntype Config struct{}"
+      - file: "folder2/config_054.go"
+        content: "package folder2\n// Config file 054\ntype Config struct{}"
+      - file: "folder2/config_055.go"
+        content: "package folder2\n// Config file 055\ntype Config struct{}"
+      - file: "folder2/config_056.go"
+        content: "package folder2\n// Config file 056\ntype Config struct{}"
+      - file: "folder2/config_057.go"
+        content: "package folder2\n// Config file 057\ntype Config struct{}"
+      - file: "folder2/config_058.go"
+        content: "package folder2\n// Config file 058\ntype Config struct{}"
+      - file: "folder2/config_059.go"
+        content: "package folder2\n// Config file 059\ntype Config struct{}"
+      - file: "folder2/config_060.go"
+        content: "package folder2\n// Config file 060\ntype Config struct{}"
+      - file: "folder2/config_061.go"
+        content: "package folder2\n// Config file 061\ntype Config struct{}"
+      - file: "folder2/config_062.go"
+        content: "package folder2\n// Config file 062\ntype Config struct{}"
+      - file: "folder2/config_063.go"
+        content: "package folder2\n// Config file 063\ntype Config struct{}"
+      - file: "folder2/config_064.go"
+        content: "package folder2\n// Config file 064\ntype Config struct{}"
+      - file: "folder2/config_065.go"
+        content: "package folder2\n// Config file 065\ntype Config struct{}"
+      - file: "folder2/config_066.go"
+        content: "package folder2\n// Config file 066\ntype Config struct{}"
+      - file: "folder2/config_067.go"
+        content: "package folder2\n// Config file 067\ntype Config struct{}"
+      - file: "folder2/config_068.go"
+        content: "package folder2\n// Config file 068\ntype Config struct{}"
+      - file: "folder2/config_069.go"
+        content: "package folder2\n// Config file 069\ntype Config struct{}"
+      - file: "folder2/config_070.go"
+        content: "package folder2\n// Config file 070\ntype Config struct{}"
+      - file: "folder2/config_071.go"
+        content: "package folder2\n// Config file 071\ntype Config struct{}"
+      - file: "folder2/config_072.go"
+        content: "package folder2\n// Config file 072\ntype Config struct{}"
+      - file: "folder2/config_073.go"
+        content: "package folder2\n// Config file 073\ntype Config struct{}"
+      - file: "folder2/config_074.go"
+        content: "package folder2\n// Config file 074\ntype Config struct{}"
+      - file: "folder2/config_075.go"
+        content: "package folder2\n// Config file 075\ntype Config struct{}"
+      - file: "folder2/config_076.go"
+        content: "package folder2\n// Config file 076\ntype Config struct{}"
+      - file: "folder2/config_077.go"
+        content: "package folder2\n// Config file 077\ntype Config struct{}"
+      - file: "folder2/config_078.go"
+        content: "package folder2\n// Config file 078\ntype Config struct{}"
+      - file: "folder2/config_079.go"
+        content: "package folder2\n// Config file 079\ntype Config struct{}"
+      - file: "folder2/config_080.go"
+        content: "package folder2\n// Config file 080\ntype Config struct{}"
+      - file: "folder2/config_081.go"
+        content: "package folder2\n// Config file 081\ntype Config struct{}"
+      - file: "folder2/config_082.go"
+        content: "package folder2\n// Config file 082\ntype Config struct{}"
+      - file: "folder2/config_083.go"
+        content: "package folder2\n// Config file 083\ntype Config struct{}"
+      - file: "folder2/config_084.go"
+        content: "package folder2\n// Config file 084\ntype Config struct{}"
+      - file: "folder2/config_085.go"
+        content: "package folder2\n// Config file 085\ntype Config struct{}"
+      - file: "folder2/config_086.go"
+        content: "package folder2\n// Config file 086\ntype Config struct{}"
+      - file: "folder2/config_087.go"
+        content: "package folder2\n// Config file 087\ntype Config struct{}"
+      - file: "folder2/config_088.go"
+        content: "package folder2\n// Config file 088\ntype Config struct{}"
+      - file: "folder2/config_089.go"
+        content: "package folder2\n// Config file 089\ntype Config struct{}"
+      - file: "folder2/config_090.go"
+        content: "package folder2\n// Config file 090\ntype Config struct{}"
+      - file: "folder2/config_091.go"
+        content: "package folder2\n// Config file 091\ntype Config struct{}"
+      - file: "folder2/config_092.go"
+        content: "package folder2\n// Config file 092\ntype Config struct{}"
+      - file: "folder2/config_093.go"
+        content: "package folder2\n// Config file 093\ntype Config struct{}"
+      - file: "folder2/config_094.go"
+        content: "package folder2\n// Config file 094\ntype Config struct{}"
+      - file: "folder2/config_095.go"
+        content: "package folder2\n// Config file 095\ntype Config struct{}"
+      - file: "folder2/config_096.go"
+        content: "package folder2\n// Config file 096\ntype Config struct{}"
+      - file: "folder2/config_097.go"
+        content: "package folder2\n// Config file 097\ntype Config struct{}"
+      - file: "folder2/config_098.go"
+        content: "package folder2\n// Config file 098\ntype Config struct{}"
+      - file: "folder2/config_099.go"
+        content: "package folder2\n// Config file 099\ntype Config struct{}"
+      - file: "folder2/config_100.go"
+        content: "package folder2\n// Config file 100\ntype Config struct{}"
+      # folder3: 1 file (the needle)
+      - file: "folder3/config_076.go"
+        content: "package folder3\n// Config file - THE ONLY ONE IN FOLDER3\ntype Config struct{}"
+      # folder4: 50 files (config_101.go through config_150.go)
+      - file: "folder4/config_101.go"
+        content: "package folder4\n// Config file 101\ntype Config struct{}"
+      - file: "folder4/config_102.go"
+        content: "package folder4\n// Config file 102\ntype Config struct{}"
+      - file: "folder4/config_103.go"
+        content: "package folder4\n// Config file 103\ntype Config struct{}"
+      - file: "folder4/config_104.go"
+        content: "package folder4\n// Config file 104\ntype Config struct{}"
+      - file: "folder4/config_105.go"
+        content: "package folder4\n// Config file 105\ntype Config struct{}"
+      - file: "folder4/config_106.go"
+        content: "package folder4\n// Config file 106\ntype Config struct{}"
+      - file: "folder4/config_107.go"
+        content: "package folder4\n// Config file 107\ntype Config struct{}"
+      - file: "folder4/config_108.go"
+        content: "package folder4\n// Config file 108\ntype Config struct{}"
+      - file: "folder4/config_109.go"
+        content: "package folder4\n// Config file 109\ntype Config struct{}"
+      - file: "folder4/config_110.go"
+        content: "package folder4\n// Config file 110\ntype Config struct{}"
+      - file: "folder4/config_111.go"
+        content: "package folder4\n// Config file 111\ntype Config struct{}"
+      - file: "folder4/config_112.go"
+        content: "package folder4\n// Config file 112\ntype Config struct{}"
+      - file: "folder4/config_113.go"
+        content: "package folder4\n// Config file 113\ntype Config struct{}"
+      - file: "folder4/config_114.go"
+        content: "package folder4\n// Config file 114\ntype Config struct{}"
+      - file: "folder4/config_115.go"
+        content: "package folder4\n// Config file 115\ntype Config struct{}"
+      - file: "folder4/config_116.go"
+        content: "package folder4\n// Config file 116\ntype Config struct{}"
+      - file: "folder4/config_117.go"
+        content: "package folder4\n// Config file 117\ntype Config struct{}"
+      - file: "folder4/config_118.go"
+        content: "package folder4\n// Config file 118\ntype Config struct{}"
+      - file: "folder4/config_119.go"
+        content: "package folder4\n// Config file 119\ntype Config struct{}"
+      - file: "folder4/config_120.go"
+        content: "package folder4\n// Config file 120\ntype Config struct{}"
+      - file: "folder4/config_121.go"
+        content: "package folder4\n// Config file 121\ntype Config struct{}"
+      - file: "folder4/config_122.go"
+        content: "package folder4\n// Config file 122\ntype Config struct{}"
+      - file: "folder4/config_123.go"
+        content: "package folder4\n// Config file 123\ntype Config struct{}"
+      - file: "folder4/config_124.go"
+        content: "package folder4\n// Config file 124\ntype Config struct{}"
+      - file: "folder4/config_125.go"
+        content: "package folder4\n// Config file 125\ntype Config struct{}"
+      - file: "folder4/config_126.go"
+        content: "package folder4\n// Config file 126\ntype Config struct{}"
+      - file: "folder4/config_127.go"
+        content: "package folder4\n// Config file 127\ntype Config struct{}"
+      - file: "folder4/config_128.go"
+        content: "package folder4\n// Config file 128\ntype Config struct{}"
+      - file: "folder4/config_129.go"
+        content: "package folder4\n// Config file 129\ntype Config struct{}"
+      - file: "folder4/config_130.go"
+        content: "package folder4\n// Config file 130\ntype Config struct{}"
+      - file: "folder4/config_131.go"
+        content: "package folder4\n// Config file 131\ntype Config struct{}"
+      - file: "folder4/config_132.go"
+        content: "package folder4\n// Config file 132\ntype Config struct{}"
+      - file: "folder4/config_133.go"
+        content: "package folder4\n// Config file 133\ntype Config struct{}"
+      - file: "folder4/config_134.go"
+        content: "package folder4\n// Config file 134\ntype Config struct{}"
+      - file: "folder4/config_135.go"
+        content: "package folder4\n// Config file 135\ntype Config struct{}"
+      - file: "folder4/config_136.go"
+        content: "package folder4\n// Config file 136\ntype Config struct{}"
+      - file: "folder4/config_137.go"
+        content: "package folder4\n// Config file 137\ntype Config struct{}"
+      - file: "folder4/config_138.go"
+        content: "package folder4\n// Config file 138\ntype Config struct{}"
+      - file: "folder4/config_139.go"
+        content: "package folder4\n// Config file 139\ntype Config struct{}"
+      - file: "folder4/config_140.go"
+        content: "package folder4\n// Config file 140\ntype Config struct{}"
+      - file: "folder4/config_141.go"
+        content: "package folder4\n// Config file 141\ntype Config struct{}"
+      - file: "folder4/config_142.go"
+        content: "package folder4\n// Config file 142\ntype Config struct{}"
+      - file: "folder4/config_143.go"
+        content: "package folder4\n// Config file 143\ntype Config struct{}"
+      - file: "folder4/config_144.go"
+        content: "package folder4\n// Config file 144\ntype Config struct{}"
+      - file: "folder4/config_145.go"
+        content: "package folder4\n// Config file 145\ntype Config struct{}"
+      - file: "folder4/config_146.go"
+        content: "package folder4\n// Config file 146\ntype Config struct{}"
+      - file: "folder4/config_147.go"
+        content: "package folder4\n// Config file 147\ntype Config struct{}"
+      - file: "folder4/config_148.go"
+        content: "package folder4\n// Config file 148\ntype Config struct{}"
+      - file: "folder4/config_149.go"
+        content: "package folder4\n// Config file 149\ntype Config struct{}"
+      - file: "folder4/config_150.go"
+        content: "package folder4\n// Config file 150\ntype Config struct{}"
+    task: "Which folder contains exactly one file with 'Config'?"
+    validation:
+      - type: output_contains
+        expected: "folder3"
+    tags: ["truncation", "refinement", "counting"]
+
+  # ============================================
+  # Read Tool Benchmarks
+  # ============================================
+
+  - id: R1
+    name: "Simple File Read"
+    category: read
+    goal: "Read an entire small file"
+    setup:
+      - file: "config.txt"
+        content: |
+          db_host=localhost
+          db_port=5432
+          db_name=myapp
+    task: "Show the contents of config.txt"
+    validation:
+      - type: output_contains
+        expected: "db_host=localhost"
+    tags: ["basic", "small-file"]
+
+  - id: R2
+    name: "Truncation Recovery"
+    category: read
+    goal: "Handle truncated output by chunked reading"
+    setup:
+      - file: "sections.txt"
+        content: |
+          Introduction text here.
+          More intro content.
+
+          ## SECTION_ALPHA
+          Content for alpha section.
+          More alpha content line 1.
+          More alpha content line 2.
+          More alpha content line 3.
+
+          Filler line 10
+          Filler line 11
+          Filler line 12
+          Filler line 13
+          Filler line 14
+          Filler line 15
+          Filler line 16
+          Filler line 17
+          Filler line 18
+          Filler line 19
+          Filler line 20
+
+          ## SECTION_BETA
+          Content for beta section.
+          More beta content.
+
+          Filler line 25
+          Filler line 26
+          Filler line 27
+          Filler line 28
+          Filler line 29
+          Filler line 30
+
+          ## SECTION_GAMMA
+          Content for gamma section.
+          More gamma content.
+
+          Filler line 35
+          Filler line 36
+          Filler line 37
+          Filler line 38
+          Filler line 39
+          Filler line 40
+
+          ## SECTION_DELTA
+          Content for delta section.
+          More delta content.
+
+          Filler line 45
+          Filler line 46
+          Filler line 47
+          Filler line 48
+          Filler line 49
+          Filler line 50
+
+          ## SECTION_EPSILON
+          Content for epsilon section.
+          More epsilon content.
+          Final line.
+    task: "Read sections.txt and list all section headers (lines starting with ##)"
+    validation:
+      - type: output_contains
+        expected: "SECTION_ALPHA"
+      - type: output_contains
+        expected: "SECTION_BETA"
+      - type: output_contains
+        expected: "SECTION_GAMMA"
+      - type: output_contains
+        expected: "SECTION_DELTA"
+      - type: output_contains
+        expected: "SECTION_EPSILON"
+    tags: ["sections", "headers", "parsing"]
+
+  - id: R3
+    name: "Relative vs Absolute Path"
+    category: read
+    goal: "Correct path resolution"
+    setup:
+      - file: "subdir/file.txt"
+        content: "SUBDIR_CONTENT"
+    task: "Show contents of ./subdir/file.txt"
+    validation:
+      - type: output_contains
+        expected: "SUBDIR_CONTENT"
+    tags: ["path", "relative"]
+
+  # ============================================
+  # Write Tool Benchmarks
+  # ============================================
+
+  - id: W1
+    name: "Simple File Creation"
+    category: write
+    goal: "Create a new file with content"
+    setup: []
+    task: "Create a file named hello.txt containing 'Hello, World!'"
+    validation:
+      - type: file_exists
+        target: "hello.txt"
+      - type: file_contains
+        target: "hello.txt"
+        expected: "Hello, World!"
+    tags: ["basic", "create"]
+
+  - id: W2
+    name: "Multi-line Content"
+    category: write
+    goal: "Write file with multiple lines and formatting"
+    setup: []
+    task: "Create a Go file named main.go with a main function that prints 'test'"
+    validation:
+      - type: file_exists
+        target: "main.go"
+      - type: file_contains
+        target: "main.go"
+        expected: "package main"
+      - type: file_contains
+        target: "main.go"
+        expected: "func main()"
+      - type: run_command
+        command: "go run main.go"
+        expected: "test"
+    tags: ["multi-line", "code"]
+
+  - id: W3
+    name: "Overwrite Existing"
+    category: write
+    goal: "Handle overwrite of existing file"
+    setup:
+      - file: "existing.txt"
+        content: "old content"
+    task: "Replace the contents of existing.txt with 'new content'"
+    validation:
+      - type: file_equals
+        target: "existing.txt"
+        expected: |
+          new content
+    tags: ["overwrite", "existing"]
+
+  - id: W4
+    name: "Special Characters"
+    category: write
+    goal: "Handle special characters in content"
+    setup: []
+    task: "Create a file named special.txt with these contents: 'quotes', \"double\", `backticks`, $var"
+    validation:
+      - type: file_equals
+        target: "special.txt"
+        expected: |
+          'quotes', "double", `backticks`, $var
+    tags: ["special-chars", "escaping"]
+
+  - id: W5
+    name: "Empty File Creation"
+    category: write
+    goal: "Create an empty file"
+    setup: []
+    task: "Create an empty file named empty.txt"
+    validation:
+      - type: file_exists
+        target: "empty.txt"
+    tags: ["edge-case", "empty"]
+
+  - id: W6
+    name: "Path with Spaces"
+    category: write
+    goal: "Handle paths with spaces"
+    setup:
+      - file: "my folder"
+        dir: true
+    task: "Create a file at 'my folder/my file.txt' with content 'test'"
+    validation:
+      - type: file_exists
+        target: "my folder/my file.txt"
+      - type: file_equals
+        target: "my folder/my file.txt"
+        expected: |
+          test
+    tags: ["path-escaping", "spaces"]
+
+  # ============================================
+  # Edit Tool Benchmarks
+  # ============================================
+
+  - id: E1
+    name: "Single Line Replace"
+    category: edit
+    goal: "Replace a single line"
+    setup:
+      - file: "numbered.txt"
+        content: |
+          FUNCTION A
+          FUNCTION B
+          FUNCTION C
+          FUNCTION D
+          FUNCTION E
+          FUNCTION F
+          FUNCTION G
+          FUNCTION H
+          FUNCTION I
+          FUNCTION J
+    task: "In numbered.txt, replace line 'FUNCTION E' with 'NEW LINE E'"
+    validation:
+      - type: file_equals
+        target: "numbered.txt"
+        expected: |
+          FUNCTION A
+          FUNCTION B
+          FUNCTION C
+          FUNCTION D
+          NEW LINE E
+          FUNCTION F
+          FUNCTION G
+          FUNCTION H
+          FUNCTION I
+          FUNCTION J
+    tags: ["single-line", "replace"]
+
+  - id: E2
+    name: "Multi-line Insert"
+    category: edit
+    goal: "Insert multiple lines at position"
+    setup:
+      - file: "file.txt"
+        content: |
+          FUNCTION A
+          FUNCTION B
+          FUNCTION C
+          FUNCTION D
+          FUNCTION E
+          FUNCTION F
+          FUNCTION G
+          FUNCTION H
+          FUNCTION I
+          FUNCTION J
+          FUNCTION K
+          FUNCTION L
+          FUNCTION M
+          FUNCTION N
+          FUNCTION O
+          FUNCTION P
+          FUNCTION Q
+          FUNCTION R
+          FUNCTION S
+          FUNCTION T
+    task: "In file.txt, insert three new lines containing 'INSERTED' after line 'FUNCTION J'"
+    validation:
+      - type: file_equals
+        target: "file.txt"
+        expected: |
+          FUNCTION A
+          FUNCTION B
+          FUNCTION C
+          FUNCTION D
+          FUNCTION E
+          FUNCTION F
+          FUNCTION G
+          FUNCTION H
+          FUNCTION I
+          FUNCTION J
+          INSERTED
+          INSERTED
+          INSERTED
+          FUNCTION K
+          FUNCTION L
+          FUNCTION M
+          FUNCTION N
+          FUNCTION O
+          FUNCTION P
+          FUNCTION Q
+          FUNCTION R
+          FUNCTION S
+          FUNCTION T
+    tags: ["insertion", "multi-line"]
+
+  - id: E3
+    name: "Delete Lines"
+    category: edit
+    goal: "Delete a range of lines"
+    setup:
+      - file: "data.txt"
+        content: |
+          function A
+          function B
+          function C
+          function D
+          function E
+          function F
+          function G
+          function H
+          function I
+          function J
+          function K
+          function L
+          function M
+          function N
+          function O
+          function P
+          function Q
+          function R
+          function S
+          function T
+    task: 'Delete lines "function K" through "function N" (inclusive) in data.txt'
+    validation:
+      - type: file_equals
+        target: "data.txt"
+        expected: |
+          function A
+          function B
+          function C
+          function D
+          function E
+          function F
+          function G
+          function H
+          function I
+          function J
+          function O
+          function P
+          function Q
+          function R
+          function S
+          function T
+    tags: ["deletion", "range"]
+
+  - id: E4
+    name: "Boundary Edit"
+    category: edit
+    goal: "Test boundary conditions"
+    setup:
+      - file: "boundary.txt"
+        content: |
+          function A
+          function B
+          function C
+          function D
+          function E
+          function F
+          function G
+          function H
+          function I
+          function J
+          function K
+          function L
+          function M
+          function N
+          function O
+          function P
+          function Q
+          function R
+          function S
+          function T
+    task: 'Replace "function T" with "cleanup done" in boundary.txt'
+    validation:
+      - type: file_equals
+        target: "boundary.txt"
+        expected: |
+          function A
+          function B
+          function C
+          function D
+          function E
+          function F
+          function G
+          function H
+          function I
+          function J
+          function K
+          function L
+          function M
+          function N
+          function O
+          function P
+          function Q
+          function R
+          function S
+          cleanup done
+    tags: ["boundary", "last-line"]
+
+  - id: E5
+    name: "Replace All Occurrences"
+    category: edit
+    goal: "Replace multiple occurrences"
+    setup:
+      - file: "code.ts"
+        content: |
+          function main() {
+              const result = oldFunc();
+              if (oldFunc() !== null) {
+                  return;
+              }
+              const value = oldFunc();
+          }
+
+          function oldFunc(): string | null {
+              return null;
+          }
+    task: "Replace all occurrences of 'oldFunc' with 'newFunc' in code.ts"
+    validation:
+      - type: file_equals
+        target: "code.ts"
+        expected: |
+          function main() {
+              const result = newFunc();
+              if (newFunc() !== null) {
+                  return;
+              }
+              const value = newFunc();
+          }
+
+          function newFunc(): string | null {
+              return null;
+          }
+    tags: ["multi-occurrence", "replace-all"]
+
+  - id: E6
+    name: "Context-Specific Replace"
+    category: edit
+    goal: "Replace with context for uniqueness"
+    setup:
+      - file: "values.ts"
+        content: |
+          const user = { value: 1 };
+          const config = { value: 2 };
+          const data = { value: 3 };
+    task: "Change the value assigned to config from 2 to 99"
+    validation:
+      - type: file_equals
+        target: "values.ts"
+        expected: |
+          const user = { value: 1 };
+          const config = { value: 99 };
+          const data = { value: 3 };
+    tags: ["context", "specific"]
+
+  - id: E7
+    name: "Multi-line Block Replace"
+    category: edit
+    goal: "Replace multi-line block"
+    setup:
+      - file: "func.ts"
+        content: |
+          function calculate(): number {
+              const a = 10;
+              const b = 20;
+              const c = a + b;
+              return c * 2;
+          }
+
+          function other(): number {
+              return 0;
+          }
+    task: "Replace the entire body of calculate() with just 'return 42;'"
+    validation:
+      - type: file_equals
+        target: "func.ts"
+        expected: |
+          function calculate(): number {
+              return 42;
+          }
+
+          function other(): number {
+              return 0;
+          }
+    tags: ["multi-line", "block-replace"]
+
+  - id: E8
+    name: "No Match Handling"
+    category: edit
+    goal: "Handle search text not found"
+    setup:
+      - file: "sample.txt"
+        content: |
+          This is a sample file.
+          It has multiple lines.
+          Nothing special here.
+    task: "Replace 'targetString' with 'replacement' in sample.txt"
+    validation:
+      - type: file_equals
+        target: "sample.txt"
+        expected: |
+          This is a sample file.
+          It has multiple lines.
+          Nothing special here.
+      - type: output_not_contains
+        expected: "replaced"
+      - type: output_not_contains
+        expected: "successfully"
+    tags: ["error", "no-match"]
+
+  - id: E9
+    name: "Empty Content"
+    category: edit
+    goal: "Handle empty replacement"
+    setup:
+      - file: "numbered.txt"
+        content: |
+          LINE A
+          LINE B
+          LINE C
+          LINE D
+          LINE E
+          LINE F
+          LINE G
+          LINE H
+          LINE I
+          LINE J
+    task: "In numbered.txt replace line that starts with LINE E with an empty line (do not remove line)"
+    validation:
+      - type: file_equals
+        target: "numbered.txt"
+        expected: |
+          LINE A
+          LINE B
+          LINE C
+          LINE D
+
+          LINE F
+          LINE G
+          LINE H
+          LINE I
+          LINE J
+    tags: ["empty", "edge-case"]
+
+  - id: E10
+    name: "Special Characters"
+    category: edit
+    goal: "Handle special characters in replacement"
+    setup:
+      - file: "special.txt"
+        content: |
+          line A
+          line B
+          line C
+          placeholder
+          line E
+    task: "Replace 'placeholder' with 'value = $100 + 50%' in special.txt"
+    validation:
+      - type: file_equals
+        target: "special.txt"
+        expected: |
+          line A
+          line B
+          line C
+          value = $100 + 50%
+          line E
+    tags: ["special-chars", "escaping"]
+
+  - id: E11
+    name: "Indentation Preservation"
+    category: edit
+    goal: "Maintain correct indentation (critical for Python)"
+    setup:
+      - file: "process.py"
+        content: |
+          def outer():
+              if True:
+                  process_data()
+                  # placeholder
+                  finalize()
+    task: "In process.py, replace the comment '# placeholder' with two lines: 'validate_input()' and 'transform_data()' on separate lines"
+    validation:
+      - type: file_equals
+        target: "process.py"
+        expected: |
+          def outer():
+              if True:
+                  process_data()
+                  validate_input()
+                  transform_data()
+                  finalize()
+      - type: run_command
+        command: "python3 -m py_compile process.py"
+        expected: ""
+    tags: ["indentation", "python", "multi-line"]
+
+  # ============================================
+  # Compound Benchmarks (Multi-Tool)
+  # ============================================
+
+  - id: C1
+    name: "Search Then Read"
+    category: compound
+    goal: "Find and read a file"
+    setup:
+      - file: "config.yaml"
+        content: |
+          server:
+            host: localhost
+            port: 8080
+          database:
+            host: db.example.com
+            port: 5432
+            name: myapp
+    task: "Find the config file and read its database section"
+    validation:
+      - type: output_contains
+        expected: "db.example.com"
+    tags: ["chaining", "search-read"]
+
+  - id: C2
+    name: "Read-Modify-Write"
+    category: compound
+    goal: "Complete edit workflow"
+    setup:
+      - file: "config.yaml"
+        content: |
+          server:
+            host: localhost
+            port: 3000
+    task: "Change the port to 8080 in config.yaml"
+    validation:
+      - type: file_equals
+        target: "config.yaml"
+        expected: |
+          server:
+            host: localhost
+            port: 8080
+    tags: ["workflow", "read-edit"]
+
+  - id: C3
+    name: "Search-Read-Edit"
+    category: compound
+    goal: "Find, understand, and modify"
+    setup:
+      - file: "handler1.ts"
+        content: |
+          function process() {
+              deprecatedFunc();
+          }
+      - file: "handler2.ts"
+        content: |
+          function handle() {
+              deprecatedFunc();
+          }
+      - file: "utils.ts"
+        content: |
+          function helper() {
+              deprecatedFunc();
+          }
+
+          function deprecatedFunc() {}
+          function newFunc() {}
+    task: "Find all uses of deprecatedFunc and update them to use newFunc"
+    validation:
+      - type: file_equals
+        target: "handler1.ts"
+        expected: |
+          function process() {
+              newFunc();
+          }
+      - type: file_equals
+        target: "handler2.ts"
+        expected: |
+          function handle() {
+              newFunc();
+          }
+      - type: file_equals
+        target: "utils.ts"
+        expected: |
+          function helper() {
+              newFunc();
+          }
+
+          function deprecatedFunc() {}
+          function newFunc() {}
+    tags: ["complex", "multi-file"]
+
+  - id: C5
+    name: "Needle in Haystack Search"
+    category: compound
+    goal: "Find specific initialization among many usages"
+    setup:
+      # config/config.go - struct definition and constructor
+      - file: "config/config.go"
+        content: |
+          package config
+
+          type Config struct {
+              Host string
+              Port int
+          }
+
+          func NewConfig() *Config {
+              return &Config{Host: "localhost", Port: 8080}
+          }
+
+          func DefaultConfig() *Config {
+              return NewConfig()
+      # config/defaults.go - uses Config
+      - file: "config/defaults.go"
+        content: |
+          package config
+
+          func GetDefault() *Config {
+              cfg := DefaultConfig()
+              return cfg
+          }
+      # internal/bootstrap/wire.go - THE NEEDLE (actual initialization)
+      - file: "internal/bootstrap/wire.go"
+        content: |
+          package bootstrap
+
+          import "myapp/config"
+
+          func Initialize() {
+              // This is where Config is actually initialized
+              cfg := config.NewConfig()
+              Run(cfg)
+          }
+
+          func Run(cfg *config.Config) {}
+      # main.go - just uses, doesn't init
+      - file: "main.go"
+        content: |
+          package main
+
+          import "myapp/internal/bootstrap"
+
+          func main() {
+              bootstrap.Initialize()
+          }
+      # Various files that just use Config
+      - file: "handlers/user.go"
+        content: |
+          package handlers
+
+          import "myapp/config"
+
+          func HandleUser(cfg *config.Config) {
+              _ = cfg.Host
+          }
+      - file: "handlers/order.go"
+        content: |
+          package handlers
+
+          import "myapp/config"
+
+          func HandleOrder(cfg *config.Config) {
+              _ = cfg.Port
+          }
+      - file: "services/auth.go"
+        content: |
+          package services
+
+          import "myapp/config"
+
+          type AuthService struct {
+              cfg *config.Config
+          }
+
+          func (a *AuthService) Validate() {
+              _ = a.cfg.Host
+          }
+      - file: "services/cache.go"
+        content: |
+          package services
+
+          import "myapp/config"
+
+          func CacheConfig(cfg *config.Config) {
+              _ = cfg
+          }
+      - file: "middleware/logging.go"
+        content: |
+          package middleware
+
+          import "myapp/config"
+
+          func LogConfig(cfg *config.Config) {
+              _ = cfg.Host
+          }
+      - file: "middleware/auth.go"
+        content: |
+          package middleware
+
+          import "myapp/config"
+
+          func AuthMiddleware(cfg *config.Config) {
+              _ = cfg
+          }
+      - file: "utils/helper.go"
+        content: |
+          package utils
+
+          import "myapp/config"
+
+          func UseConfig(cfg *config.Config) {
+              _ = cfg.Port
+          }
+      - file: "utils/format.go"
+        content: |
+          package utils
+
+          import "myapp/config"
+
+          func FormatConfig(cfg *config.Config) string {
+              return cfg.Host
+          }
+    task: "Find in which file Config is initialized (not just used or defined)"
+    validation:
+      - type: output_contains
+        expected: "wire.go"
+    tags: ["needle", "haystack", "semantic"]

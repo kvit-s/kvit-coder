@@ -1,0 +1,38 @@
+# Binaries
+/kvit-coder
+/kvit-coder-ui
+/bin/
+
+# Go build artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+coverage.html
+
+# Dependency directories
+vendor/
+
+# Logs
+*.log
+
+# Benchmark artifacts
+benchmarks/.kvit-coder-benchmark/
+benchmarks/results/
+
+# Local configs
+config-local.yaml
+
+# Workspace lock file
+.kvit-coder.lock
+
+# IDE
+.claude/
+.gocache

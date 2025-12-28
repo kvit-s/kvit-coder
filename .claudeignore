@@ -1,0 +1,13 @@
+# Sibling worktrees (prevent watching other features)
+../.clauding/worktrees/*
+
+# Dependencies
+node_modules/
+
+# Build artifacts
+out/
+dist/
+.vscode-test/
+
+# Editor directories
+.vscode/

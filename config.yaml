@@ -1,0 +1,73 @@
+llm:
+  base_url: "http://localhost:8080/v1"  # Your OpenAI-compatible endpoint
+  model: "ministral-3-14b"
+  context: 120000
+  merge_thinking: false  # true = merge reasoning into content, false = discard
+  verbose: 0             # 0 = off, >0 = show tool output up to N lines
+
+workspace:
+  root: "."
+  path_safety_mode: "ask_once"  # "block", "warn", "ask_once", "ask_always"
+
+agent:
+  max_tool_iterations: 1000
+
+backtrack:
+  enabled: true             # Enable backtracking on semantic errors (LLM misuse)
+  max_retries: 5            # Max retries at same history point before falling back to error-in-history
+  inject_user_message: true # On limit reached: backtrack + inject user message (with error) instead of error-in-history
+
+tools:
+  # All tools are disabled by default - explicitly enable the ones you want
+
+  read:
+    enabled: true
+    max_file_size_kb: 128
+    max_read_size_kb: 24
+    max_partial_lines: 150
+    show_line_numbers: true     # set to false for content-based edit modes (searchreplace, patch)
+
+  edit:
+    enabled: true
+    mode: "lines"               # "lines" (default), "searchreplace", or "patch"
+    max_file_size_kb: 128
+    preview_mode: false         # enables edit.confirm/edit.cancel
+    read_before_edit_msgs: 0    # require read within N messages before edit (0 = disabled)
+    pending_confirm_retries: 5  # max retries when LLM ignores confirm/cancel (0 = disabled, default 5)
+    fuzzy_threshold: 0.0        # for searchreplace mode: 0 = exact only, 0.8 = enable fuzzy matching
+
+  restore_file:
+    enabled: false
+
+  search:
+    enabled: true
+    max_snippet_results: 20   # Full snippets up to this many matches
+    max_compact_results: 100  # file:line:match up to this many; above saves to temp file
+
+  shell:
+    enabled: true
+    # Always blocked: sudo, su, apt, yum, brew, shutdown, reboot, chroot, mkfs, dd, sed -i, awk, cd
+    allowed_commands: []        # allowlist (empty = allow all)
+    disallowed_commands: []     # blocklist (checked after allowlist)
+
+  plan:
+    enabled: false              # group toggle for all plan.* tools
+    injection_mode: "none"      # "none" or "every_step" - inject plan state after tool calls
+
+  checkpoint:
+    enabled: false              # group toggle for all checkpoint.* tools
+    max_turns: 100
+    temp_dir: ""
+    max_file_size_kb: 1024
+    excluded_patterns: []
+
+  tasks:
+    enabled: false              # Enable Tasks.* tools (disables Plan.* and Checkpoint.* tools)
+    collapse: false             # Stage 2: Enable Tasks.Collapse
+    plan: false                 # Stage 3: Enable plan-based Tasks tools
+    # Runtime notice thresholds
+    task_warn_turns: 5          # Warn after N turns in task
+    task_critical_turns: 10     # Critical warning after N turns
+    context_capacity_warn: 80   # Warn at N% context capacity
+    max_nested_depth: 2         # Max task nesting depth warning
+    notify_file_changes: true   # Notify about file changes in task

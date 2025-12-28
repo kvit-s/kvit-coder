@@ -1,0 +1,18 @@
+{
+  "testCommand": "npm test",
+  "commitMessagePrefix": "feat",
+  "autoCommitAfterAgent": true,
+  "mainBranch": "main",
+  "branchPrefix": "feature/",
+  "agents": [
+    {
+      "id": "claude",
+      "executable": "claude",
+      "flags": "--dangerously-skip-permissions"
+    }
+  ],
+  "defaultAgentId": "claude",
+  "preRunCommands": [],
+  "autoCloseRunTerminal": true,
+  "agentCommands": []
+}
