@@ -29,13 +29,6 @@ type fileReadEntry struct {
 	messageID int // Incremented each time a new message batch is processed
 }
 
-// Global tracker shared between tools
-var globalReadTracker = &FileReadTracker{maxEntries: 10}
-
-// GetReadTracker returns the global file read tracker
-func GetReadTracker() *FileReadTracker {
-	return globalReadTracker
-}
 
 // RecordRead records that a file was read
 func (t *FileReadTracker) RecordRead(path string, messageID int) {
@@ -103,11 +96,6 @@ type pendingEdit struct {
 	editEndLine   int // 1-based line number where edit ends in new content
 }
 
-// globalPendingEdit stores the last previewed edit (shared between edit and edit.confirm)
-var globalPendingEdit *pendingEdit
-var pendingEditMu sync.Mutex
-
-
 // pendingWrite stores a pending write operation waiting for confirmation
 type pendingWrite struct {
 	path        string
@@ -117,19 +105,6 @@ type pendingWrite struct {
 	oldLines    int   // Lines in existing file (for info)
 }
 
-// globalPendingWrite stores the last pending write (shared between Write and Write.confirm)
-var globalPendingWrite *pendingWrite
-var pendingWriteMu sync.Mutex
-
-// GetPendingWritePath returns the path of the pending write, or empty if none
-func GetPendingWritePath() string {
-	pendingWriteMu.Lock()
-	defer pendingWriteMu.Unlock()
-	if globalPendingWrite == nil {
-		return ""
-	}
-	return globalPendingWrite.path
-}
 
 // PendingEditAutoResolveThreshold is the number of retries before auto-cancelling pending edit
 const PendingEditAutoResolveThreshold = 5
@@ -140,34 +115,11 @@ const PendingEditEscalateThreshold = 3
 // PendingEditMaxIgnoreCount is the maximum number of ignored responses before auto-cancel
 const PendingEditMaxIgnoreCount = 5
 
-// HasPendingEdit returns true if there's a pending edit waiting to be applied
-func HasPendingEdit() bool {
-	pendingEditMu.Lock()
-	defer pendingEditMu.Unlock()
-	return globalPendingEdit != nil
-}
-
-// GetPendingEditPath returns the path of the pending edit, or empty string if none
-func GetPendingEditPath() string {
-	pendingEditMu.Lock()
-	defer pendingEditMu.Unlock()
-	if globalPendingEdit == nil {
-		return ""
-	}
-	return globalPendingEdit.path
-}
-
-// ClearPendingEdit clears any pending edit (used when edit is cancelled)
-func ClearPendingEdit() {
-	pendingEditMu.Lock()
-	defer pendingEditMu.Unlock()
-	globalPendingEdit = nil
-}
 
 // CheckPendingEditBlockWithState checks if a tool call should be blocked due to pending edit.
 // Uses history-derived state as the source of truth for whether a pending edit exists.
-// RAM (globalPendingEdit) is only used for the diff content in error messages.
-func CheckPendingEditBlockWithState(toolName string, state PendingEditState, cfg *config.Config) *ToolError {
+// The toolCtx is used for the diff content in error messages.
+func CheckPendingEditBlockWithState(toolName string, state PendingEditState, cfg *config.Config, toolCtx *ToolContext) *ToolError {
 	// Use history state as source of truth
 	if !state.HasPending {
 		return nil // No pending edit according to history, allow all tools
@@ -183,18 +135,13 @@ func CheckPendingEditBlockWithState(toolName string, state PendingEditState, cfg
 	blockCount := state.BlockCountSincePending
 
 	// Try to get diff from RAM (may not exist if out of sync)
-	pendingEditMu.Lock()
-	var pendingDiff string
-	if globalPendingEdit != nil {
-		pendingDiff = globalPendingEdit.diff
-	}
-	pendingEditMu.Unlock()
+	pendingDiff := toolCtx.GetPendingEditDiff()
 
 	// Check auto-resolve threshold (based on history count)
 	maxIgnoreCount := GetMaxIgnoreCount(cfg)
 	if blockCount >= maxIgnoreCount {
 		// Auto-cancel the pending edit (clear RAM state)
-		ClearPendingEdit()
+		toolCtx.ClearPendingEdit()
 		// Return RuntimeError (not backtrackable) so LLM can proceed
 		return RuntimeError(fmt.Sprintf("AUTO-CANCELLED: Pending edit on '%s' was automatically cancelled after %d ignored responses. You may now proceed with your intended action.", pendingPath, blockCount))
 	}
@@ -237,17 +184,11 @@ func CheckPendingEditBlockWithState(toolName string, state PendingEditState, cfg
 
 // CheckPendingEditBlockWithConfig is the legacy version that uses RAM state.
 // Deprecated: Use CheckPendingEditBlockWithState with history-derived state instead.
-func CheckPendingEditBlockWithConfig(toolName string, args json.RawMessage, blockCount int, cfg *config.Config) *ToolError {
-	pendingEditMu.Lock()
-	pending := globalPendingEdit
-
-	if pending == nil {
-		pendingEditMu.Unlock()
+func CheckPendingEditBlockWithConfig(toolName string, args json.RawMessage, blockCount int, cfg *config.Config, toolCtx *ToolContext) *ToolError {
+	pendingPath := toolCtx.GetPendingEditPath()
+	if pendingPath == "" {
 		return nil // No pending edit, allow all tools
 	}
-
-	pendingPath := pending.path
-	pendingEditMu.Unlock()
 
 	// Convert to state-based call
 	state := PendingEditState{
@@ -255,7 +196,7 @@ func CheckPendingEditBlockWithConfig(toolName string, args json.RawMessage, bloc
 		PendingPath:            pendingPath,
 		BlockCountSincePending: blockCount,
 	}
-	return CheckPendingEditBlockWithState(toolName, state, cfg)
+	return CheckPendingEditBlockWithState(toolName, state, cfg, toolCtx)
 }
 
 // GetMaxIgnoreCount returns the maximum ignore count from config or default
@@ -340,9 +281,10 @@ type ReadFileTool struct {
 	maxFileSizeKB int // Max file size to read (default: 128KB)
 	maxLines      int // Max lines before truncation (default: 150)
 	maxBytes      int // Max bytes before truncation (default: 24KB)
+	toolCtx       *ToolContext
 }
 
-func NewReadFileTool(cfg *config.Config) *ReadFileTool {
+func NewReadFileTool(cfg *config.Config, toolCtx *ToolContext) *ReadFileTool {
 	maxFileSize := cfg.Tools.Read.MaxFileSizeKB
 	if maxFileSize == 0 {
 		maxFileSize = 128 // default 128KB
@@ -363,6 +305,7 @@ func NewReadFileTool(cfg *config.Config) *ReadFileTool {
 		maxFileSizeKB: maxFileSize,
 		maxLines:      maxLines,
 		maxBytes:      maxBytes,
+		toolCtx:       toolCtx,
 	}
 }
 
@@ -487,12 +430,12 @@ func (t *ReadFileTool) Call(ctx context.Context, args json.RawMessage) (any, err
 	// For character mode on large files, use seek-based reading (no memory limit)
 	if params.CharMode {
 		// Record that this file was read (for read-before-edit enforcement)
-		globalReadTracker.RecordRead(fullPath, globalReadTracker.CurrentMessageID())
+		t.toolCtx.ReadTracker.RecordRead(fullPath, t.toolCtx.ReadTracker.CurrentMessageID())
 		return t.readCharModeSeek(fullPath, fileSize, params.Start, params.Limit, params.Path)
 	}
 
 	// Record that this file was read (for read-before-edit enforcement)
-	globalReadTracker.RecordRead(fullPath, globalReadTracker.CurrentMessageID())
+	t.toolCtx.ReadTracker.RecordRead(fullPath, t.toolCtx.ReadTracker.CurrentMessageID())
 
 	return t.readLineMode(fullPath, params.Start, params.Limit, params.Path)
 }
@@ -1071,12 +1014,14 @@ func (t *ReadFileTool) readDirectory(fullPath, displayPath string) (any, error) 
 type WriteFileTool struct {
 	config        *config.Config
 	workspaceRoot string
+	toolCtx       *ToolContext
 }
 
-func NewWriteFileTool(cfg *config.Config) *WriteFileTool {
+func NewWriteFileTool(cfg *config.Config, toolCtx *ToolContext) *WriteFileTool {
 	return &WriteFileTool{
 		config:        cfg,
 		workspaceRoot: cfg.Workspace.Root,
+		toolCtx:       toolCtx,
 	}
 }
 
@@ -1194,15 +1139,13 @@ func (t *WriteFileTool) Call(ctx context.Context, args json.RawMessage) (any, er
 		}
 
 		// Store pending write
-		pendingWriteMu.Lock()
-		globalPendingWrite = &pendingWrite{
+		t.toolCtx.SetPendingWrite(&pendingWrite{
 			path:     displayPath,
 			fullPath: fullPath,
 			content:  params.Text,
 			oldSize:  fileInfo.Size(),
 			oldLines: oldLines,
-		}
-		pendingWriteMu.Unlock()
+		})
 
 		// Calculate new file stats
 		newLines := strings.Count(params.Text, "\n")
@@ -1375,11 +1318,12 @@ func applyPendingWrite(pending *pendingWrite) (any, error) {
 
 // ConfirmEditTool confirms and applies the last previewed edit from edit (only used in preview mode)
 type ConfirmEditTool struct {
-	config *config.Config
+	config  *config.Config
+	toolCtx *ToolContext
 }
 
-func NewConfirmEditTool(cfg *config.Config) *ConfirmEditTool {
-	return &ConfirmEditTool{config: cfg}
+func NewConfirmEditTool(cfg *config.Config, toolCtx *ToolContext) *ConfirmEditTool {
+	return &ConfirmEditTool{config: cfg, toolCtx: toolCtx}
 }
 
 func (t *ConfirmEditTool) Name() string {
@@ -1408,21 +1352,13 @@ func (t *ConfirmEditTool) PromptSection() string  { return "" } // Docs included
 
 func (t *ConfirmEditTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
 	// Check for pending edit first
-	pendingEditMu.Lock()
-	pending := globalPendingEdit
-	globalPendingEdit = nil // Clear after retrieving
-	pendingEditMu.Unlock()
-
+	pending := t.toolCtx.GetAndClearPendingEdit()
 	if pending != nil {
 		return applyPendingEdit(pending)
 	}
 
 	// If no pending edit, check for pending write (Edit.confirm and Write.confirm are synonyms)
-	pendingWriteMu.Lock()
-	pendingWrite := globalPendingWrite
-	globalPendingWrite = nil
-	pendingWriteMu.Unlock()
-
+	pendingWrite := t.toolCtx.GetAndClearPendingWrite()
 	if pendingWrite != nil {
 		return applyPendingWrite(pendingWrite)
 	}
@@ -1437,11 +1373,12 @@ func (t *ConfirmEditTool) Call(ctx context.Context, args json.RawMessage) (any, 
 
 // CancelEditTool cancels the pending edit from edit (only used in preview mode)
 type CancelEditTool struct {
-	config *config.Config
+	config  *config.Config
+	toolCtx *ToolContext
 }
 
-func NewCancelEditTool(cfg *config.Config) *CancelEditTool {
-	return &CancelEditTool{config: cfg}
+func NewCancelEditTool(cfg *config.Config, toolCtx *ToolContext) *CancelEditTool {
+	return &CancelEditTool{config: cfg, toolCtx: toolCtx}
 }
 
 func (t *CancelEditTool) Name() string {
@@ -1470,17 +1407,11 @@ func (t *CancelEditTool) PromptSection() string   { return "" } // Docs included
 
 func (t *CancelEditTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
 	// Check for pending edit first
-	pendingEditMu.Lock()
-	pending := globalPendingEdit
-	globalPendingEdit = nil // Clear the pending edit
-	pendingEditMu.Unlock()
+	pending := t.toolCtx.GetAndClearPendingEdit()
 
 	// If no pending edit, check for pending write (Edit.cancel and Write.cancel are synonyms)
 	if pending == nil {
-		pendingWriteMu.Lock()
-		pendingWrite := globalPendingWrite
-		globalPendingWrite = nil
-		pendingWriteMu.Unlock()
+		pendingWrite := t.toolCtx.GetAndClearPendingWrite()
 
 		if pendingWrite != nil {
 			return map[string]any{
@@ -1509,11 +1440,12 @@ func (t *CancelEditTool) Call(ctx context.Context, args json.RawMessage) (any, e
 
 // ConfirmWriteTool confirms and applies a pending write operation
 type ConfirmWriteTool struct {
-	config *config.Config
+	config  *config.Config
+	toolCtx *ToolContext
 }
 
-func NewConfirmWriteTool(cfg *config.Config) *ConfirmWriteTool {
-	return &ConfirmWriteTool{config: cfg}
+func NewConfirmWriteTool(cfg *config.Config, toolCtx *ToolContext) *ConfirmWriteTool {
+	return &ConfirmWriteTool{config: cfg, toolCtx: toolCtx}
 }
 
 func (t *ConfirmWriteTool) Name() string {
@@ -1542,21 +1474,13 @@ func (t *ConfirmWriteTool) PromptSection() string  { return "" } // Docs include
 
 func (t *ConfirmWriteTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
 	// Check for pending write first
-	pendingWriteMu.Lock()
-	pending := globalPendingWrite
-	globalPendingWrite = nil
-	pendingWriteMu.Unlock()
-
+	pending := t.toolCtx.GetAndClearPendingWrite()
 	if pending != nil {
 		return applyPendingWrite(pending)
 	}
 
 	// If no pending write, check for pending edit (Write.confirm and Edit.confirm are synonyms)
-	pendingEditMu.Lock()
-	pendingEdit := globalPendingEdit
-	globalPendingEdit = nil
-	pendingEditMu.Unlock()
-
+	pendingEdit := t.toolCtx.GetAndClearPendingEdit()
 	if pendingEdit != nil {
 		// Delegate to the same logic as ConfirmEditTool
 		return applyPendingEdit(pendingEdit)
@@ -1571,11 +1495,12 @@ func (t *ConfirmWriteTool) Call(ctx context.Context, args json.RawMessage) (any,
 
 // CancelWriteTool cancels a pending write operation
 type CancelWriteTool struct {
-	config *config.Config
+	config  *config.Config
+	toolCtx *ToolContext
 }
 
-func NewCancelWriteTool(cfg *config.Config) *CancelWriteTool {
-	return &CancelWriteTool{config: cfg}
+func NewCancelWriteTool(cfg *config.Config, toolCtx *ToolContext) *CancelWriteTool {
+	return &CancelWriteTool{config: cfg, toolCtx: toolCtx}
 }
 
 func (t *CancelWriteTool) Name() string {
@@ -1604,11 +1529,7 @@ func (t *CancelWriteTool) PromptSection() string  { return "" } // Docs included
 
 func (t *CancelWriteTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
 	// Check for pending write first
-	pendingWriteMu.Lock()
-	pending := globalPendingWrite
-	globalPendingWrite = nil
-	pendingWriteMu.Unlock()
-
+	pending := t.toolCtx.GetAndClearPendingWrite()
 	if pending != nil {
 		return map[string]any{
 			"success": true,
@@ -1618,11 +1539,7 @@ func (t *CancelWriteTool) Call(ctx context.Context, args json.RawMessage) (any, 
 	}
 
 	// If no pending write, check for pending edit (Write.cancel and Edit.cancel are synonyms)
-	pendingEditMu.Lock()
-	pendingEdit := globalPendingEdit
-	globalPendingEdit = nil
-	pendingEditMu.Unlock()
-
+	pendingEdit := t.toolCtx.GetAndClearPendingEdit()
 	if pendingEdit != nil {
 		return map[string]any{
 			"success":   true,

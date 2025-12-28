@@ -17,7 +17,7 @@ func TestNewSearchReplaceEditTool(t *testing.T) {
 	cfg.Tools.Edit.Enabled = true
 	cfg.Tools.SafetyConfirmations = make(map[string]config.SafetyConfirmation)
 
-	tool := NewSearchReplaceEditTool(cfg)
+	tool := NewSearchReplaceEditTool(cfg, NewToolContext())
 
 	if tool.Name() != "Edit" {
 		t.Errorf("Name() = %q, want 'Edit'", tool.Name())
@@ -35,7 +35,7 @@ func TestSearchReplaceEditTool_JSONSchema(t *testing.T) {
 	cfg.Workspace.Root = "/test"
 	cfg.Tools.SafetyConfirmations = make(map[string]config.SafetyConfirmation)
 
-	tool := NewSearchReplaceEditTool(cfg)
+	tool := NewSearchReplaceEditTool(cfg, NewToolContext())
 	schema := tool.JSONSchema()
 
 	// Verify schema has required properties
@@ -64,7 +64,7 @@ func TestSearchReplaceEditTool_CreateNewFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewSearchReplaceEditTool(cfg)
+	tool := NewSearchReplaceEditTool(cfg, NewToolContext())
 
 	t.Run("create new file with empty search", func(t *testing.T) {
 		testFile := filepath.Join(tmpDir, "new_file.go")
@@ -137,7 +137,8 @@ func TestSearchReplaceEditTool_ExactMatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewSearchReplaceEditTool(cfg)
+	toolCtx := NewToolContext()
+	tool := NewSearchReplaceEditTool(cfg, toolCtx)
 
 	t.Run("simple replacement", func(t *testing.T) {
 		testFile := filepath.Join(tmpDir, "simple.txt")
@@ -147,7 +148,7 @@ func TestSearchReplaceEditTool_ExactMatch(t *testing.T) {
 		}
 
 		// Mark file as read
-		globalReadTracker.RecordRead(testFile, globalReadTracker.CurrentMessageID())
+		toolCtx.ReadTracker.RecordRead(testFile, toolCtx.ReadTracker.CurrentMessageID())
 
 		args, _ := json.Marshal(map[string]string{
 			"path":    testFile,
@@ -181,7 +182,7 @@ func TestSearchReplaceEditTool_ExactMatch(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		globalReadTracker.RecordRead(testFile, globalReadTracker.CurrentMessageID())
+		toolCtx.ReadTracker.RecordRead(testFile, toolCtx.ReadTracker.CurrentMessageID())
 
 		args, _ := json.Marshal(map[string]string{
 			"path":    testFile,
@@ -216,7 +217,7 @@ func TestSearchReplaceEditTool_ExactMatch(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		globalReadTracker.RecordRead(testFile, globalReadTracker.CurrentMessageID())
+		toolCtx.ReadTracker.RecordRead(testFile, toolCtx.ReadTracker.CurrentMessageID())
 
 		args, _ := json.Marshal(map[string]string{
 			"path":    testFile,
@@ -249,14 +250,15 @@ func TestSearchReplaceEditTool_NoMatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewSearchReplaceEditTool(cfg)
+	toolCtx := NewToolContext()
+	tool := NewSearchReplaceEditTool(cfg, toolCtx)
 
 	testFile := filepath.Join(tmpDir, "nomatch.txt")
 	if err := os.WriteFile(testFile, []byte("hello world\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	globalReadTracker.RecordRead(testFile, globalReadTracker.CurrentMessageID())
+	toolCtx.ReadTracker.RecordRead(testFile, toolCtx.ReadTracker.CurrentMessageID())
 
 	args, _ := json.Marshal(map[string]string{
 		"path":    testFile,
@@ -282,7 +284,8 @@ func TestSearchReplaceEditTool_MultipleMatches(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewSearchReplaceEditTool(cfg)
+	toolCtx := NewToolContext()
+	tool := NewSearchReplaceEditTool(cfg, toolCtx)
 
 	testFile := filepath.Join(tmpDir, "multiple.txt")
 	content := "hello\nworld\nhello\nagain\n"
@@ -290,7 +293,7 @@ func TestSearchReplaceEditTool_MultipleMatches(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	globalReadTracker.RecordRead(testFile, globalReadTracker.CurrentMessageID())
+	toolCtx.ReadTracker.RecordRead(testFile, toolCtx.ReadTracker.CurrentMessageID())
 
 	args, _ := json.Marshal(map[string]string{
 		"path":    testFile,
@@ -326,7 +329,7 @@ func TestSearchReplaceEditTool_NewFileWithSearch(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewSearchReplaceEditTool(cfg)
+	tool := NewSearchReplaceEditTool(cfg, NewToolContext())
 
 	testFile := filepath.Join(tmpDir, "nonexistent.txt")
 
@@ -354,14 +357,15 @@ func TestSearchReplaceEditTool_EmptySearchExistingFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewSearchReplaceEditTool(cfg)
+	toolCtx := NewToolContext()
+	tool := NewSearchReplaceEditTool(cfg, toolCtx)
 
 	testFile := filepath.Join(tmpDir, "existing.txt")
 	if err := os.WriteFile(testFile, []byte("content\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	globalReadTracker.RecordRead(testFile, globalReadTracker.CurrentMessageID())
+	toolCtx.ReadTracker.RecordRead(testFile, toolCtx.ReadTracker.CurrentMessageID())
 
 	args, _ := json.Marshal(map[string]string{
 		"path":    testFile,
@@ -387,7 +391,8 @@ func TestSearchReplaceEditTool_WhitespaceNormalization(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewSearchReplaceEditTool(cfg)
+	toolCtx := NewToolContext()
+	tool := NewSearchReplaceEditTool(cfg, toolCtx)
 
 	t.Run("trailing whitespace normalization", func(t *testing.T) {
 		testFile := filepath.Join(tmpDir, "trailing_ws.txt")
@@ -397,7 +402,7 @@ func TestSearchReplaceEditTool_WhitespaceNormalization(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		globalReadTracker.RecordRead(testFile, globalReadTracker.CurrentMessageID())
+		toolCtx.ReadTracker.RecordRead(testFile, toolCtx.ReadTracker.CurrentMessageID())
 
 		// Search without trailing spaces should still match
 		args, _ := json.Marshal(map[string]string{
@@ -423,7 +428,8 @@ func TestSearchReplaceEditTool_FuzzyMatch(t *testing.T) {
 	cfg := newTestEditConfig(tmpDir)
 	cfg.Tools.Edit.FuzzyThreshold = 0.8
 
-	tool := NewSearchReplaceEditTool(cfg)
+	toolCtx := NewToolContext()
+	tool := NewSearchReplaceEditTool(cfg, toolCtx)
 
 	t.Run("fuzzy match with minor difference", func(t *testing.T) {
 		testFile := filepath.Join(tmpDir, "fuzzy.txt")
@@ -432,7 +438,7 @@ func TestSearchReplaceEditTool_FuzzyMatch(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		globalReadTracker.RecordRead(testFile, globalReadTracker.CurrentMessageID())
+		toolCtx.ReadTracker.RecordRead(testFile, toolCtx.ReadTracker.CurrentMessageID())
 
 		// Search with slightly different content (should fuzzy match)
 		args, _ := json.Marshal(map[string]string{
@@ -465,7 +471,8 @@ func TestSearchReplaceEditTool_PreviewMode(t *testing.T) {
 	cfg := newTestEditConfig(tmpDir)
 	cfg.Tools.Edit.PreviewMode = true
 
-	tool := NewSearchReplaceEditTool(cfg)
+	toolCtx := NewToolContext()
+	tool := NewSearchReplaceEditTool(cfg, toolCtx)
 
 	testFile := filepath.Join(tmpDir, "preview.txt")
 	content := "hello world\n"
@@ -473,7 +480,7 @@ func TestSearchReplaceEditTool_PreviewMode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	globalReadTracker.RecordRead(testFile, globalReadTracker.CurrentMessageID())
+	toolCtx.ReadTracker.RecordRead(testFile, toolCtx.ReadTracker.CurrentMessageID())
 
 	args, _ := json.Marshal(map[string]string{
 		"path":    testFile,
@@ -511,14 +518,15 @@ func TestSearchReplaceEditTool_PreviewMode(t *testing.T) {
 	}
 
 	// Clean up pending edit
-	ClearPendingEdit()
+	toolCtx.ClearPendingEdit()
 }
 
 func TestSearchReplaceEditTool_DiffGeneration(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewSearchReplaceEditTool(cfg)
+	toolCtx := NewToolContext()
+	tool := NewSearchReplaceEditTool(cfg, toolCtx)
 
 	testFile := filepath.Join(tmpDir, "diff.txt")
 	content := "line1\nold_line\nline3\n"
@@ -526,7 +534,7 @@ func TestSearchReplaceEditTool_DiffGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	globalReadTracker.RecordRead(testFile, globalReadTracker.CurrentMessageID())
+	toolCtx.ReadTracker.RecordRead(testFile, toolCtx.ReadTracker.CurrentMessageID())
 
 	args, _ := json.Marshal(map[string]string{
 		"path":    testFile,
@@ -558,7 +566,7 @@ func TestSearchReplaceEditTool_InvalidJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewSearchReplaceEditTool(cfg)
+	tool := NewSearchReplaceEditTool(cfg, NewToolContext())
 
 	_, err := tool.Call(context.Background(), []byte("invalid json"))
 	if err == nil {
@@ -573,7 +581,7 @@ func TestSearchReplaceEditTool_PromptSection(t *testing.T) {
 		cfg.Tools.Edit.PreviewMode = false
 		cfg.Tools.SafetyConfirmations = make(map[string]config.SafetyConfirmation)
 
-		tool := NewSearchReplaceEditTool(cfg)
+		tool := NewSearchReplaceEditTool(cfg, NewToolContext())
 		section := tool.PromptSection()
 
 		if strings.Contains(section, "Preview Mode") {
@@ -587,7 +595,7 @@ func TestSearchReplaceEditTool_PromptSection(t *testing.T) {
 		cfg.Tools.Edit.PreviewMode = true
 		cfg.Tools.SafetyConfirmations = make(map[string]config.SafetyConfirmation)
 
-		tool := NewSearchReplaceEditTool(cfg)
+		tool := NewSearchReplaceEditTool(cfg, NewToolContext())
 		section := tool.PromptSection()
 
 		if !strings.Contains(section, "Preview Mode") {
@@ -600,7 +608,8 @@ func TestSearchReplaceEditTool_SimilarContentSuggestion(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewSearchReplaceEditTool(cfg)
+	toolCtx := NewToolContext()
+	tool := NewSearchReplaceEditTool(cfg, toolCtx)
 
 	testFile := filepath.Join(tmpDir, "similar.txt")
 	content := "function processData() {\n    return result\n}\n"
@@ -608,7 +617,7 @@ func TestSearchReplaceEditTool_SimilarContentSuggestion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	globalReadTracker.RecordRead(testFile, globalReadTracker.CurrentMessageID())
+	toolCtx.ReadTracker.RecordRead(testFile, toolCtx.ReadTracker.CurrentMessageID())
 
 	// Search for something similar but not exact
 	args, _ := json.Marshal(map[string]string{

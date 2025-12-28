@@ -16,11 +16,12 @@ type UnifiedEditTool struct {
 }
 
 // NewUnifiedEditTool creates a new UnifiedEditTool
-func NewUnifiedEditTool(cfg *config.Config) *UnifiedEditTool {
+func NewUnifiedEditTool(cfg *config.Config, toolCtx *ToolContext) *UnifiedEditTool {
 	return &UnifiedEditTool{
 		BaseEditTool: BaseEditTool{
 			Config:        cfg,
 			WorkspaceRoot: cfg.Workspace.Root,
+			ToolCtx:       toolCtx,
 		},
 	}
 }
@@ -328,7 +329,7 @@ func (t *UnifiedEditTool) callSearchReplaceMode(ctx context.Context, path, searc
 	}
 
 	// Clear any pending edit for this file (LLM is revising)
-	ClearPendingEditForPath(path)
+	ClearPendingEditForPath(t.ToolCtx, path)
 
 	// Read file
 	content, isNewFile, err := t.ReadFileForEdit(fullPath)
@@ -450,7 +451,7 @@ func (t *UnifiedEditTool) callLineMode(ctx context.Context, path string, startLi
 	}
 
 	// Clear any pending edit for this file (LLM is revising)
-	ClearPendingEditForPath(path)
+	ClearPendingEditForPath(t.ToolCtx, path)
 
 	// Read file (or prepare for new file creation)
 	content, err := os.ReadFile(fullPath)

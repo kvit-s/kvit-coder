@@ -84,11 +84,12 @@ type PatchEditTool struct {
 }
 
 // NewPatchEditTool creates a new PatchEditTool
-func NewPatchEditTool(cfg *config.Config) *PatchEditTool {
+func NewPatchEditTool(cfg *config.Config, toolCtx *ToolContext) *PatchEditTool {
 	return &PatchEditTool{
 		BaseEditTool: BaseEditTool{
 			Config:        cfg,
 			WorkspaceRoot: cfg.Workspace.Root,
+			ToolCtx:       toolCtx,
 		},
 	}
 }

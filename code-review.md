@@ -18,59 +18,6 @@ kvit-coder is a well-architected minimal coding agent written in Go. The codebas
 
 ---
 
-## Security Analysis
-
-### Good Security Practices
-
-1. **Path Safety System** (`internal/config/config.go:281-356`)
-   - Multi-mode path safety: `block`, `warn`, `ask_once`, `ask_always`
-   - Workspace sandboxing with configurable `denied_paths` and `allowed_paths`
-   - Proper path normalization to prevent directory traversal
-
-2. **Shell Command Safety** (`internal/tools/shell.go:315-403`)
-   - Blocklist for dangerous commands (sudo, apt, shutdown, etc.)
-   - Configurable allowlist/blocklist
-   - Blocks `sed -i` and `awk` when Edit tool is available
-   - Process group handling for proper cleanup on timeout
-
-3. **Workspace Locking** (`internal/workspace/lock.go`)
-   - Exclusive file locks prevent concurrent instances on same workspace
-   - Signal handlers for graceful cleanup on SIGINT/SIGTERM
-
-4. **Session Locking** (`internal/session/manager.go:239-266`)
-   - flock-based locking prevents concurrent session access
-
-### Security Concerns
-
-1. **Command Injection Potential** (`internal/tools/shell.go:226`)
-   ```go
-   cmd := exec.Command("sh", "-c", command)
-   ```
-   The command is passed directly to shell. While blocklists exist, sophisticated shell escapes could bypass them. Consider:
-   - Using `shlex`-style parsing for safer command execution
-   - Adding more comprehensive blocklist patterns
-
-2. **Incomplete Blocklist** (`internal/tools/shell.go:347-355`)
-   Missing potentially dangerous commands:
-   - `curl` / `wget` (data exfiltration)
-   - `nc` / `netcat` (network tools)
-   - `python -c` / `perl -e` (arbitrary code execution)
-   - `eval` / `exec` (shell builtins)
-
-3. **Path Traversal in Patch Parsing** (`internal/tools/edit.go:738-869`)
-   The `ParsePatch` function accepts file paths from LLM without explicit validation. Malicious patches could target sensitive files outside workspace.
-
-4. **Insecure Random** (`internal/session/manager.go:137`)
-   ```go
-   r := rand.New(rand.NewSource(time.Now().UnixNano()))
-   ```
-   Uses `math/rand` for session name generation. While low-risk for this use case, `crypto/rand` is preferred for any security-sensitive randomness.
-
-5. **API Key Handling** (`internal/config/config.go:174-178`)
-   API key is read from environment variable but stored in struct. Consider clearing the key from memory after use.
-
----
-
 ## Code Quality Analysis
 
 ### Strengths

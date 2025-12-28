@@ -13,14 +13,16 @@ import (
 
 // RestoreFileTool restores a file to its original state at session start
 type RestoreFileTool struct {
-	cfg            *config.Config
-	checkpointMgr  *checkpoint.Manager
+	cfg           *config.Config
+	checkpointMgr *checkpoint.Manager
+	toolCtx       *ToolContext
 }
 
-func NewRestoreFileTool(cfg *config.Config, mgr *checkpoint.Manager) *RestoreFileTool {
+func NewRestoreFileTool(cfg *config.Config, mgr *checkpoint.Manager, toolCtx *ToolContext) *RestoreFileTool {
 	return &RestoreFileTool{
 		cfg:           cfg,
 		checkpointMgr: mgr,
+		toolCtx:       toolCtx,
 	}
 }
 
@@ -169,7 +171,7 @@ func (t *RestoreFileTool) Call(ctx context.Context, args json.RawMessage) (any, 
 	}
 
 	// Record that this file was read (for read-before-edit enforcement)
-	globalReadTracker.RecordRead(absPath, globalReadTracker.CurrentMessageID())
+	t.toolCtx.ReadTracker.RecordRead(absPath, t.toolCtx.ReadTracker.CurrentMessageID())
 
 	return map[string]any{
 		"success":       true,

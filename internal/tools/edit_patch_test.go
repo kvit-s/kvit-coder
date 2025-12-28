@@ -17,7 +17,7 @@ func TestNewPatchEditTool(t *testing.T) {
 	cfg.Tools.Edit.Enabled = true
 	cfg.Tools.SafetyConfirmations = make(map[string]config.SafetyConfirmation)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	if tool.Name() != "Edit" {
 		t.Errorf("Name() = %q, want 'Edit'", tool.Name())
@@ -35,7 +35,7 @@ func TestPatchEditTool_JSONSchema(t *testing.T) {
 	cfg.Workspace.Root = "/test"
 	cfg.Tools.SafetyConfirmations = make(map[string]config.SafetyConfirmation)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 	schema := tool.JSONSchema()
 
 	props, ok := schema["properties"].(map[string]any)
@@ -60,7 +60,7 @@ func TestPatchEditTool_ParsePatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	tests := []struct {
 		name          string
@@ -175,7 +175,7 @@ func TestPatchEditTool_ApplyUpdatePatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	t.Run("simple update", func(t *testing.T) {
 		testFile := filepath.Join(tmpDir, "update_simple.txt")
@@ -338,7 +338,7 @@ func TestPatchEditTool_ApplyAddFilePatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	t.Run("add new file", func(t *testing.T) {
 		testFile := filepath.Join(tmpDir, "brand_new.txt")
@@ -430,7 +430,7 @@ func TestPatchEditTool_ApplyDeleteFilePatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	t.Run("delete existing file", func(t *testing.T) {
 		testFile := filepath.Join(tmpDir, "to_delete.txt")
@@ -484,7 +484,7 @@ func TestPatchEditTool_MultiFilePatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	file1 := filepath.Join(tmpDir, "file1.txt")
 	file2 := filepath.Join(tmpDir, "file2.txt")
@@ -535,7 +535,7 @@ func TestPatchEditTool_ContextMatching(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	t.Run("context with trailing whitespace", func(t *testing.T) {
 		testFile := filepath.Join(tmpDir, "trailing_ws.txt")
@@ -610,7 +610,7 @@ func TestPatchEditTool_EmptyPatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	args, _ := json.Marshal(map[string]string{"patch": ""})
 
@@ -624,7 +624,7 @@ func TestPatchEditTool_NoOperations(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	patch := `*** Begin Patch
 *** End Patch`
@@ -641,7 +641,7 @@ func TestPatchEditTool_InvalidJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	_, err := tool.Call(context.Background(), []byte("invalid json"))
 	if err == nil {
@@ -653,7 +653,7 @@ func TestPatchEditTool_ContextMismatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	testFile := filepath.Join(tmpDir, "mismatch.txt")
 	content := "actual line1\nactual line2\n"
@@ -686,7 +686,7 @@ func TestPatchEditTool_DeletionMismatch(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	testFile := filepath.Join(tmpDir, "deletion_mismatch.txt")
 	content := "line1\nactual content\nline3\n"
@@ -720,7 +720,7 @@ func TestPatchEditTool_UpdateNonExistentFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	testFile := filepath.Join(tmpDir, "nonexistent.txt")
 
@@ -751,7 +751,7 @@ func TestPatchEditTool_PromptSection(t *testing.T) {
 		cfg.Tools.Edit.PreviewMode = false
 		cfg.Tools.SafetyConfirmations = make(map[string]config.SafetyConfirmation)
 
-		tool := NewPatchEditTool(cfg)
+		tool := NewPatchEditTool(cfg, NewToolContext())
 		section := tool.PromptSection()
 
 		if strings.Contains(section, "Preview Mode") {
@@ -765,7 +765,7 @@ func TestPatchEditTool_PromptSection(t *testing.T) {
 		cfg.Tools.Edit.PreviewMode = true
 		cfg.Tools.SafetyConfirmations = make(map[string]config.SafetyConfirmation)
 
-		tool := NewPatchEditTool(cfg)
+		tool := NewPatchEditTool(cfg, NewToolContext())
 		section := tool.PromptSection()
 
 		if !strings.Contains(section, "Preview Mode") {
@@ -778,7 +778,7 @@ func TestPatchEditTool_DiffOutput(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	testFile := filepath.Join(tmpDir, "diff_output.txt")
 	content := "line1\nold_line\nline3\n"
@@ -820,7 +820,7 @@ func TestPatchEditTool_Check(t *testing.T) {
 	cfg.Workspace.Root = "/test"
 	cfg.Tools.SafetyConfirmations = make(map[string]config.SafetyConfirmation)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	// Patch mode doesn't require read-before-edit check
 	err := tool.Check(context.Background(), []byte(`{"patch": "test"}`))
@@ -833,7 +833,7 @@ func TestMatchContext(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	fileLines := []string{
 		"package main",
@@ -895,7 +895,7 @@ func TestFindScope(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	lines := []string{
 		"package main",
@@ -955,7 +955,7 @@ func TestApplyChunk(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfg := newTestEditConfig(tmpDir)
 
-	tool := NewPatchEditTool(cfg)
+	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	t.Run("simple replacement", func(t *testing.T) {
 		lines := []string{"a", "b", "c", "d"}
