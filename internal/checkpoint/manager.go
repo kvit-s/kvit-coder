@@ -241,7 +241,7 @@ func (m *Manager) commitTurn(turnNum int, isRestore bool, restoredTo int) error 
 	)
 	cmd.Dir = m.checkpointDir
 	// Ignore errors - these files might not exist yet
-	cmd.CombinedOutput()
+	_, _ = cmd.CombinedOutput()
 
 	// Create commit message
 	commitMsg := fmt.Sprintf("turn-%d", turnNum)

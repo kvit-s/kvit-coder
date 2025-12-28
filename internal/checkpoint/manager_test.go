@@ -50,7 +50,7 @@ func TestManagerInitialize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
-	defer mgr.Cleanup()
+	defer func() { _ = mgr.Cleanup() }()
 
 	if err := mgr.Initialize(); err != nil {
 		t.Fatalf("Failed to initialize: %v", err)
@@ -87,7 +87,7 @@ func TestManagerTurnLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
-	defer mgr.Cleanup()
+	defer func() { _ = mgr.Cleanup() }()
 
 	if err := mgr.Initialize(); err != nil {
 		t.Fatalf("Failed to initialize: %v", err)
@@ -149,7 +149,7 @@ func TestManagerRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
-	defer mgr.Cleanup()
+	defer func() { _ = mgr.Cleanup() }()
 
 	if err := mgr.Initialize(); err != nil {
 		t.Fatalf("Failed to initialize: %v", err)
@@ -220,7 +220,7 @@ func TestManagerDiff(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
-	defer mgr.Cleanup()
+	defer func() { _ = mgr.Cleanup() }()
 
 	if err := mgr.Initialize(); err != nil {
 		t.Fatalf("Failed to initialize: %v", err)
@@ -270,7 +270,7 @@ func TestManagerList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
-	defer mgr.Cleanup()
+	defer func() { _ = mgr.Cleanup() }()
 
 	if err := mgr.Initialize(); err != nil {
 		t.Fatalf("Failed to initialize: %v", err)

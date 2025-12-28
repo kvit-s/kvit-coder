@@ -26,7 +26,7 @@ func TestGetGenerationStats(t *testing.T) {
 		// Return mock stats
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"data": {
 				"id": "gen_123_abc",
 				"tokens_prompt": 150,
@@ -67,7 +67,7 @@ func TestGetGenerationStatsError(t *testing.T) {
 	// Mock server that returns error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error": "generation not found"}`))
+		_, _ = w.Write([]byte(`{"error": "generation not found"}`))
 	}))
 	defer server.Close()
 
@@ -84,7 +84,7 @@ func TestGetGenerationStatsInvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"data": invalid json`))
+		_, _ = w.Write([]byte(`{"data": invalid json`))
 	}))
 	defer server.Close()
 
