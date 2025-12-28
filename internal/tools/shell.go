@@ -345,13 +345,31 @@ func (t *ShellAdvancedTool) validateCommand(cmd string, baseDir string) error {
 
 	// Block dangerous commands
 	blocked := []string{
+		// Privilege escalation
 		"sudo ", "sudo\t",
 		"su ", "su\t",
-		"rm -rf /", "rm -rf ~",
-		"apt ", "apt-get ", "yum ", "brew ",
-		"shutdown", "reboot",
 		"chroot ",
+		// Destructive filesystem operations
+		"rm -rf /", "rm -rf ~",
 		"mkfs", "dd if=", // disk formatting/writing
+		// Package managers (can modify system)
+		"apt ", "apt-get ", "yum ", "brew ",
+		// System control
+		"shutdown", "reboot",
+		// Network tools (data exfiltration risk)
+		"curl ", "curl\t",
+		"wget ", "wget\t",
+		"nc ", "nc\t",
+		"netcat ", "netcat\t",
+		"ncat ", "ncat\t",
+		// Arbitrary code execution via interpreters
+		"python -c", "python2 -c", "python3 -c",
+		"perl -e", "perl -E",
+		"ruby -e",
+		"node -e", "node --eval",
+		"php -r",
+		// Shell builtins that can execute arbitrary code
+		"eval ", "eval\t",
 	}
 
 	// Block file edit commands - only when Edit tool is available as an alternative
