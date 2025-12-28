@@ -4,6 +4,7 @@ package workspace
 import (
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"syscall"
 )
@@ -14,6 +15,7 @@ const lockFileName = ".kvit-coder.lock"
 type Lock struct {
 	file     *os.File
 	lockPath string
+	sigChan  chan os.Signal
 }
 
 // AcquireLock attempts to acquire an exclusive lock on a workspace directory.
@@ -40,14 +42,41 @@ func AcquireLock(workspaceRoot string) (*Lock, error) {
 	lockFile.Seek(0, 0)
 	fmt.Fprintf(lockFile, "%d\n", os.Getpid())
 
-	return &Lock{
+	lock := &Lock{
 		file:     lockFile,
 		lockPath: lockPath,
-	}, nil
+		sigChan:  make(chan os.Signal, 1),
+	}
+
+	// Register signal handler to clean up lock file on Ctrl+C
+	signal.Notify(lock.sigChan, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-lock.sigChan
+		if sig != nil {
+			lock.cleanup()
+			os.Exit(130) // 128 + SIGINT(2)
+		}
+	}()
+
+	return lock, nil
 }
 
 // Release releases the workspace lock and removes the lock file.
 func (l *Lock) Release() {
+	if l.file == nil {
+		return
+	}
+	// Stop listening for signals
+	if l.sigChan != nil {
+		signal.Stop(l.sigChan)
+		close(l.sigChan)
+		l.sigChan = nil
+	}
+	l.cleanup()
+}
+
+// cleanup performs the actual file cleanup (called by both Release and signal handler)
+func (l *Lock) cleanup() {
 	if l.file == nil {
 		return
 	}

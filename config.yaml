@@ -1,5 +1,5 @@
 llm:
-  base_url: "http://localhost:8080/v1"  # Your OpenAI-compatible endpoint
+  base_url: "http://192.168.8.20:8080/v1"  # Your OpenAI-compatible endpoint
   model: "ministral-3-14b"
   context: 120000
   merge_thinking: false  # true = merge reasoning into content, false = discard
