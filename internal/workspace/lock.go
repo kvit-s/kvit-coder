@@ -41,8 +41,8 @@ func AcquireLock(workspaceRoot string) (*Lock, error) {
 	}
 
 	// Write PID to lock file for debugging
-	lockFile.Truncate(0)
-	lockFile.Seek(0, 0)
+	_ = lockFile.Truncate(0)
+	_, _ = lockFile.Seek(0, 0)
 	fmt.Fprintf(lockFile, "%d\n", os.Getpid())
 
 	lock := &Lock{
@@ -90,7 +90,7 @@ func (l *Lock) cleanup() {
 		if l.file == nil {
 			return
 		}
-		syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN)
+		_ = syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN)
 		l.file.Close()
 		os.Remove(l.lockPath)
 		l.file = nil
