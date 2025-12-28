@@ -433,10 +433,6 @@ func (b *BaseEditTool) StreamingLineReplace(fullPath string, startLine, endLine 
 		tempFile.Close()
 		return fmt.Errorf("write replacement: %w", err)
 	}
-	// Ensure newText ends with newline if there are more lines after
-	if len(newText) > 0 && !strings.HasSuffix(newText, "\n") {
-		// We'll check if there are more lines after
-	}
 
 	// Phase 3: Skip the lines being replaced
 	for lineNum < endLine {

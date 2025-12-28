@@ -282,19 +282,10 @@ func (t *UnifiedEditTool) addFile(path, fullPath string, chunks []PatchChunk) (m
 
 // updateFile modifies an existing file using patch chunks
 func (t *UnifiedEditTool) updateFile(ctx context.Context, path, fullPath string, chunks []PatchChunk) (map[string]any, string, error) {
-	// Check if file is large
-	isLarge, _, err := IsLargeFile(fullPath)
-	if err != nil {
-		return nil, "", err
-	}
+	// Note: Large file streaming can be added later if needed
+	// For now, load the file regardless of size
 
-	// For large files, delegate to streaming handler (using PatchEditTool's logic)
-	if isLarge {
-		// For now, load the file anyway - large file streaming can be added later
-		// This is a simplification; the full implementation would use streaming
-	}
-
-	// Standard approach for small files - load entire file
+	// Standard approach - load entire file
 	content, isNewFile, err := t.ReadFileForEdit(fullPath)
 	if err != nil {
 		return nil, "", err
@@ -336,19 +327,8 @@ func (t *UnifiedEditTool) callSearchReplaceMode(ctx context.Context, path, searc
 		return nil, err
 	}
 
-	// Check if file is large
-	isLarge, _, err := IsLargeFile(fullPath)
-	if err != nil {
-		return nil, err
-	}
-
 	// Clear any pending edit for this file (LLM is revising)
 	ClearPendingEditForPath(path)
-
-	// For large files, delegate to SearchReplaceEditTool's streaming logic
-	if isLarge {
-		// For now, load the file anyway - large file handling can be improved later
-	}
 
 	// Read file
 	content, isNewFile, err := t.ReadFileForEdit(fullPath)

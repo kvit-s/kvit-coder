@@ -17,7 +17,6 @@ var (
 	version    = "dev"
 	commitHash = "dev"
 	commitDate = "unknown"
-	buildDate  = "unknown"
 )
 
 func main() {

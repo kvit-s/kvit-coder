@@ -96,9 +96,7 @@ func (u *UI) Run() error {
 
 		// Add to history and save
 		u.history = append(u.history, input)
-		if err := ui.SaveHistory(u.historyFile, u.history); err != nil {
-			// Silently ignore history save errors
-		}
+		_ = ui.SaveHistory(u.historyFile, u.history) // Silently ignore history save errors
 
 		// Handle UI commands
 		if strings.HasPrefix(input, ":") {
@@ -295,12 +293,6 @@ func (u *UI) runAgent(prompt string) {
 		} else {
 			fmt.Printf("\033[31m[error] Agent failed: %v\033[0m\n", err)
 		}
-	}
-
-	// If we didn't have a session, check if one was created
-	if u.currentSession == "" {
-		// The agent auto-generates a session, but we don't capture it yet
-		// In the future, we could parse the agent's output to get the session name
 	}
 
 	fmt.Println()
