@@ -35,7 +35,7 @@ func main() {
 
 	// Handle --version
 	if *showVersion {
-		fmt.Printf("%s-%s-%s\n", version, commitDate, commitHash)
+		fmt.Printf("%s-%s\n", commitDate, commitHash)
 		return
 	}
 
