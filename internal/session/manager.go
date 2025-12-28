@@ -3,9 +3,9 @@ package session
 
 import (
 	"bufio"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"sort"
@@ -130,13 +130,21 @@ func (m *Manager) AppendToSession(name string, messages []llm.Message) error {
 }
 
 // GenerateSessionName generates a unique session name in YYYY-MM-DD-random6 format.
+// Uses crypto/rand for secure random suffix generation.
 func (m *Manager) GenerateSessionName() string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 
+	// Generate 6 random bytes using crypto/rand
+	randomBytes := make([]byte, 6)
+	if _, err := rand.Read(randomBytes); err != nil {
+		// Fallback to timestamp-based suffix if crypto/rand fails (extremely rare)
+		return fmt.Sprintf("%s-%d", time.Now().Format("2006-01-02"), time.Now().UnixNano()%1000000)
+	}
+
+	// Map random bytes to charset
 	suffix := make([]byte, 6)
-	for i := range suffix {
-		suffix[i] = charset[r.Intn(len(charset))]
+	for i, b := range randomBytes {
+		suffix[i] = charset[int(b)%len(charset)]
 	}
 
 	return fmt.Sprintf("%s-%s", time.Now().Format("2006-01-02"), string(suffix))
