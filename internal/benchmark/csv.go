@@ -200,12 +200,12 @@ func LoadResults(path string) ([]RunResult, error) {
 
 		var toolCalls []ToolCallLog
 		if row[toolCallsIdx] != "" && row[toolCallsIdx] != "null" {
-			json.Unmarshal([]byte(row[toolCallsIdx]), &toolCalls)
+			_ = json.Unmarshal([]byte(row[toolCallsIdx]), &toolCalls)
 		}
 
 		var errors []string
 		if row[errorsIdx] != "" && row[errorsIdx] != "null" {
-			json.Unmarshal([]byte(row[errorsIdx]), &errors)
+			_ = json.Unmarshal([]byte(row[errorsIdx]), &errors)
 		}
 
 		results = append(results, RunResult{

@@ -303,10 +303,10 @@ func (t *ShellAdvancedTool) killProcessGroup(cmd *exec.Cmd) {
 	// Kill the entire process group (negative PID)
 	pgid, err := syscall.Getpgid(cmd.Process.Pid)
 	if err == nil {
-		syscall.Kill(-pgid, syscall.SIGKILL)
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 	} else {
 		// Fallback: kill just the process
-		cmd.Process.Kill()
+		_ = cmd.Process.Kill()
 	}
 }
 

@@ -252,12 +252,12 @@ func (m *Manager) AcquireLock(name string) (func(), error) {
 	}
 
 	// Write PID to lock file for debugging
-	lockFile.Truncate(0)
-	lockFile.Seek(0, 0)
+	_ = lockFile.Truncate(0)
+	_, _ = lockFile.Seek(0, 0)
 	fmt.Fprintf(lockFile, "%d\n", os.Getpid())
 
 	cleanup := func() {
-		syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
+		_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
 		lockFile.Close()
 		os.Remove(lockPath)
 	}
