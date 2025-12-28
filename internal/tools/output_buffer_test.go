@@ -15,7 +15,7 @@ func TestOutputBuffer_SmallOutput(t *testing.T) {
 
 	// Write small output (under thresholds)
 	smallOutput := "Line 1\nLine 2\nLine 3\n"
-	buf.Write([]byte(smallOutput))
+	_, _ = buf.Write([]byte(smallOutput))
 
 	result, err := buf.FormatForLLM()
 	if err != nil {
@@ -45,7 +45,7 @@ func TestOutputBuffer_LargeLineCount(t *testing.T) {
 		sb.WriteString(strings.Repeat("X", 10))
 		sb.WriteString("\n")
 	}
-	buf.Write([]byte(sb.String()))
+	_, _ = buf.Write([]byte(sb.String()))
 
 	result, err := buf.FormatForLLM()
 	if err != nil {
@@ -76,7 +76,7 @@ func TestOutputBuffer_LargeByteCount(t *testing.T) {
 
 	// Write 50KB (exceeds 24KB threshold)
 	largeOutput := strings.Repeat("X", 50*1024)
-	buf.Write([]byte(largeOutput))
+	_, _ = buf.Write([]byte(largeOutput))
 
 	result, err := buf.FormatForLLM()
 	if err != nil {
@@ -108,7 +108,7 @@ func TestOutputBuffer_SpillToTempFile(t *testing.T) {
 	chunkSize := 1024 * 1024 // 1MB chunks
 	chunk := strings.Repeat("X", chunkSize)
 	for i := 0; i < 25; i++ {
-		buf.Write([]byte(chunk))
+		_, _ = buf.Write([]byte(chunk))
 	}
 
 	result, err := buf.FormatForLLM()
@@ -147,7 +147,7 @@ func TestOutputBuffer_ExactlyAtThreshold(t *testing.T) {
 		sb.WriteString("\n")
 	}
 	output := sb.String()
-	buf.Write([]byte(output))
+	_, _ = buf.Write([]byte(output))
 
 	result, err := buf.FormatForLLM()
 	if err != nil {
@@ -181,7 +181,7 @@ func TestOutputBuffer_JustAboveThreshold(t *testing.T) {
 		sb.WriteString(strings.Repeat("X", 10))
 		sb.WriteString("\n")
 	}
-	buf.Write([]byte(sb.String()))
+	_, _ = buf.Write([]byte(sb.String()))
 
 	result, err := buf.FormatForLLM()
 	if err != nil {

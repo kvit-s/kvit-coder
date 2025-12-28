@@ -111,9 +111,9 @@ func (b *BaseEditTool) WriteFileAtomic(fullPath, content string, isNewFile bool)
 	// Get file permissions from original file (or use default for new files)
 	info, _ := os.Stat(fullPath)
 	if info != nil {
-		os.Chmod(tempPath, info.Mode())
+		_ = os.Chmod(tempPath, info.Mode())
 	} else {
-		os.Chmod(tempPath, 0644) // Default permissions for new files
+		_ = os.Chmod(tempPath, 0644) // Default permissions for new files
 	}
 
 	// Atomic rename
@@ -459,7 +459,7 @@ func (b *BaseEditTool) StreamingLineReplace(fullPath string, startLine, endLine 
 		// Peek to see if there's more content
 		peek, err := reader.Peek(1)
 		if err == nil && len(peek) > 0 {
-			writer.WriteString("\n")
+			_, _ = writer.WriteString("\n")
 		}
 	}
 
@@ -479,7 +479,7 @@ func (b *BaseEditTool) StreamingLineReplace(fullPath string, startLine, endLine 
 
 	// Preserve original file permissions
 	if info, err := os.Stat(fullPath); err == nil {
-		os.Chmod(tempPath, info.Mode())
+		_ = os.Chmod(tempPath, info.Mode())
 	}
 
 	// Atomic rename

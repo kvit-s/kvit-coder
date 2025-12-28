@@ -101,7 +101,7 @@ func TestChatResponseWithGenerationID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"id": "gen_456_def",
 			"model": "test-model",
 			"choices": [{
@@ -145,7 +145,7 @@ func TestGenerationStatsTokenCalculation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{
+		_, _ = w.Write([]byte(`{
 			"data": {
 				"id": "gen_789_xyz",
 				"tokens_prompt": 538,

@@ -88,7 +88,7 @@ func TestChatSuccess(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -151,7 +151,7 @@ func TestChatWithoutAPIKey(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -173,7 +173,7 @@ func TestChatHTTPError(t *testing.T) {
 	// Create mock server that returns error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error": "Invalid API key"}`))
+		_, _ = w.Write([]byte(`{"error": "Invalid API key"}`))
 	}))
 	defer server.Close()
 
@@ -194,7 +194,7 @@ func TestChatInvalidJSON(t *testing.T) {
 	// Create mock server that returns invalid JSON
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{invalid json`))
+		_, _ = w.Write([]byte(`{invalid json`))
 	}))
 	defer server.Close()
 
@@ -273,7 +273,7 @@ func TestChatWithToolCalls(t *testing.T) {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 

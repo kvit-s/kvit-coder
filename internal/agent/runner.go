@@ -681,7 +681,7 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 
 			// Display tool call
 			var args map[string]any
-			json.Unmarshal([]byte(tc.Function.Arguments), &args)
+			_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
 
 			if tc.Function.Name == "Shell" {
 				cmdStr, _ := args["command"].(string)

@@ -88,10 +88,10 @@ func (m *Manager) Initialize() error {
 	// Configure git user for this repo
 	cmd = exec.Command("git", "config", "user.email", "go-coder@local")
 	cmd.Dir = m.contextDir
-	cmd.Run()
+	_ = cmd.Run()
 	cmd = exec.Command("git", "config", "user.name", "go-coder")
 	cmd.Dir = m.contextDir
-	cmd.Run()
+	_ = cmd.Run()
 
 	// Create empty turns.jsonl
 	turnsFile := filepath.Join(m.contextDir, "turns.jsonl")

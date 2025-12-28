@@ -230,9 +230,9 @@ func TestListSessions(t *testing.T) {
 	}
 
 	// Create some sessions
-	mgr.SaveSession("session-a", []llm.Message{{Role: llm.RoleUser, Content: "a"}})
+	_ = mgr.SaveSession("session-a", []llm.Message{{Role: llm.RoleUser, Content: "a"}})
 	time.Sleep(10 * time.Millisecond) // Ensure different mod times
-	mgr.SaveSession("session-b", []llm.Message{
+	_ = mgr.SaveSession("session-b", []llm.Message{
 		{Role: llm.RoleUser, Content: "b1"},
 		{Role: llm.RoleAssistant, Content: "b2"},
 	})
@@ -264,7 +264,7 @@ func TestDeleteSession(t *testing.T) {
 	mgr := setupTestManager(t)
 
 	// Create a session
-	mgr.SaveSession("to-delete", []llm.Message{{Role: llm.RoleUser, Content: "test"}})
+	_ = mgr.SaveSession("to-delete", []llm.Message{{Role: llm.RoleUser, Content: "test"}})
 
 	if !mgr.SessionExists("to-delete") {
 		t.Fatal("Session was not created")
@@ -293,7 +293,7 @@ func TestShowSession(t *testing.T) {
 		{Role: llm.RoleUser, Content: "Hello there"},
 		{Role: llm.RoleAssistant, Content: "Hi! How can I help?"},
 	}
-	mgr.SaveSession("test-show", messages)
+	_ = mgr.SaveSession("test-show", messages)
 
 	content, err := mgr.ShowSession("test-show")
 	if err != nil {

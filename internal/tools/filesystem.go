@@ -1323,9 +1323,9 @@ func applyPendingEdit(pending *pendingEdit) (any, error) {
 	// Get file permissions from original file (or use default for new files)
 	info, _ := os.Stat(pending.fullPath)
 	if info != nil {
-		os.Chmod(tempPath, info.Mode())
+		_ = os.Chmod(tempPath, info.Mode())
 	} else {
-		os.Chmod(tempPath, 0644) // Default permissions for new files
+		_ = os.Chmod(tempPath, 0644) // Default permissions for new files
 	}
 
 	// Atomic rename
@@ -1738,7 +1738,7 @@ func findSimilarFiles(workspaceRoot, targetPath string) []string {
 	var partialMatches []string
 	seen := make(map[string]bool)
 
-	filepath.WalkDir(workspaceRoot, func(path string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(workspaceRoot, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			// Skip .git and other hidden directories
 			if d != nil && d.IsDir() {

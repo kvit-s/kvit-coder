@@ -245,7 +245,7 @@ func main() {
 		checkpointMgr.SetEnabled(false)
 	} else {
 		writer.Debug("Checkpoint infrastructure initialized")
-		defer checkpointMgr.Cleanup()
+		defer func() { _ = checkpointMgr.Cleanup() }()
 	}
 
 	// Initialize Tasks tools manager (if enabled)
@@ -262,7 +262,7 @@ func main() {
 				contextMgr = nil
 			} else {
 				writer.Debug("Tasks tools initialized")
-				defer contextMgr.Cleanup()
+				defer func() { _ = contextMgr.Cleanup() }()
 
 				// Initialize middleware for turn number injection
 				contextMiddleware = ctxtools.NewMiddleware(contextMgr, ctxtools.RuntimeNoticeConfig{

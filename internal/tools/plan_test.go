@@ -209,7 +209,7 @@ func TestPlanCreateTool_RejectExistingPlan(t *testing.T) {
 		"task_name": "Task 1",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	tool.Call(context.Background(), args1)
+	_, _ = tool.Call(context.Background(), args1)
 
 	// Try to create second plan without abandon flag
 	args2 := json.RawMessage(`{
@@ -235,7 +235,7 @@ func TestPlanCreateTool_AbandonPrevious(t *testing.T) {
 		"task_name": "Task 1",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	tool.Call(context.Background(), args1)
+	_, _ = tool.Call(context.Background(), args1)
 
 	// Create second plan with abandon flag
 	args2 := json.RawMessage(`{
@@ -276,7 +276,7 @@ func TestPlanAddStepTool_ToEnd(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	// Add a new step to end (using at_end=true)
 	addArgs := json.RawMessage(`{
@@ -319,7 +319,7 @@ func TestPlanAddStepTool_AfterActive(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	// Add a step after active (default behavior, no flag needed)
 	addArgs := json.RawMessage(`{
@@ -373,7 +373,7 @@ func TestPlanAddStepTool_EmptyDescription(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	addArgs := json.RawMessage(`{
 		"description": ""
@@ -403,7 +403,7 @@ func TestPlanCompleteStepTool_Success(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	// Complete first step
 	completeArgs := json.RawMessage(`{}`)
@@ -449,12 +449,12 @@ func TestPlanCompleteStepTool_AutoAdvances(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	completeArgs := json.RawMessage(`{}`)
 
 	// Complete step 1
-	completeTool.Call(context.Background(), completeArgs)
+	_, _ = completeTool.Call(context.Background(), completeArgs)
 
 	plan := manager.GetActivePlan()
 	if plan.Steps[0].Status != "complete" {
@@ -468,7 +468,7 @@ func TestPlanCompleteStepTool_AutoAdvances(t *testing.T) {
 	}
 
 	// Complete step 2
-	completeTool.Call(context.Background(), completeArgs)
+	_, _ = completeTool.Call(context.Background(), completeArgs)
 
 	plan = manager.GetActivePlan()
 	if plan.Steps[1].Status != "complete" {
@@ -489,13 +489,13 @@ func TestPlanCompleteStepTool_MarksPlanComplete(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	completeArgs := json.RawMessage(`{}`)
 
 	// Complete all steps
-	completeTool.Call(context.Background(), completeArgs) // Step 1
-	completeTool.Call(context.Background(), completeArgs) // Step 2
+	_, _ = completeTool.Call(context.Background(), completeArgs) // Step 1
+	_, _ = completeTool.Call(context.Background(), completeArgs) // Step 2
 	result, _ := completeTool.Call(context.Background(), completeArgs) // Step 3
 
 	resultMap := result.(map[string]any)
@@ -538,12 +538,12 @@ func TestPlanCompleteStepTool_PlanAlreadyComplete(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	completeArgs := json.RawMessage(`{}`)
-	completeTool.Call(context.Background(), completeArgs) // Step 1
-	completeTool.Call(context.Background(), completeArgs) // Step 2
-	completeTool.Call(context.Background(), completeArgs) // Step 3
+	_, _ = completeTool.Call(context.Background(), completeArgs) // Step 1
+	_, _ = completeTool.Call(context.Background(), completeArgs) // Step 2
+	_, _ = completeTool.Call(context.Background(), completeArgs) // Step 3
 
 	// Try to complete again
 	err := completeTool.Check(context.Background(), completeArgs)
@@ -570,7 +570,7 @@ func TestPlanRemoveStepTool_Success(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3", "Step 4"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	// Remove step 3 (pending)
 	removeArgs := json.RawMessage(`{"step_number": 3}`)
@@ -614,7 +614,7 @@ func TestPlanRemoveStepTool_RemoveActiveAutoAdvances(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	// Remove step 1 (active) - should auto-advance to step 2
 	removeArgs := json.RawMessage(`{"step_number": 1}`)
@@ -658,9 +658,9 @@ func TestPlanRemoveStepTool_CannotRemoveActiveWhenNoMorePending(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
-	completeTool.Call(context.Background(), json.RawMessage(`{}`)) // Complete step 1
-	completeTool.Call(context.Background(), json.RawMessage(`{}`)) // Complete step 2
+	_, _ = createTool.Call(context.Background(), createArgs)
+	_, _ = completeTool.Call(context.Background(), json.RawMessage(`{}`)) // Complete step 1
+	_, _ = completeTool.Call(context.Background(), json.RawMessage(`{}`)) // Complete step 2
 	// Now step 3 is active and there are no pending steps
 
 	// Try to remove step 3 (active with no pending steps)
@@ -686,8 +686,8 @@ func TestPlanRemoveStepTool_CannotRemoveCompleted(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
-	completeTool.Call(context.Background(), json.RawMessage(`{}`))
+	_, _ = createTool.Call(context.Background(), createArgs)
+	_, _ = completeTool.Call(context.Background(), json.RawMessage(`{}`))
 
 	// Try to remove step 1 (completed)
 	removeArgs := json.RawMessage(`{"step_number": 1}`)
@@ -710,7 +710,7 @@ func TestPlanRemoveStepTool_InvalidStepNumber(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	// Try to remove step 5 (doesn't exist)
 	removeArgs := json.RawMessage(`{"step_number": 5}`)
@@ -739,7 +739,7 @@ func TestPlanMoveStepTool_MoveForward(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3", "Step 4"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	// Move step 2 to position 4
 	moveArgs := json.RawMessage(`{"from": 2, "to": 4}`)
@@ -779,7 +779,7 @@ func TestPlanMoveStepTool_MoveBackward(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3", "Step 4"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	// Move step 4 to position 2
 	moveArgs := json.RawMessage(`{"from": 4, "to": 2}`)
@@ -789,7 +789,7 @@ func TestPlanMoveStepTool_MoveBackward(t *testing.T) {
 		t.Fatalf("Check failed: %v", err)
 	}
 
-	moveTool.Call(context.Background(), moveArgs)
+	_, _ = moveTool.Call(context.Background(), moveArgs)
 
 	// Verify order: Step 1, Step 4, Step 2, Step 3
 	plan := manager.GetActivePlan()
@@ -811,7 +811,7 @@ func TestPlanMoveStepTool_CannotMoveActive(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	// Try to move step 1 (active)
 	moveArgs := json.RawMessage(`{"from": 1, "to": 3}`)
@@ -836,8 +836,8 @@ func TestPlanMoveStepTool_CannotMoveCompleted(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
-	completeTool.Call(context.Background(), json.RawMessage(`{}`))
+	_, _ = createTool.Call(context.Background(), createArgs)
+	_, _ = completeTool.Call(context.Background(), json.RawMessage(`{}`))
 
 	// Try to move step 1 (completed)
 	moveArgs := json.RawMessage(`{"from": 1, "to": 3}`)
@@ -862,8 +862,8 @@ func TestPlanMoveStepTool_CannotMoveBeforeOrToActive(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3", "Step 4"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
-	completeTool.Call(context.Background(), json.RawMessage(`{}`)) // Complete step 1, step 2 is now active
+	_, _ = createTool.Call(context.Background(), createArgs)
+	_, _ = completeTool.Call(context.Background(), json.RawMessage(`{}`)) // Complete step 1, step 2 is now active
 
 	// Try to move step 4 to position 1 (before active step at position 2)
 	moveArgs := json.RawMessage(`{"from": 4, "to": 1}`)
@@ -898,7 +898,7 @@ func TestPlanMoveStepTool_CanMoveToAfterActive(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3", "Step 4"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	// Move step 4 to position 2 (right after active at position 1) - should be allowed
 	moveArgs := json.RawMessage(`{"from": 4, "to": 2}`)
@@ -908,7 +908,7 @@ func TestPlanMoveStepTool_CanMoveToAfterActive(t *testing.T) {
 		t.Fatalf("should allow moving to position after active, got: %v", err)
 	}
 
-	moveTool.Call(context.Background(), moveArgs)
+	_, _ = moveTool.Call(context.Background(), moveArgs)
 
 	// Verify order: Step 1(active), Step 4, Step 2, Step 3
 	plan := manager.GetActivePlan()
@@ -933,7 +933,7 @@ func TestPlanMoveStepTool_CannotMoveToActivePosition(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3", "Step 4"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	// Try to move step 4 to position 1 (same as active) - should NOT be allowed
 	moveArgs := json.RawMessage(`{"from": 4, "to": 1}`)
@@ -956,7 +956,7 @@ func TestPlanMoveStepTool_SamePosition(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	// Try to move step 2 to position 2
 	moveArgs := json.RawMessage(`{"from": 2, "to": 2}`)
@@ -1016,7 +1016,7 @@ func TestPlanAddStepTool_DuplicateStep(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	// Try to add a duplicate step
 	addArgs := json.RawMessage(`{
@@ -1042,7 +1042,7 @@ func TestPlanAddStepTool_DuplicateStepCaseInsensitive(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	// Try to add a duplicate step with different case
 	addArgs := json.RawMessage(`{
@@ -1069,10 +1069,10 @@ func TestPlanAddStepTool_AllowDuplicateOfCompletedStep(t *testing.T) {
 		"task_name": "Test",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	// Complete the first step
-	completeTool.Call(context.Background(), json.RawMessage(`{}`))
+	_, _ = completeTool.Call(context.Background(), json.RawMessage(`{}`))
 
 	// Should be able to add a step with the same name as a completed step
 	addArgs := json.RawMessage(`{
@@ -1095,12 +1095,12 @@ func TestPlanCreateTool_AllowAfterComplete(t *testing.T) {
 		"task_name": "Task 1",
 		"steps": ["Step 1", "Step 2", "Step 3"]
 	}`)
-	createTool.Call(context.Background(), createArgs)
+	_, _ = createTool.Call(context.Background(), createArgs)
 
 	completeArgs := json.RawMessage(`{}`)
-	completeTool.Call(context.Background(), completeArgs) // Step 1
-	completeTool.Call(context.Background(), completeArgs) // Step 2
-	completeTool.Call(context.Background(), completeArgs) // Step 3
+	_, _ = completeTool.Call(context.Background(), completeArgs) // Step 1
+	_, _ = completeTool.Call(context.Background(), completeArgs) // Step 2
+	_, _ = completeTool.Call(context.Background(), completeArgs) // Step 3
 
 	// Create new plan without abandon flag (should succeed since previous is complete)
 	newArgs := json.RawMessage(`{
