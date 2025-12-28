@@ -1,0 +1,62 @@
+version: 2
+
+builds:
+  - id: kvit-coder
+    main: ./cmd/kvit-coder
+    binary: kvit-coder
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commitHash={{.ShortCommit}}
+      - -X main.commitDate={{.CommitDate}}
+      - -X main.buildDate={{.Date}}
+
+  - id: kvit-coder-ui
+    main: ./cmd/kvit-coder-ui
+    binary: kvit-coder-ui
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commitHash={{.ShortCommit}}
+      - -X main.commitDate={{.CommitDate}}
+      - -X main.buildDate={{.Date}}
+
+archives:
+  - format: tar.gz
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+    format_overrides:
+      - goos: windows
+        format: zip
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
