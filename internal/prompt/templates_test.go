@@ -343,3 +343,189 @@ func TestRenderString_InvalidTemplate(t *testing.T) {
 		t.Error("expected error for invalid template string")
 	}
 }
+
+func TestPrefixFS_StripsPrefixOnOpen(t *testing.T) {
+	// Simulate override directory structure: sections/role.tmpl
+	baseFS := fstest.MapFS{
+		"sections/role.tmpl": &fstest.MapFile{Data: []byte("override content")},
+	}
+
+	// Wrap with prefix so "prompts/sections/role.tmpl" maps to "sections/role.tmpl"
+	wrapped := &prefixFS{fs: baseFS, prefix: "prompts"}
+
+	// Opening with prefix should work
+	f, err := wrapped.Open("prompts/sections/role.tmpl")
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	f.Close()
+
+	// ReadFile with prefix should work
+	content, err := wrapped.ReadFile("prompts/sections/role.tmpl")
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if string(content) != "override content" {
+		t.Errorf("got %q, want %q", string(content), "override content")
+	}
+}
+
+func TestPrefixFS_WithLayeredFS(t *testing.T) {
+	// Base (embedded) has prompts/sections/role.tmpl
+	baseFS := fstest.MapFS{
+		"prompts/sections/role.tmpl":  &fstest.MapFile{Data: []byte("embedded role")},
+		"prompts/sections/tasks.tmpl": &fstest.MapFile{Data: []byte("embedded tasks")},
+	}
+
+	// Override has sections/role.tmpl (no prompts/ prefix)
+	overrideRawFS := fstest.MapFS{
+		"sections/role.tmpl": &fstest.MapFile{Data: []byte("override role")},
+	}
+
+	// Wrap override with prefix
+	wrappedOverride := &prefixFS{fs: overrideRawFS, prefix: "prompts"}
+
+	// Layer them
+	layered := &layeredFS{
+		override: wrappedOverride,
+		base:     baseFS,
+	}
+
+	// role.tmpl should come from override
+	content, err := fs.ReadFile(layered, "prompts/sections/role.tmpl")
+	if err != nil {
+		t.Fatalf("ReadFile role failed: %v", err)
+	}
+	if string(content) != "override role" {
+		t.Errorf("role: got %q, want %q", string(content), "override role")
+	}
+
+	// tasks.tmpl should come from base (not overridden)
+	content, err = fs.ReadFile(layered, "prompts/sections/tasks.tmpl")
+	if err != nil {
+		t.Fatalf("ReadFile tasks failed: %v", err)
+	}
+	if string(content) != "embedded tasks" {
+		t.Errorf("tasks: got %q, want %q", string(content), "embedded tasks")
+	}
+}
+
+func TestCollectTemplateFilesWithPrefix(t *testing.T) {
+	testFS := fstest.MapFS{
+		"sections/role.tmpl":      &fstest.MapFile{Data: []byte("role")},
+		"tools/read.tmpl":         &fstest.MapFile{Data: []byte("read")},
+		"other.txt":               &fstest.MapFile{Data: []byte("ignored")},
+	}
+
+	files, err := collectTemplateFilesWithPrefix(testFS, "prompts")
+	if err != nil {
+		t.Fatalf("collectTemplateFilesWithPrefix failed: %v", err)
+	}
+
+	expected := map[string]bool{
+		"prompts/sections/role.tmpl": true,
+		"prompts/tools/read.tmpl":    true,
+	}
+
+	if len(files) != len(expected) {
+		t.Errorf("got %d files, want %d: %v", len(files), len(expected), files)
+	}
+
+	for _, f := range files {
+		if !expected[f] {
+			t.Errorf("unexpected file: %s", f)
+		}
+	}
+}
+
+// TestOverridePathMismatch tests the real-world scenario where override templates
+// are at "sections/role.tmpl" but embedded templates are at "prompts/sections/role.tmpl".
+// This was a bug where override templates were found but never actually used.
+func TestOverridePathMismatch(t *testing.T) {
+	// This simulates the real structure:
+	// - User's override dir has: sections/role.tmpl (no prompts/ prefix)
+	// - Embedded has: prompts/sections/role.tmpl (with prompts/ prefix)
+
+	// Without prefixFS, the override would never be found when looking for
+	// "prompts/sections/role.tmpl" because override only has "sections/role.tmpl"
+
+	embeddedFS := fstest.MapFS{
+		"prompts/sections/role.tmpl": &fstest.MapFile{
+			Data: []byte("embedded: {{ .WorkspaceRoot }}"),
+		},
+	}
+
+	// Override directory structure (no prompts/ prefix, as user would create)
+	overrideFS := fstest.MapFS{
+		"sections/role.tmpl": &fstest.MapFile{
+			Data: []byte("override: {{ .WorkspaceRoot }}"),
+		},
+	}
+
+	// This is how LoadTemplates should set it up - with prefixFS wrapper
+	wrappedOverride := &prefixFS{fs: overrideFS, prefix: "prompts"}
+
+	layered := &layeredFS{
+		override: wrappedOverride,
+		base:     embeddedFS,
+	}
+
+	engine, err := NewTemplateEngine(layered)
+	if err != nil {
+		t.Fatalf("NewTemplateEngine failed: %v", err)
+	}
+
+	// The template should be found and should be the OVERRIDE version
+	ctx := &PromptContext{WorkspaceRoot: "/test"}
+	result, err := engine.Render("prompts/sections/role.tmpl", ctx)
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	// CRITICAL: This must be "override:" not "embedded:"
+	// If this returns "embedded:", the override is silently ignored (the bug)
+	if result != "override: /test" {
+		t.Errorf("Override not used! got %q, want %q", result, "override: /test")
+	}
+}
+
+// TestOverridePathMismatch_WithoutFix demonstrates what happens without the prefixFS fix.
+// This test documents the bug - it would fail if we remove the prefixFS wrapper.
+func TestOverridePathMismatch_WithoutFix(t *testing.T) {
+	embeddedFS := fstest.MapFS{
+		"prompts/sections/role.tmpl": &fstest.MapFile{
+			Data: []byte("embedded"),
+		},
+	}
+
+	// Override without the prefix wrapper - simulates the broken behavior
+	overrideFS := fstest.MapFS{
+		"sections/role.tmpl": &fstest.MapFile{
+			Data: []byte("override"),
+		},
+	}
+
+	// WITHOUT prefixFS wrapper - this is the buggy setup
+	layered := &layeredFS{
+		override: overrideFS,  // NOT wrapped
+		base:     embeddedFS,
+	}
+
+	engine, err := NewTemplateEngine(layered)
+	if err != nil {
+		t.Fatalf("NewTemplateEngine failed: %v", err)
+	}
+
+	// Looking for "prompts/sections/role.tmpl" will NOT find "sections/role.tmpl"
+	// because paths don't match - it falls back to embedded
+	result, err := engine.Render("prompts/sections/role.tmpl", &PromptContext{})
+	if err != nil {
+		t.Fatalf("Render failed: %v", err)
+	}
+
+	// Without the fix, this returns "embedded" (the bug)
+	// This test documents the broken behavior
+	if result != "embedded" {
+		t.Errorf("Expected buggy behavior to return embedded, got %q", result)
+	}
+}

@@ -111,6 +111,62 @@ func (e *TemplateEngine) Reload() error {
 	return e.parseAllTemplates()
 }
 
+// prefixFS wraps an fs.FS and adds a prefix to all paths.
+// This allows override templates at "sections/role.tmpl" to be found
+// when looking for "prompts/sections/role.tmpl".
+type prefixFS struct {
+	fs     fs.FS
+	prefix string // e.g., "prompts"
+}
+
+func (p *prefixFS) Open(name string) (fs.File, error) {
+	// Strip prefix if present
+	if strings.HasPrefix(name, p.prefix+"/") {
+		name = strings.TrimPrefix(name, p.prefix+"/")
+	}
+	return p.fs.Open(name)
+}
+
+func (p *prefixFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	// Strip prefix if present
+	if strings.HasPrefix(name, p.prefix+"/") {
+		name = strings.TrimPrefix(name, p.prefix+"/")
+	} else if name == p.prefix {
+		name = "."
+	}
+	if rd, ok := p.fs.(fs.ReadDirFS); ok {
+		return rd.ReadDir(name)
+	}
+	return nil, fmt.Errorf("ReadDir not supported")
+}
+
+func (p *prefixFS) ReadFile(name string) ([]byte, error) {
+	// Strip prefix if present
+	if strings.HasPrefix(name, p.prefix+"/") {
+		name = strings.TrimPrefix(name, p.prefix+"/")
+	}
+	if rf, ok := p.fs.(fs.ReadFileFS); ok {
+		return rf.ReadFile(name)
+	}
+	return nil, fmt.Errorf("ReadFile not supported")
+}
+
+// collectTemplateFilesWithPrefix collects template files and adds a prefix to paths.
+func collectTemplateFilesWithPrefix(fsys fs.FS, prefix string) ([]string, error) {
+	var files []string
+	err := fs.WalkDir(fsys, ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && strings.HasSuffix(path, ".tmpl") {
+			// Add prefix to match embedded paths
+			files = append(files, prefix+"/"+path)
+		}
+		return nil
+	})
+	return files, err
+}
+
 // layeredFS implements fs.FS with fallback from override to base filesystem.
 // Files in the override FS take precedence over files in the base FS.
 type layeredFS struct {
@@ -195,6 +251,8 @@ func collectTemplateFiles(fsys fs.FS) ([]string, error) {
 
 // LoadTemplates creates a template engine, preferring filesystem override if configured.
 // When templates_dir is set, it layers custom templates over embedded ones.
+// Override templates should be structured as sections/*.tmpl and tools/*.tmpl
+// (without the "prompts/" prefix that embedded templates have).
 func LoadTemplates(cfg TemplateConfig) (*TemplateEngine, error) {
 	var templatesFS fs.FS
 	var overridden, embedded []string
@@ -205,10 +263,13 @@ func LoadTemplates(cfg TemplateConfig) (*TemplateEngine, error) {
 			return nil, fmt.Errorf("templates directory not found: %s", cfg.TemplatesDir)
 		}
 
-		overrideFS := os.DirFS(cfg.TemplatesDir)
+		rawOverrideFS := os.DirFS(cfg.TemplatesDir)
 
-		// Collect files from override directory
-		overrideFiles, err := collectTemplateFiles(overrideFS)
+		// Wrap override FS to add "prompts/" prefix so paths match embedded structure
+		wrappedOverrideFS := &prefixFS{fs: rawOverrideFS, prefix: "prompts"}
+
+		// Collect files from override directory (with prefix added)
+		overrideFiles, err := collectTemplateFilesWithPrefix(rawOverrideFS, "prompts")
 		if err != nil {
 			return nil, fmt.Errorf("scan override templates: %w", err)
 		}
@@ -246,9 +307,9 @@ func LoadTemplates(cfg TemplateConfig) (*TemplateEngine, error) {
 			}
 		}
 
-		// Create layered filesystem
+		// Create layered filesystem with wrapped override
 		templatesFS = &layeredFS{
-			override: overrideFS,
+			override: wrappedOverrideFS,
 			base:     embeddedPrompts,
 		}
 	} else {
