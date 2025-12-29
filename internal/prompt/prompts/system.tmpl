@@ -1,0 +1,19 @@
+{{- /* Main system prompt template */ -}}
+{{- template "prompts/sections/role.tmpl" . -}}
+
+{{- if .Capabilities }}
+{{- template "prompts/sections/tasks.tmpl" . }}
+{{- end }}
+
+{{- if or .HasRead .HasEdit .HasSearch .HasShell }}
+{{- template "prompts/sections/workflow.tmpl" . }}
+{{- end }}
+
+{{- if .HasEdit }}
+{{- template "prompts/sections/example.tmpl" . }}
+{{- end }}
+
+{{- template "prompts/sections/guidelines.tmpl" . }}
+
+# TOOLS
+{{- template "prompts/sections/tools.tmpl" . }}

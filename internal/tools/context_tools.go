@@ -43,8 +43,9 @@ func (t *TasksStartTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *TasksStartTool) PromptCategory() string { return "context" }
-func (t *TasksStartTool) PromptOrder() int       { return 10 }
+func (t *TasksStartTool) PromptCategory() string     { return "context" }
+func (t *TasksStartTool) PromptOrder() int           { return 10 }
+func (t *TasksStartTool) PromptTemplateName() string { return "" } // Uses PromptSection
 func (t *TasksStartTool) PromptSection() string {
 	return `## Tasks
 
@@ -210,9 +211,10 @@ func (t *TasksFinishTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *TasksFinishTool) PromptCategory() string { return "context" }
-func (t *TasksFinishTool) PromptOrder() int       { return 20 }
-func (t *TasksFinishTool) PromptSection() string  { return "" } // Docs in Tasks.Start
+func (t *TasksFinishTool) PromptCategory() string     { return "context" }
+func (t *TasksFinishTool) PromptOrder() int           { return 20 }
+func (t *TasksFinishTool) PromptTemplateName() string { return "" }
+func (t *TasksFinishTool) PromptSection() string      { return "" } // Docs in Tasks.Start
 
 type tasksFinishArgs struct {
 	Summary string `json:"summary"`
@@ -391,9 +393,10 @@ func (t *TasksAcceptDiffTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *TasksAcceptDiffTool) PromptCategory() string { return "context" }
-func (t *TasksAcceptDiffTool) PromptOrder() int       { return 30 }
-func (t *TasksAcceptDiffTool) PromptSection() string  { return "" } // Docs in Tasks.Start
+func (t *TasksAcceptDiffTool) PromptCategory() string     { return "context" }
+func (t *TasksAcceptDiffTool) PromptOrder() int           { return 30 }
+func (t *TasksAcceptDiffTool) PromptTemplateName() string { return "" }
+func (t *TasksAcceptDiffTool) PromptSection() string      { return "" } // Docs in Tasks.Start
 
 func (t *TasksAcceptDiffTool) Check(ctx context.Context, args json.RawMessage) error {
 	turns, err := t.manager.ReadTurnsForLLM()
@@ -491,9 +494,10 @@ func (t *TasksDeclineDiffTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *TasksDeclineDiffTool) PromptCategory() string { return "context" }
-func (t *TasksDeclineDiffTool) PromptOrder() int       { return 40 }
-func (t *TasksDeclineDiffTool) PromptSection() string  { return "" } // Docs in Tasks.Start
+func (t *TasksDeclineDiffTool) PromptCategory() string     { return "context" }
+func (t *TasksDeclineDiffTool) PromptOrder() int           { return 40 }
+func (t *TasksDeclineDiffTool) PromptTemplateName() string { return "" }
+func (t *TasksDeclineDiffTool) PromptSection() string      { return "" } // Docs in Tasks.Start
 
 func (t *TasksDeclineDiffTool) Check(ctx context.Context, args json.RawMessage) error {
 	turns, err := t.manager.ReadTurnsForLLM()
@@ -600,9 +604,10 @@ func (t *TasksRevertFileTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *TasksRevertFileTool) PromptCategory() string { return "context" }
-func (t *TasksRevertFileTool) PromptOrder() int       { return 50 }
-func (t *TasksRevertFileTool) PromptSection() string  { return "" } // Docs in Tasks.Start
+func (t *TasksRevertFileTool) PromptCategory() string     { return "context" }
+func (t *TasksRevertFileTool) PromptOrder() int           { return 50 }
+func (t *TasksRevertFileTool) PromptTemplateName() string { return "" }
+func (t *TasksRevertFileTool) PromptSection() string      { return "" } // Docs in Tasks.Start
 
 type tasksRevertFileArgs struct {
 	Path string `json:"path"`
@@ -685,9 +690,10 @@ func (t *TasksRevertToTaskStartTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *TasksRevertToTaskStartTool) PromptCategory() string { return "context" }
-func (t *TasksRevertToTaskStartTool) PromptOrder() int       { return 60 }
-func (t *TasksRevertToTaskStartTool) PromptSection() string  { return "" } // Docs in Tasks.Start
+func (t *TasksRevertToTaskStartTool) PromptCategory() string     { return "context" }
+func (t *TasksRevertToTaskStartTool) PromptOrder() int           { return 60 }
+func (t *TasksRevertToTaskStartTool) PromptTemplateName() string { return "" }
+func (t *TasksRevertToTaskStartTool) PromptSection() string      { return "" } // Docs in Tasks.Start
 
 type tasksRevertToTaskStartArgs struct {
 	Path string `json:"path"`

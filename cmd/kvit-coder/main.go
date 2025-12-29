@@ -291,8 +291,16 @@ func main() {
 	})
 
 	// Generate system prompt using the prompt generator
-	promptGen := prompt.NewGenerator(registry, cfg)
-	systemPrompt := promptGen.GenerateSystemPrompt()
+	promptGen, err := prompt.NewGenerator(registry, cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(1)
+	}
+	systemPrompt, err := promptGen.GenerateSystemPrompt()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error generating system prompt: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Create agent runner
 	runner := agent.NewRunner(agent.RunnerOptions{

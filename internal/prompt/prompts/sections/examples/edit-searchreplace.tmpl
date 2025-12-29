@@ -1,0 +1,52 @@
+**File Editing Example:** Add a retry_count field to TokenStats dataclass.
+
+```
+{{- $stepNum := 1 }}
+{{- if .HasSearch }}
+# Step {{ $stepNum }}: SEARCH - Find where TokenStats is defined
+Search {"pattern": "class TokenStats", "file_pattern": "*.py"}
+→ app/services/llm/token_tracker.py
+     8│@dataclass
+     9│class TokenStats:
+    10│    """Token usage statistics from LLM provider."""
+{{ $stepNum = add $stepNum 1 }}
+{{- else if .HasShell }}
+# Step {{ $stepNum }}: SEARCH - Find where TokenStats is defined
+Shell {"command": "{{ .SearchCommand }} -n 'class TokenStats' --include='*.py' ."}
+→ app/services/llm/token_tracker.py:9:class TokenStats:
+{{ $stepNum = add $stepNum 1 }}
+{{- end }}
+
+{{- if .HasRead }}
+# Step {{ $stepNum }}: READ - Load the file content
+Read {"path": "app/services/llm/token_tracker.py", "start": 8, "limit": 20}
+→    8│@dataclass
+     9│class TokenStats:
+    10│    """Token usage statistics from LLM provider."""
+    11│    prompt_tokens: int = 0
+    12│    completion_tokens: int = 0
+{{ $stepNum = add $stepNum 1 }}
+{{- else if .HasShell }}
+# Step {{ $stepNum }}: READ - Load the file content
+Shell {"command": "cat -n app/services/llm/token_tracker.py | head -30"}
+→    8  @dataclass
+     9  class TokenStats:
+    10      """Token usage statistics from LLM provider."""
+    11      prompt_tokens: int = 0
+    12      completion_tokens: int = 0
+{{ $stepNum = add $stepNum 1 }}
+{{- end }}
+
+# Step {{ $stepNum }}: EDIT - Apply the change
+Edit {"path": "app/services/llm/token_tracker.py", "search": "    completion_tokens: int = 0", "replace": "    completion_tokens: int = 0\n    retry_count: int = 0"}
+→ success: true, diff shows applied change, after_edit shows file preview with edited lines marked ">"
+# VERIFY: check diff and after_edit to confirm edit was performed correctly
+#         (no orphaned braces, missing closures, or structural issues in surrounding context)
+# If after_edit shows orphaned brace like:  11│}  ← make follow-up edit to remove it
+```
+
+**Key Rules:**
+- search text must EXACTLY match file content (character-for-character)
+- ALWAYS read the file before editing to see exact content
+- AFTER editing: verify diff and after_edit show the edit was performed correctly (check for structural issues in surrounding context)
+

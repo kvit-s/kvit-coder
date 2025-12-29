@@ -1,0 +1,20 @@
+### Edit - Edit Files
+
+**Usage:** `Edit {"path": "<file>", "start_line": N, "end_line": N, "new_text": "<text>"}`
+
+Examples:
+- `Edit {"path": "file.py", "start_line": 10, "new_text": "new line\n"}` - insert at line 10 (original line 10 shifts down)
+- `Edit {"path": "file.py", "start_line": 10, "end_line": 10, "new_text": "    return 43\n"}` - replace line 10
+- `Edit {"path": "file.py", "start_line": 10, "end_line": 12, "new_text": "new content\n"}` - replace lines 10-12
+
+**Parameters:**
+- `path`: File path (required)
+- `start_line`: Line number for insert/replace (1-based, required)
+- `end_line`: Last line to replace (inclusive). Omit to insert without replacing.
+- `new_text`: Text to insert or replace with (required)
+- Always use Read before editing to get correct line numbers
+{{- if .PreviewMode }}
+- Edit returns diff and after_edit preview with status="pending_confirmation"
+- `Edit.confirm {}` to apply, `Edit.cancel {}` to retry
+{{- end }}
+

@@ -347,8 +347,9 @@ func (t *ReadFileTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *ReadFileTool) PromptCategory() string { return "filesystem" }
-func (t *ReadFileTool) PromptOrder() int        { return 10 }
+func (t *ReadFileTool) PromptCategory() string     { return "filesystem" }
+func (t *ReadFileTool) PromptOrder() int           { return 10 }
+func (t *ReadFileTool) PromptTemplateName() string { return "read" }
 func (t *ReadFileTool) PromptSection() string {
 	return `### Read - Read Files/Directories
 
@@ -1073,8 +1074,9 @@ func (t *WriteFileTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *WriteFileTool) PromptCategory() string { return "filesystem" }
-func (t *WriteFileTool) PromptOrder() int       { return 15 } // Between Read (10) and Edit (20)
+func (t *WriteFileTool) PromptCategory() string     { return "filesystem" }
+func (t *WriteFileTool) PromptOrder() int           { return 15 } // Between Read (10) and Edit (20)
+func (t *WriteFileTool) PromptTemplateName() string { return "write" }
 func (t *WriteFileTool) PromptSection() string {
 	return `### Write - Write Files
 
@@ -1346,9 +1348,10 @@ func (t *ConfirmEditTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *ConfirmEditTool) PromptCategory() string { return "filesystem" }
-func (t *ConfirmEditTool) PromptOrder() int        { return 21 }
-func (t *ConfirmEditTool) PromptSection() string  { return "" } // Docs included in Edit tool
+func (t *ConfirmEditTool) PromptCategory() string     { return "filesystem" }
+func (t *ConfirmEditTool) PromptOrder() int           { return 21 }
+func (t *ConfirmEditTool) PromptTemplateName() string { return "" }
+func (t *ConfirmEditTool) PromptSection() string      { return "" } // Docs included in Edit tool
 
 func (t *ConfirmEditTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
 	// Check for pending edit first
@@ -1401,9 +1404,10 @@ func (t *CancelEditTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *CancelEditTool) PromptCategory() string { return "filesystem" }
-func (t *CancelEditTool) PromptOrder() int        { return 22 }
-func (t *CancelEditTool) PromptSection() string   { return "" } // Docs included in ConfirmEditTool
+func (t *CancelEditTool) PromptCategory() string     { return "filesystem" }
+func (t *CancelEditTool) PromptOrder() int           { return 22 }
+func (t *CancelEditTool) PromptTemplateName() string { return "" }
+func (t *CancelEditTool) PromptSection() string      { return "" } // Docs included in ConfirmEditTool
 
 func (t *CancelEditTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
 	// Check for pending edit first
@@ -1468,9 +1472,10 @@ func (t *ConfirmWriteTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *ConfirmWriteTool) PromptCategory() string { return "filesystem" }
-func (t *ConfirmWriteTool) PromptOrder() int       { return 16 }
-func (t *ConfirmWriteTool) PromptSection() string  { return "" } // Docs included in WriteFileTool
+func (t *ConfirmWriteTool) PromptCategory() string     { return "filesystem" }
+func (t *ConfirmWriteTool) PromptOrder() int           { return 16 }
+func (t *ConfirmWriteTool) PromptTemplateName() string { return "" }
+func (t *ConfirmWriteTool) PromptSection() string      { return "" } // Docs included in WriteFileTool
 
 func (t *ConfirmWriteTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
 	// Check for pending write first
@@ -1523,9 +1528,10 @@ func (t *CancelWriteTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *CancelWriteTool) PromptCategory() string { return "filesystem" }
-func (t *CancelWriteTool) PromptOrder() int       { return 17 }
-func (t *CancelWriteTool) PromptSection() string  { return "" } // Docs included in ConfirmWriteTool
+func (t *CancelWriteTool) PromptCategory() string     { return "filesystem" }
+func (t *CancelWriteTool) PromptOrder() int           { return 17 }
+func (t *CancelWriteTool) PromptTemplateName() string { return "" }
+func (t *CancelWriteTool) PromptSection() string      { return "" } // Docs included in ConfirmWriteTool
 
 func (t *CancelWriteTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
 	// Check for pending write first

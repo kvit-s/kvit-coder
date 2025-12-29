@@ -172,8 +172,9 @@ func (t *PlanCreateTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *PlanCreateTool) PromptCategory() string { return "plan" }
-func (t *PlanCreateTool) PromptOrder() int        { return 10 }
+func (t *PlanCreateTool) PromptCategory() string     { return "plan" }
+func (t *PlanCreateTool) PromptOrder() int           { return 10 }
+func (t *PlanCreateTool) PromptTemplateName() string { return "plan" }
 func (t *PlanCreateTool) PromptSection() string {
 	return `You have tools for managing execution plans: Plan.create, Plan.completeStep, Plan.addStep, Plan.removeStep, Plan.moveStep.
 
@@ -385,9 +386,10 @@ func (t *PlanAddStepTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *PlanAddStepTool) PromptCategory() string { return "plan" }
-func (t *PlanAddStepTool) PromptOrder() int        { return 30 }
-func (t *PlanAddStepTool) PromptSection() string   { return "" } // Docs in plan.create
+func (t *PlanAddStepTool) PromptCategory() string     { return "plan" }
+func (t *PlanAddStepTool) PromptOrder() int           { return 30 }
+func (t *PlanAddStepTool) PromptTemplateName() string { return "" }
+func (t *PlanAddStepTool) PromptSection() string      { return "" } // Docs in plan.create
 
 type planAddStepArgs struct {
 	Description string `json:"description"`
@@ -506,9 +508,10 @@ func (t *PlanRemoveStepTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *PlanRemoveStepTool) PromptCategory() string { return "plan" }
-func (t *PlanRemoveStepTool) PromptOrder() int        { return 40 }
-func (t *PlanRemoveStepTool) PromptSection() string   { return "" } // Docs in plan.create
+func (t *PlanRemoveStepTool) PromptCategory() string     { return "plan" }
+func (t *PlanRemoveStepTool) PromptOrder() int           { return 40 }
+func (t *PlanRemoveStepTool) PromptTemplateName() string { return "" }
+func (t *PlanRemoveStepTool) PromptSection() string      { return "" } // Docs in plan.create
 
 type planRemoveStepArgs struct {
 	StepNumber int `json:"step_number"`
@@ -635,9 +638,10 @@ func (t *PlanMoveStepTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *PlanMoveStepTool) PromptCategory() string { return "plan" }
-func (t *PlanMoveStepTool) PromptOrder() int        { return 50 }
-func (t *PlanMoveStepTool) PromptSection() string   { return "" } // Docs in plan.create
+func (t *PlanMoveStepTool) PromptCategory() string     { return "plan" }
+func (t *PlanMoveStepTool) PromptOrder() int           { return 50 }
+func (t *PlanMoveStepTool) PromptTemplateName() string { return "" }
+func (t *PlanMoveStepTool) PromptSection() string      { return "" } // Docs in plan.create
 
 type planMoveStepArgs struct {
 	From int `json:"from"`
@@ -758,9 +762,10 @@ func (t *PlanCompleteStepTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *PlanCompleteStepTool) PromptCategory() string { return "plan" }
-func (t *PlanCompleteStepTool) PromptOrder() int        { return 20 }
-func (t *PlanCompleteStepTool) PromptSection() string   { return "" } // Docs in plan.create
+func (t *PlanCompleteStepTool) PromptCategory() string     { return "plan" }
+func (t *PlanCompleteStepTool) PromptOrder() int           { return 20 }
+func (t *PlanCompleteStepTool) PromptTemplateName() string { return "" }
+func (t *PlanCompleteStepTool) PromptSection() string      { return "" } // Docs in plan.create
 
 func (t *PlanCompleteStepTool) Check(ctx context.Context, args json.RawMessage) error {
 	if t.manager.GetActivePlan() == nil {

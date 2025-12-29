@@ -134,8 +134,9 @@ func (t *SearchReplaceEditTool) Check(ctx context.Context, args json.RawMessage)
 	return CommonEditCheck(ctx, args, &t.BaseEditTool)
 }
 
-func (t *SearchReplaceEditTool) PromptCategory() string { return "filesystem" }
-func (t *SearchReplaceEditTool) PromptOrder() int       { return 20 }
+func (t *SearchReplaceEditTool) PromptCategory() string     { return "filesystem" }
+func (t *SearchReplaceEditTool) PromptOrder() int           { return 20 }
+func (t *SearchReplaceEditTool) PromptTemplateName() string { return "edit-searchreplace" }
 func (t *SearchReplaceEditTool) PromptSection() string {
 	base := `### Edit - Search and Replace in Files
 

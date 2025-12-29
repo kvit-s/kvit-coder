@@ -1,0 +1,18 @@
+### Read - Read Files/Directories
+
+**Usage:** `Read {"path": "<file or directory>"}`
+
+Examples:
+- `Read {"path": "file.py"}` - read entire file
+- `Read {"path": "file.py", "start": 10, "limit": 20}` - read lines 10-29
+- `Read {"path": "file.py", "start": -50}` - read last 50 lines
+- `Read {"path": "src/"}` - list directory contents
+
+**Parameters:**
+- `path` (required): File or directory path
+- `start` (optional): Starting line (1-based, default: 1). Negative = from end (-50 = last 50 lines)
+- `limit` (optional): Maximum lines to read
+
+Output is truncated at 150 lines or 24KB. For large files, use start/limit to read in chunks.
+Always use Read before editing a file.
+

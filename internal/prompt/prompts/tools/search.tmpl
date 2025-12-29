@@ -1,0 +1,15 @@
+### Search - Find Code Patterns
+
+**Usage:** `Search {"pattern": "<text or regex>"}`
+
+Examples:
+- `Search {"pattern": "class AuthForm", "file_pattern": "*.py"}`
+- `Search {"pattern": "def authenticate", "path": "src/"}`
+- `Search {"pattern": "func.*Handler", "file_pattern": "*.go"}`
+
+**Parameters:**
+- `pattern` (required): Text or regex to search for
+- `path` (optional): Directory to search in (default: workspace root)
+- `file_pattern` (optional): File glob, e.g., "*.py", "*.go"
+- `context_lines` (optional): Lines of context around match (default: 3)
+

@@ -1,0 +1,55 @@
+Every tool response includes the current turn number (e.g., `[Turn 3]`). You can use checkpoint tools to view history and restore files to any previous state.
+
+### checkpoint.list
+
+Lists all checkpoints with files changed in each turn. Use to see what changed and decide which turn to restore to.
+
+**No parameters required.**
+
+### checkpoint.restore
+
+Restores all files to their state after a given turn. Creates a new checkpoint with the restored state.
+
+**Parameters:**
+- turn: The turn number to restore to (files will match state AFTER that turn completed)
+
+**IMPORTANT: Restore does NOT delete history.**
+
+When you restore to a previous turn, it creates a NEW checkpoint with the current turn number containing the file contents from the target turn. All previous turns remain accessible.
+
+Example:
+```
+Turn 5: Added feature X → checkpoint saved (files = A)
+Turn 6: Refactored feature X → checkpoint saved (files = B)
+Turn 7: Added feature Y → checkpoint saved (files = C)
+Turn 8: Tests failing, restore to turn 5 → files reset to A, checkpoint saved
+Turn 9: Try different approach → checkpoint saved (files = D)
+Turn 10: Still broken, restore to turn 7 → files reset to C, checkpoint saved
+```
+
+In this example:
+- At turn 8, you restored to turn 5. Files match turn 5, but turns 6 and 7 still exist.
+- At turn 10, you restored to turn 7 (which still exists). This works even though turn 8 was itself a restore.
+- You can restore to ANY past turn at any time.
+
+### checkpoint.diff
+
+Shows diff between current files and their state at a given turn.
+
+**Parameters:**
+- turn: The turn number to compare against
+- path: (optional) Specific file path to diff
+
+### checkpoint.undo
+
+Shortcut to restore to (current turn - 1). Useful for quickly undoing the last turn's changes.
+
+**No parameters required.**
+
+### When to Use Checkpoints
+
+- Tests fail after changes → Use `checkpoint.list` to see recent turns, then `checkpoint.restore` to go back
+- Want to try a different approach → `checkpoint.restore` to a known good state
+- Need to see what changed → `checkpoint.diff` to compare with previous turn
+- Quick undo → `checkpoint.undo` to revert last turn
+
