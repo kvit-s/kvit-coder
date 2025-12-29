@@ -80,7 +80,7 @@ func (g *Generator) generateFromTemplates() (string, error) {
 	var sb strings.Builder
 
 	// Render role
-	role, err := g.engine.Render("prompts/sections/role.tmpl", ctx)
+	role, err := g.engine.Render("prompts/sections/role.tmpl", &ctx)
 	if err != nil {
 		return "", fmt.Errorf("render role: %w", err)
 	}
@@ -88,7 +88,7 @@ func (g *Generator) generateFromTemplates() (string, error) {
 
 	// Render tasks if we have capabilities
 	if len(ctx.Capabilities) > 0 {
-		tasks, err := g.engine.Render("prompts/sections/tasks.tmpl", ctx)
+		tasks, err := g.engine.Render("prompts/sections/tasks.tmpl", &ctx)
 		if err != nil {
 			return "", fmt.Errorf("render tasks: %w", err)
 		}
@@ -97,7 +97,7 @@ func (g *Generator) generateFromTemplates() (string, error) {
 
 	// Render workflow
 	if ctx.HasRead || ctx.HasEdit || ctx.HasSearch || ctx.HasShell {
-		workflow, err := g.engine.Render("prompts/sections/workflow.tmpl", ctx)
+		workflow, err := g.engine.Render("prompts/sections/workflow.tmpl", &ctx)
 		if err != nil {
 			return "", fmt.Errorf("render workflow: %w", err)
 		}
@@ -106,7 +106,7 @@ func (g *Generator) generateFromTemplates() (string, error) {
 
 	// Render example if edit is enabled
 	if ctx.HasEdit {
-		example, err := g.engine.Render("prompts/sections/example.tmpl", ctx)
+		example, err := g.engine.Render("prompts/sections/example.tmpl", &ctx)
 		if err != nil {
 			return "", fmt.Errorf("render example: %w", err)
 		}
@@ -114,7 +114,7 @@ func (g *Generator) generateFromTemplates() (string, error) {
 	}
 
 	// Render guidelines
-	guidelines, err := g.engine.Render("prompts/sections/guidelines.tmpl", ctx)
+	guidelines, err := g.engine.Render("prompts/sections/guidelines.tmpl", &ctx)
 	if err != nil {
 		return "", fmt.Errorf("render guidelines: %w", err)
 	}
@@ -122,14 +122,14 @@ func (g *Generator) generateFromTemplates() (string, error) {
 
 	// Render tools section
 	sb.WriteString("# TOOLS\n")
-	toolDocs := g.generateToolDocsFromTemplates(ctx)
+	toolDocs := g.generateToolDocsFromTemplates(&ctx)
 	sb.WriteString(toolDocs)
 
 	return sb.String(), nil
 }
 
 // generateToolDocsFromTemplates generates tool documentation using templates.
-func (g *Generator) generateToolDocsFromTemplates(ctx PromptContext) string {
+func (g *Generator) generateToolDocsFromTemplates(ctx *PromptContext) string {
 	var sb strings.Builder
 
 	categories := g.registry.EnabledCategories()
