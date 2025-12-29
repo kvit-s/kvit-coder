@@ -83,7 +83,7 @@ func (u *UI) Run() error {
 	for {
 		input, shouldExit, err := u.readInput()
 		if err != nil {
-			fmt.Printf("\033[31m[error] Input error: %v\033[0m\n", err)
+			fmt.Fprintf(os.Stderr, "\033[31m[error] Input error: %v\033[0m\n", err)
 			break
 		}
 		if shouldExit {
@@ -194,7 +194,7 @@ func (u *UI) handleCommand(input string) bool {
 	case "sessions":
 		sessions, err := u.sessionMgr.ListSessions()
 		if err != nil {
-			fmt.Printf("Error listing sessions: %v\n\n", err)
+			fmt.Fprintf(os.Stderr, "Error listing sessions: %v\n\n", err)
 			return false
 		}
 		if len(sessions) == 0 {
@@ -220,7 +220,7 @@ func (u *UI) handleCommand(input string) bool {
 		}
 		content, err := u.sessionMgr.ShowSession(u.currentSession)
 		if err != nil {
-			fmt.Printf("Error showing session: %v\n\n", err)
+			fmt.Fprintf(os.Stderr, "Error showing session: %v\n\n", err)
 			return false
 		}
 		fmt.Print(content)
@@ -291,7 +291,7 @@ func (u *UI) runAgent(prompt string) {
 				fmt.Println("[cancelled]")
 			}
 		} else {
-			fmt.Printf("\033[31m[error] Agent failed: %v\033[0m\n", err)
+			fmt.Fprintf(os.Stderr, "\033[31m[error] Agent failed: %v\033[0m\n", err)
 		}
 	}
 
