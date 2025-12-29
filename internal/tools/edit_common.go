@@ -21,7 +21,7 @@ const LargeFileThreshold = 1024 * 1024 // 1MB
 const StreamingEditBufferSize = 64 * 1024 // 64KB
 
 // EditPendingNextStep is the message shown when an edit is pending confirmation
-const EditPendingNextStep = "STOP. You MUST call Edit.confirm or Edit.cancel next. ALL other tools are BLOCKED until you confirm or cancel this edit."
+const EditPendingNextStep = "STOP. Review the diff above. If the change is correct, call Edit.confirm. If there are issues, call Edit.cancel and retry with fixed parameters. Do NOT ask the user - decide based on the diff. ALL other tools are BLOCKED until you confirm or cancel."
 
 // EditTool is the interface that all edit tool implementations must satisfy
 type EditTool interface {
