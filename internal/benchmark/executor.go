@@ -214,7 +214,7 @@ func (e *Executor) executeExternalCommand(ctx context.Context, benchmark Benchma
 		// Log the error and retry info
 		if attempt < maxRetries {
 			backoff := time.Duration(1<<(attempt-1)) * time.Second // 1s, 2s, 4s, 8s
-			fmt.Printf("  [benchmark %s run %d] command failed (attempt %d/%d, %d errors): %s, retrying in %v\n",
+			fmt.Fprintf(os.Stderr, "  [benchmark %s run %d] command failed (attempt %d/%d, %d errors): %s, retrying in %v\n",
 				benchmark.ID, runID, attempt, maxRetries, errorCount, errMsg, backoff)
 
 			// Wait with backoff before retrying
@@ -226,7 +226,7 @@ func (e *Executor) executeExternalCommand(ctx context.Context, benchmark Benchma
 				break
 			}
 		} else {
-			fmt.Printf("  [benchmark %s run %d] command failed (attempt %d/%d, %d errors): %s, giving up\n",
+			fmt.Fprintf(os.Stderr, "  [benchmark %s run %d] command failed (attempt %d/%d, %d errors): %s, giving up\n",
 				benchmark.ID, runID, attempt, maxRetries, errorCount, errMsg)
 		}
 	}
@@ -260,7 +260,7 @@ func (e *Executor) executeExternalCommand(ctx context.Context, benchmark Benchma
 	} else {
 		// Log if we succeeded after retries
 		if errorCount > 0 {
-			fmt.Printf("  [benchmark %s run %d] command succeeded after %d errors\n",
+			fmt.Fprintf(os.Stderr, "  [benchmark %s run %d] command succeeded after %d errors\n",
 				benchmark.ID, runID, errorCount)
 		}
 

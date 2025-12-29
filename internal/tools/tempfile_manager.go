@@ -25,7 +25,7 @@ type TempFileManager struct {
 // NewTempFileManager creates a new temp file manager in the workspace directory
 func NewTempFileManager(workspaceRoot string) *TempFileManager {
 	tempDir := filepath.Join(workspaceRoot, tempDirName)
-	fmt.Printf("DEBUG: TempFileManager created - workspaceRoot: %s, tempDir: %s\n", workspaceRoot, tempDir)
+	fmt.Fprintf(os.Stderr, "DEBUG: TempFileManager created - workspaceRoot: %s, tempDir: %s\n", workspaceRoot, tempDir)
 
 	mgr := &TempFileManager{
 		workspaceRoot: workspaceRoot,
@@ -57,7 +57,7 @@ func (m *TempFileManager) CreateTempFile() (*os.File, error) {
 
 	// Track this file
 	m.files[f.Name()] = true
-	fmt.Printf("DEBUG: Created temp file: %s\n", f.Name())
+	fmt.Fprintf(os.Stderr, "DEBUG: Created temp file: %s\n", f.Name())
 
 	return f, nil
 }
