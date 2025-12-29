@@ -120,8 +120,9 @@ func (t *PatchEditTool) Check(ctx context.Context, args json.RawMessage) error {
 	return nil
 }
 
-func (t *PatchEditTool) PromptCategory() string { return "filesystem" }
-func (t *PatchEditTool) PromptOrder() int       { return 20 }
+func (t *PatchEditTool) PromptCategory() string     { return "filesystem" }
+func (t *PatchEditTool) PromptOrder() int           { return 20 }
+func (t *PatchEditTool) PromptTemplateName() string { return "edit-patch" }
 func (t *PatchEditTool) PromptSection() string {
 	base := `### Edit - Apply Patches (V4A Format)
 

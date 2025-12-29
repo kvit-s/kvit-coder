@@ -6,31 +6,185 @@ import (
 	"strings"
 
 	"github.com/kvit-s/kvit-coder/internal/config"
-	"github.com/kvit-s/kvit-coder/internal/tools"
+	toolsPkg "github.com/kvit-s/kvit-coder/internal/tools"
 )
 
 // RegistryInterface defines the registry methods needed for prompt generation
 type RegistryInterface interface {
 	IsEnabled(name string) bool
 	GenerateToolPrompt() string
+	ToolsInCategory(category string) []toolsPkg.Tool
+	EnabledCategories() []string
 }
 
 // Generator builds system prompts based on enabled tools and configuration
 type Generator struct {
 	registry RegistryInterface
 	cfg      *config.Config
+	engine   *TemplateEngine
 }
 
-// NewGenerator creates a new prompt generator
-func NewGenerator(registry RegistryInterface, cfg *config.Config) *Generator {
-	return &Generator{
+// NewGenerator creates a new prompt generator.
+// Returns an error if templates are enabled but fail to load.
+func NewGenerator(registry RegistryInterface, cfg *config.Config) (*Generator, error) {
+	g := &Generator{
 		registry: registry,
 		cfg:      cfg,
 	}
+
+	// Load template engine if templates are enabled
+	if cfg.Prompts.UseTemplates {
+		engine, err := LoadTemplates(TemplateConfig{
+			TemplatesDir: cfg.Prompts.TemplatesDir,
+			HotReload:    cfg.Prompts.HotReload,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to load prompt templates: %w", err)
+		}
+		g.engine = engine
+	}
+
+	return g, nil
 }
 
-// GenerateSystemPrompt builds the complete system prompt
-func (g *Generator) GenerateSystemPrompt() string {
+// NewGeneratorWithEngine creates a prompt generator with a specific template engine.
+// Useful for testing or when the engine is already initialized.
+func NewGeneratorWithEngine(registry RegistryInterface, cfg *config.Config, engine *TemplateEngine) *Generator {
+	return &Generator{
+		registry: registry,
+		cfg:      cfg,
+		engine:   engine,
+	}
+}
+
+// GenerateSystemPrompt builds the complete system prompt.
+// Returns an error if templates are enabled but fail to render.
+func (g *Generator) GenerateSystemPrompt() (string, error) {
+	// Use template-based generation if templates are enabled
+	if g.cfg.Prompts.UseTemplates {
+		if g.engine == nil {
+			return "", fmt.Errorf("templates enabled but template engine not initialized")
+		}
+		return g.generateFromTemplates()
+	}
+
+	// Use hardcoded generation
+	return g.generateHardcoded(), nil
+}
+
+// generateFromTemplates generates the system prompt using templates.
+func (g *Generator) generateFromTemplates() (string, error) {
+	ctx := NewPromptContext(g.registry, g.cfg)
+
+	// Render main sections (everything except TOOLS)
+	var sb strings.Builder
+
+	// Render role
+	role, err := g.engine.Render("prompts/sections/role.tmpl", ctx)
+	if err != nil {
+		return "", fmt.Errorf("render role: %w", err)
+	}
+	sb.WriteString(role)
+
+	// Render tasks if we have capabilities
+	if len(ctx.Capabilities) > 0 {
+		tasks, err := g.engine.Render("prompts/sections/tasks.tmpl", ctx)
+		if err != nil {
+			return "", fmt.Errorf("render tasks: %w", err)
+		}
+		sb.WriteString(tasks)
+	}
+
+	// Render workflow
+	if ctx.HasRead || ctx.HasEdit || ctx.HasSearch || ctx.HasShell {
+		workflow, err := g.engine.Render("prompts/sections/workflow.tmpl", ctx)
+		if err != nil {
+			return "", fmt.Errorf("render workflow: %w", err)
+		}
+		sb.WriteString(workflow)
+	}
+
+	// Render example if edit is enabled
+	if ctx.HasEdit {
+		example, err := g.engine.Render("prompts/sections/example.tmpl", ctx)
+		if err != nil {
+			return "", fmt.Errorf("render example: %w", err)
+		}
+		sb.WriteString(example)
+	}
+
+	// Render guidelines
+	guidelines, err := g.engine.Render("prompts/sections/guidelines.tmpl", ctx)
+	if err != nil {
+		return "", fmt.Errorf("render guidelines: %w", err)
+	}
+	sb.WriteString(guidelines)
+
+	// Render tools section
+	sb.WriteString("# TOOLS\n")
+	toolDocs := g.generateToolDocsFromTemplates(ctx)
+	sb.WriteString(toolDocs)
+
+	return sb.String(), nil
+}
+
+// generateToolDocsFromTemplates generates tool documentation using templates.
+func (g *Generator) generateToolDocsFromTemplates(ctx PromptContext) string {
+	var sb strings.Builder
+
+	categories := g.registry.EnabledCategories()
+	for _, cat := range categories {
+		tools := g.registry.ToolsInCategory(cat)
+		if len(tools) == 0 {
+			continue
+		}
+
+		// Render category header
+		headerTemplate := fmt.Sprintf("prompts/tools/_header-%s.tmpl", cat)
+		if g.engine.HasTemplate(headerTemplate) {
+			header, err := g.engine.Render(headerTemplate, ctx)
+			if err == nil {
+				sb.WriteString(header)
+			}
+		} else {
+			// Fallback to CategoryHeaders
+			if header, ok := toolsPkg.CategoryHeaders[cat]; ok {
+				sb.WriteString(header)
+				sb.WriteString("\n\n")
+			}
+		}
+
+		// Render each tool
+		for _, tool := range tools {
+			// Try template first
+			tmplName := tool.PromptTemplateName()
+			if tmplName != "" {
+				fullTmplPath := fmt.Sprintf("prompts/tools/%s.tmpl", tmplName)
+				if g.engine.HasTemplate(fullTmplPath) {
+					rendered, err := g.engine.Render(fullTmplPath, ctx)
+					if err == nil {
+						sb.WriteString(rendered)
+						sb.WriteString("\n")
+						continue
+					}
+				}
+			}
+
+			// Fallback to PromptSection()
+			if section := tool.PromptSection(); section != "" {
+				sb.WriteString(section)
+				sb.WriteString("\n\n")
+			}
+		}
+
+		sb.WriteString("---\n\n")
+	}
+
+	return sb.String()
+}
+
+// generateHardcoded generates the system prompt using hardcoded strings.
+func (g *Generator) generateHardcoded() string {
 	// Generate tool documentation dynamically from registered tools
 	toolDocs := g.registry.GenerateToolPrompt()
 	workflowExample := g.generateWorkflowExample()
@@ -146,7 +300,7 @@ func (g *Generator) buildWorkflowSteps() []string {
 		stepNum++
 	} else if hasShell {
 		searchCmd := "grep"
-		if tools.IsRipgrepAvailable() {
+		if toolsPkg.IsRipgrepAvailable() {
 			searchCmd = "rg"
 		}
 		workflowSteps = append(workflowSteps, fmt.Sprintf("%d. Search for relevant code using Shell tool (%s)", stepNum, searchCmd))
@@ -217,7 +371,7 @@ Search {"pattern": "class TokenStats", "file_pattern": "*.py"}
 		stepNum++
 	} else if hasShell {
 		searchCmd := "grep -rn"
-		if tools.IsRipgrepAvailable() {
+		if toolsPkg.IsRipgrepAvailable() {
 			searchCmd = "rg -n"
 		}
 		sb.WriteString(fmt.Sprintf(`# Step %d: SEARCH - Find where TokenStats is defined

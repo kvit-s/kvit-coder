@@ -259,3 +259,30 @@ func (r *Registry) ListTools() []string {
 	sort.Strings(names)
 	return names
 }
+
+// ToolsInCategory returns tools in a given category, sorted by PromptOrder
+func (r *Registry) ToolsInCategory(category string) []Tool {
+	var tools []Tool
+	for _, tool := range r.tools {
+		if tool.PromptCategory() == category {
+			tools = append(tools, tool)
+		}
+	}
+	// Sort by PromptOrder
+	sort.Slice(tools, func(i, j int) bool {
+		return tools[i].PromptOrder() < tools[j].PromptOrder()
+	})
+	return tools
+}
+
+// EnabledCategories returns the list of categories that have enabled tools
+func (r *Registry) EnabledCategories() []string {
+	categoryOrder := []string{"filesystem", "shell", "plan", "checkpoint"}
+	var enabled []string
+	for _, cat := range categoryOrder {
+		if len(r.ToolsInCategory(cat)) > 0 {
+			enabled = append(enabled, cat)
+		}
+	}
+	return enabled
+}

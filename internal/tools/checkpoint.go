@@ -36,8 +36,9 @@ func (t *CheckpointListTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *CheckpointListTool) PromptCategory() string { return "checkpoint" }
-func (t *CheckpointListTool) PromptOrder() int        { return 10 }
+func (t *CheckpointListTool) PromptCategory() string     { return "checkpoint" }
+func (t *CheckpointListTool) PromptOrder() int           { return 10 }
+func (t *CheckpointListTool) PromptTemplateName() string { return "checkpoint" }
 func (t *CheckpointListTool) PromptSection() string {
 	return `Every tool response includes the current turn number (e.g., ` + "`[Turn 3]`" + `). You can use checkpoint tools to view history and restore files to any previous state.
 
@@ -181,9 +182,10 @@ func (t *CheckpointRestoreTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *CheckpointRestoreTool) PromptCategory() string { return "checkpoint" }
-func (t *CheckpointRestoreTool) PromptOrder() int        { return 20 }
-func (t *CheckpointRestoreTool) PromptSection() string   { return "" } // Docs in checkpoint.list
+func (t *CheckpointRestoreTool) PromptCategory() string     { return "checkpoint" }
+func (t *CheckpointRestoreTool) PromptOrder() int           { return 20 }
+func (t *CheckpointRestoreTool) PromptTemplateName() string { return "" }
+func (t *CheckpointRestoreTool) PromptSection() string      { return "" } // Docs in checkpoint.list
 
 type checkpointRestoreArgs struct {
 	Turn int `json:"turn"`
@@ -269,9 +271,10 @@ func (t *CheckpointDiffTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *CheckpointDiffTool) PromptCategory() string { return "checkpoint" }
-func (t *CheckpointDiffTool) PromptOrder() int        { return 30 }
-func (t *CheckpointDiffTool) PromptSection() string   { return "" } // Docs in checkpoint.list
+func (t *CheckpointDiffTool) PromptCategory() string     { return "checkpoint" }
+func (t *CheckpointDiffTool) PromptOrder() int           { return 30 }
+func (t *CheckpointDiffTool) PromptTemplateName() string { return "" }
+func (t *CheckpointDiffTool) PromptSection() string      { return "" } // Docs in checkpoint.list
 
 type checkpointDiffArgs struct {
 	Turn int    `json:"turn"`
@@ -363,9 +366,10 @@ func (t *CheckpointUndoTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *CheckpointUndoTool) PromptCategory() string { return "checkpoint" }
-func (t *CheckpointUndoTool) PromptOrder() int        { return 40 }
-func (t *CheckpointUndoTool) PromptSection() string   { return "" } // Docs in checkpoint.list
+func (t *CheckpointUndoTool) PromptCategory() string     { return "checkpoint" }
+func (t *CheckpointUndoTool) PromptOrder() int           { return 40 }
+func (t *CheckpointUndoTool) PromptTemplateName() string { return "" }
+func (t *CheckpointUndoTool) PromptSection() string      { return "" } // Docs in checkpoint.list
 
 func (t *CheckpointUndoTool) Check(ctx context.Context, args json.RawMessage) error {
 	if t.manager == nil || !t.manager.Enabled() {

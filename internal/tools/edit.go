@@ -72,6 +72,16 @@ func (t *UnifiedEditTool) Check(ctx context.Context, args json.RawMessage) error
 
 func (t *UnifiedEditTool) PromptCategory() string { return "filesystem" }
 func (t *UnifiedEditTool) PromptOrder() int       { return 20 }
+func (t *UnifiedEditTool) PromptTemplateName() string {
+	switch t.Config.Tools.Edit.GetEditMode() {
+	case "searchreplace":
+		return "edit-searchreplace"
+	case "patch":
+		return "edit-patch"
+	default:
+		return "edit-lines"
+	}
+}
 func (t *UnifiedEditTool) PromptSection() string {
 	previewMode := t.Config.Tools.Edit.PreviewMode
 	switch t.Config.Tools.Edit.GetEditMode() {

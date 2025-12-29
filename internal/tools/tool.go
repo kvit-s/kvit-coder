@@ -26,6 +26,7 @@ type Tool interface {
 
 	// PromptSection returns detailed usage documentation for the system prompt.
 	// Returns empty string if no additional documentation is needed.
+	// Deprecated: Use PromptTemplateName() with the template system instead.
 	PromptSection() string
 
 	// PromptCategory returns the category for grouping in the system prompt.
@@ -35,4 +36,9 @@ type Tool interface {
 	// PromptOrder returns the sort order within the category (lower numbers first).
 	// This ensures deterministic ordering for prompt caching.
 	PromptOrder() int
+
+	// PromptTemplateName returns the name of the template file for this tool's
+	// system prompt documentation. Returns empty string to use PromptSection() instead.
+	// Template files are located in prompts/tools/<name>.tmpl
+	PromptTemplateName() string
 }

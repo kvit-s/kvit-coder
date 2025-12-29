@@ -1,0 +1,18 @@
+### Shell - Execute Shell Commands
+
+Shell({"command": "pytest -q"})
+
+Examples: "go build ./...", "npm test", "git status", "ls -la"
+
+Runs in workspace root ({{ .WorkspaceRoot }}). For different directory or custom timeout, use Shell.advanced.
+{{- if and .HasRead .HasEdit }}
+
+Do NOT use cat/head/tail - use Read tool. Do NOT use sed/awk - use Edit tool.
+{{- else if .HasRead }}
+
+Do NOT use cat/head/tail - use Read tool.
+{{- else if .HasEdit }}
+
+Do NOT use sed/awk - use Edit tool.
+{{- end }}
+

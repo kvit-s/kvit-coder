@@ -58,6 +58,10 @@ func (t *MockTool) PromptOrder() int {
 	return 1
 }
 
+func (t *MockTool) PromptTemplateName() string {
+	return ""
+}
+
 func TestNormalizeToolCallArguments(t *testing.T) {
 	tool := &MockTool{}
 
@@ -173,4 +177,8 @@ func (t *MockToolNoSchema) PromptCategory() string {
 
 func (t *MockToolNoSchema) PromptOrder() int {
 	return 1
+}
+
+func (t *MockToolNoSchema) PromptTemplateName() string {
+	return ""
 }

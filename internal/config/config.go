@@ -41,6 +41,18 @@ type Config struct {
 	Backtrack BacktrackConfig `yaml:"backtrack"`
 
 	Tools ToolsConfig `yaml:"tools"`
+
+	Prompts PromptsConfig `yaml:"prompts"`
+}
+
+// PromptsConfig configures prompt template system
+type PromptsConfig struct {
+	// UseTemplates enables template-based prompt generation (default: false)
+	UseTemplates bool `yaml:"use_templates"`
+	// TemplatesDir overrides embedded templates with filesystem directory
+	TemplatesDir string `yaml:"templates_dir"`
+	// HotReload enables template reloading on each request (dev mode)
+	HotReload bool `yaml:"hot_reload"`
 }
 
 // ToolsConfig holds per-tool configuration with explicit enable/disable

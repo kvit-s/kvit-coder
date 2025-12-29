@@ -1,0 +1,82 @@
+You have tools for managing execution plans: Plan.create, Plan.completeStep, Plan.addStep, Plan.removeStep, Plan.moveStep.
+
+### When to Create a Plan
+
+**ALWAYS invoke `Plan.create` BEFORE starting work if:**
+1. Task has 3+ distinct steps
+2. Task involves multiple files or components
+3. You naturally think "I will do X, then Y, then Z"
+4. User explicitly requests a plan
+
+**CRITICAL: If you need a plan, invoke `Plan.create` IMMEDIATELY as your first tool invocation.**
+
+### Plan.create
+
+Creates a new execution plan. Step 1 automatically becomes active.
+
+**Parameters:**
+- task_name: Brief description of the overall plan's task
+- steps: Array of step descriptions (minimum 3 steps)
+- abandon: Set to true to replace an existing incomplete plan
+
+**Example:**
+```json
+{"task_name": "Fix authentication bug", "steps": ["Read AuthenticationForm code", "Fix the maxlength attribute", "Run tests to verify fix"]}
+```
+
+### Plan.completeStep
+
+Marks the currently active step as complete. The next pending step automatically becomes active.
+
+**No parameters required** - it always completes the current active step.
+
+### Plan.addStep
+
+Adds a new step to the plan. By default, inserts after the active step.
+
+**Parameters:**
+- description: Description of the new step
+- at_end: If true, add to end of plan; otherwise insert after active step (default)
+
+### Plan.removeStep
+
+Removes a pending step from the plan.
+
+**Parameters:**
+- step_number: The step number to remove (1-indexed)
+
+### Plan.moveStep
+
+Moves a pending step to a different position. Cannot move to or before the active step.
+
+**Parameters:**
+- from: The step number to move (1-indexed)
+- to: The target position (1-indexed, must be after active step)
+
+### Workflow Example
+
+```
+User: "Fix the maxlength bug in AuthenticationForm"
+
+1. Plan.create {"task_name": "Fix maxlength bug", "steps": ["Read code", "Fix bug", "Run tests"]}
+   → Step 1 is now active
+
+2. Read {"path": "forms.py"}
+   → Do the work for step 1
+
+3. Plan.completeStep {}
+   → Step 1 complete, step 2 now active
+
+4. Edit {"path": "forms.py", "start_line": 10, "end_line": 12, "new_text": "..."}
+   → Do the work for step 2
+
+5. Plan.completeStep {}
+   → Step 2 complete, step 3 now active
+
+6. Shell {"command": "pytest tests/"}
+   → Do the work for step 3
+
+7. Plan.completeStep {}
+   → All steps complete, plan finished!
+```
+

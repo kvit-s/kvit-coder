@@ -94,8 +94,9 @@ func (t *ShellAdvancedTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *ShellTool) PromptCategory() string { return "shell" }
-func (t *ShellTool) PromptOrder() int        { return 10 }
+func (t *ShellTool) PromptCategory() string     { return "shell" }
+func (t *ShellTool) PromptOrder() int           { return 10 }
+func (t *ShellTool) PromptTemplateName() string { return "shell" }
 func (t *ShellTool) PromptSection() string {
 	// Build file operations warning based on enabled tools
 	var warnings []string
@@ -121,8 +122,9 @@ Examples: "go build ./...", "npm test", "git status", "ls -la"
 Runs in workspace root (%s). For different directory or custom timeout, use Shell.advanced.%s`, t.advanced.workspaceRoot, warningLine)
 }
 
-func (t *ShellAdvancedTool) PromptCategory() string { return "shell" }
-func (t *ShellAdvancedTool) PromptOrder() int        { return 11 }
+func (t *ShellAdvancedTool) PromptCategory() string     { return "shell" }
+func (t *ShellAdvancedTool) PromptOrder() int           { return 11 }
+func (t *ShellAdvancedTool) PromptTemplateName() string { return "shell-advanced" }
 func (t *ShellAdvancedTool) PromptSection() string {
 	return fmt.Sprintf(`### Shell.advanced - Shell with Options
 

@@ -47,8 +47,9 @@ func (t *RestoreFileTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *RestoreFileTool) PromptCategory() string { return "filesystem" }
-func (t *RestoreFileTool) PromptOrder() int        { return 30 }
+func (t *RestoreFileTool) PromptCategory() string     { return "filesystem" }
+func (t *RestoreFileTool) PromptOrder() int           { return 30 }
+func (t *RestoreFileTool) PromptTemplateName() string { return "" } // No template, uses PromptSection
 func (t *RestoreFileTool) PromptSection() string {
 	return `### RestoreFile - Restore File to Original State
 Undo ALL changes made to a file during this session, restoring it to its original state.

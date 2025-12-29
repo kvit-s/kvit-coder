@@ -1,0 +1,13 @@
+### Shell.advanced - Shell with Options
+
+Use when you need working_dir or timeout. Call with JSON object:
+
+Examples:
+- Shell.advanced({"command": "npm test", "working_dir": "frontend/"})
+- Shell.advanced({"command": "make build", "timeout": 120})
+
+Parameters:
+- command (required): The shell command
+- working_dir (optional): Directory to run in (default: {{ .WorkspaceRoot }})
+- timeout (optional): Seconds, default 30, max 180
+

@@ -104,8 +104,9 @@ func (t *SearchTool) JSONSchema() map[string]any {
 	}
 }
 
-func (t *SearchTool) PromptCategory() string { return "filesystem" }
-func (t *SearchTool) PromptOrder() int        { return 5 } // Before read
+func (t *SearchTool) PromptCategory() string     { return "filesystem" }
+func (t *SearchTool) PromptOrder() int           { return 5 } // Before read
+func (t *SearchTool) PromptTemplateName() string { return "search" }
 func (t *SearchTool) PromptSection() string {
 	return `### Search - Find Code Patterns
 

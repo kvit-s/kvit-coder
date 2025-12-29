@@ -1,0 +1,25 @@
+### Edit - Search and Replace in Files
+
+**Usage:** `Edit {"path": "<file>", "search": "<text to find>", "replace": "<replacement text>"}`
+
+Examples:
+- `Edit {"path": "file.py", "search": "def old():\n    return 42", "replace": "def new():\n    return 43"}` - replace a function
+- `Edit {"path": "file.py", "search": "    x = 1", "replace": "    x = 2"}` - replace a line
+
+**Parameters:**
+- `path` (required): File path
+- `search` (required): Exact text to find (must match character-for-character)
+- `replace` (required): Replacement text
+- `start_line` (optional): Line hint to speed up search in large files
+- `end_line` (optional): End line hint. Defaults to start_line + 100
+
+**Rules:**
+1. The search text MUST exactly match file content (character-for-character including whitespace)
+2. Include enough context lines to make the match unique
+3. If multiple matches exist, add more surrounding context to disambiguate
+4. Always use Read before editing a file
+{{- if .PreviewMode }}
+- Edit returns diff and after_edit preview with status="pending_confirmation"
+- `Edit.confirm {}` to apply, `Edit.cancel {}` to retry
+{{- end }}
+

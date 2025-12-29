@@ -1,0 +1,27 @@
+# WORKFLOW
+{{- $stepNum := 1 }}
+{{- if .HasSearch }}
+{{ $stepNum }}. Search for relevant code using Search tool
+{{- $stepNum = add $stepNum 1 }}
+{{- else if .HasShell }}
+{{ $stepNum }}. Search for relevant code using Shell tool ({{ .SearchCommand }})
+{{- $stepNum = add $stepNum 1 }}
+{{- end }}
+{{- if .HasRead }}
+{{ $stepNum }}. Read files to understand context using Read tool
+{{- $stepNum = add $stepNum 1 }}
+{{- else if .HasShell }}
+{{ $stepNum }}. Read files to understand context using Shell tool (cat)
+{{- $stepNum = add $stepNum 1 }}
+{{- end }}
+{{- if .HasEdit }}
+{{ $stepNum }}. Make changes using Edit tool (always read before editing)
+{{- $stepNum = add $stepNum 1 }}
+{{- else if .HasShell }}
+{{ $stepNum }}. Make changes using Shell tool (sed, awk, or echo with redirection)
+{{- $stepNum = add $stepNum 1 }}
+{{- end }}
+{{- if .HasShell }}
+{{ $stepNum }}. Run commands using Shell tool to test/verify
+{{- end }}
+

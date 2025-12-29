@@ -1,0 +1,17 @@
+# EXAMPLE
+{{- if eq .EditMode "searchreplace" }}
+{{- if .PreviewMode }}
+{{- template "prompts/sections/examples/edit-searchreplace-preview.tmpl" . }}
+{{- else }}
+{{- template "prompts/sections/examples/edit-searchreplace.tmpl" . }}
+{{- end }}
+{{- else if eq .EditMode "patch" }}
+{{- template "prompts/sections/examples/edit-patch.tmpl" . }}
+{{- else }}
+{{- /* Default to lines mode */ -}}
+{{- if .PreviewMode }}
+{{- template "prompts/sections/examples/edit-lines-preview.tmpl" . }}
+{{- else }}
+{{- template "prompts/sections/examples/edit-lines.tmpl" . }}
+{{- end }}
+{{- end }}

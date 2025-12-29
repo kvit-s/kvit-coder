@@ -71,3 +71,9 @@ tools:
     context_capacity_warn: 80   # Warn at N% context capacity
     max_nested_depth: 2         # Max task nesting depth warning
     notify_file_changes: true   # Notify about file changes in task
+
+# Prompt template configuration
+prompts:
+  use_templates: false          # Enable template-based prompt generation (default: false uses hardcoded)
+  templates_dir: ""             # Override embedded templates with filesystem directory (e.g., "./prompts")
+  hot_reload: false             # Reload templates on each request (useful for development)

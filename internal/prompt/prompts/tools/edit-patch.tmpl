@@ -1,0 +1,36 @@
+### Edit - Apply Patches (V4A Format)
+
+**Usage:** `Edit {"patch": "<V4A patch>"}`
+
+**Format:**
+```
+*** Begin Patch
+*** Update File: src/main.py
+@@ def calculate():
+     x = 1
+-    return x + 1
++    return x + 2
+     # done
+*** End Patch
+```
+
+**Markers:**
+- `*** Begin Patch` / `*** End Patch` - wrap the entire patch
+- `*** Update File: path` - file to modify
+- `@@ scope` - optional: function/class name to help locate changes
+- `@@ scope :line 100` - optional line hint to speed up search
+
+**Line Prefixes:**
+- ` ` (space) - context line (must match file)
+- `-` - line to remove
+- `+` - line to add
+
+**Rules:**
+1. Include 2-3 lines of context before and after changes
+2. Context lines must exactly match file content
+3. Always use Read before editing a file
+{{- if .PreviewMode }}
+- Edit returns diff and after_edit preview with status="pending_confirmation"
+- `Edit.confirm {}` to apply, `Edit.cancel {}` to retry
+{{- end }}
+
