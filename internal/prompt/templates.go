@@ -65,7 +65,7 @@ func (e *TemplateEngine) parseAllTemplates() error {
 }
 
 // Render executes the named template with the given context.
-func (e *TemplateEngine) Render(name string, ctx PromptContext) (string, error) {
+func (e *TemplateEngine) Render(name string, ctx any) (string, error) {
 	var buf bytes.Buffer
 	if err := e.templates.ExecuteTemplate(&buf, name, ctx); err != nil {
 		return "", fmt.Errorf("execute template %s: %w", name, err)
