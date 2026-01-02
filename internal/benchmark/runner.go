@@ -146,7 +146,7 @@ func (r *Runner) RunAll(ctx context.Context) ([]RunResult, error) {
 			} else {
 				runResult = result.RunResult
 			}
-			progress.CompleteRun(runDuration, runResult)
+			progress.CompleteRun(runDuration, runResult, benchmark.Task)
 		}
 	}
 
