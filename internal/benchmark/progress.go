@@ -41,14 +41,23 @@ func (p *Progress) SetResumePoint(completedRuns int, originalStartTime time.Time
 }
 
 // StartRun marks the start of a new benchmark run.
-func (p *Progress) StartRun(benchmarkID string, run int) {
+func (p *Progress) StartRun(benchmarkID string, run int, prompt string) {
 	p.currentBenchmark = benchmarkID
 	p.currentRun = run
+	// Print the prompt at the start of each run
+	if prompt != "" {
+		fmt.Fprintf(p.writer, "[%s run %d/%d] prompt: %s\n",
+			p.currentBenchmark,
+			p.currentRun,
+			p.runsPerBenchmark,
+			prompt,
+		)
+	}
 	p.Display()
 }
 
 // CompleteRun marks a run as complete and shows pass/fail status with statistics.
-func (p *Progress) CompleteRun(duration time.Duration, result *RunResult, prompt string) {
+func (p *Progress) CompleteRun(duration time.Duration, result *RunResult) {
 	p.completedRuns++
 	if result != nil && result.Success {
 		p.passedRuns++
@@ -94,11 +103,6 @@ func (p *Progress) CompleteRun(duration time.Duration, result *RunResult, prompt
 			result.LLMCalls,
 			result.Tokens,
 		)
-	}
-
-	// Print the prompt
-	if prompt != "" {
-		fmt.Fprintf(p.writer, "    prompt: %s\n", prompt)
 	}
 
 	p.Display()
