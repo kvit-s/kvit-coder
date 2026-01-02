@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/config"
+	"github.com/kvit-s/kvit-coder/internal/safety"
 )
 
 // ShellTool - simple string-only interface, translates to Shell.advanced internally
@@ -54,14 +55,45 @@ type ShellAdvancedTool struct {
 	cfg           *config.Config
 	timeout       time.Duration
 	tempFileMgr   *TempFileManager
+	safetyChecker *safety.Checker
 }
 
 func NewShellAdvancedTool(cfg *config.Config, timeout time.Duration, tempFileMgr *TempFileManager) *ShellAdvancedTool {
+	// Convert config.SafetyConfig to safety.SafetyConfig
+	safetyCfg := &safety.SafetyConfig{
+		StrictMode:   cfg.Safety.StrictMode,
+		ParanoidMode: cfg.Safety.ParanoidMode,
+		Audit: safety.AuditConfig{
+			Enabled:       cfg.Safety.Audit.Enabled,
+			LogDir:        cfg.Safety.Audit.LogDir,
+			RedactSecrets: cfg.Safety.Audit.RedactSecrets,
+			RetentionDays: cfg.Safety.Audit.RetentionDays,
+		},
+		Git: safety.GitSafetyConfig{
+			BlockPush:             cfg.Safety.Git.BlockPush,
+			BlockHardReset:        cfg.Safety.Git.BlockHardReset,
+			BlockCheckoutDiscard:  cfg.Safety.Git.BlockCheckoutDiscard,
+			BlockStashDrop:        cfg.Safety.Git.BlockStashDrop,
+			BlockCleanForce:       cfg.Safety.Git.BlockCleanForce,
+			WarnBranchForceDelete: cfg.Safety.Git.WarnBranchForceDelete,
+		},
+		Rm: safety.RmSafetyConfig{
+			AllowInTemp:         cfg.Safety.Rm.AllowInTemp,
+			AllowInWorkspaceCwd: cfg.Safety.Rm.AllowInWorkspaceCwd,
+			BlockWorkspaceRoot:  cfg.Safety.Rm.BlockWorkspaceRoot,
+		},
+		Interpreters: safety.InterpreterConfig{
+			BlockOneLiners: cfg.Safety.Interpreters.BlockOneLiners,
+			Allowed:        cfg.Safety.Interpreters.Allowed,
+		},
+	}
+
 	return &ShellAdvancedTool{
 		workspaceRoot: cfg.Workspace.Root,
 		cfg:           cfg,
 		timeout:       timeout,
 		tempFileMgr:   tempFileMgr,
+		safetyChecker: safety.NewChecker(safetyCfg),
 	}
 }
 
@@ -342,6 +374,29 @@ func (t *ShellAdvancedTool) validateCommand(cmd string, baseDir string) error {
 				effectiveDir = resolvedCdDir
 			}
 			// If cd path can't be resolved, continue with baseDir (shell will fail at runtime)
+		}
+	}
+
+	// Enhanced safety checks (if any features are enabled)
+	if t.safetyChecker != nil && t.safetyChecker.IsEnabled() {
+		ctx := safety.NewContext(t.safetyChecker.Config(), t.workspaceRoot, effectiveDir)
+		result, err := t.safetyChecker.Check(cmd, ctx)
+		if err != nil {
+			return fmt.Errorf("safety check error: %w", err)
+		}
+
+		switch result.Action {
+		case safety.Block:
+			return fmt.Errorf("blocked by safety rule [%s]: %s", result.Rule, result.Message)
+		case safety.Prompt:
+			// Delegate to existing path safety prompting for outside-workspace paths
+			for _, path := range result.Paths {
+				if err := t.cfg.CheckPathSafety("shell", path); err != nil {
+					return err
+				}
+			}
+		case safety.Warn:
+			fmt.Fprintf(os.Stderr, "⚠️  Warning [%s]: %s\n", result.Rule, result.Message)
 		}
 	}
 

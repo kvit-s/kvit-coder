@@ -43,6 +43,49 @@ type Config struct {
 	Tools ToolsConfig `yaml:"tools"`
 
 	Prompts PromptsConfig `yaml:"prompts"`
+
+	Safety SafetyConfig `yaml:"safety"`
+}
+
+// SafetyConfig holds enhanced safety mode configuration
+type SafetyConfig struct {
+	StrictMode   bool              `yaml:"strict_mode"`   // Fail-closed on parse errors
+	ParanoidMode bool              `yaml:"paranoid_mode"` // Aggressive restrictions
+	Audit        AuditConfig       `yaml:"audit"`
+	Git          GitSafetyConfig   `yaml:"git"`
+	Rm           RmSafetyConfig    `yaml:"rm"`
+	Interpreters InterpreterConfig `yaml:"interpreters"`
+}
+
+// AuditConfig configures safety audit logging
+type AuditConfig struct {
+	Enabled       bool   `yaml:"enabled"`
+	LogDir        string `yaml:"log_dir"`
+	RedactSecrets bool   `yaml:"redact_secrets"`
+	RetentionDays int    `yaml:"retention_days"`
+}
+
+// GitSafetyConfig configures git operation safety
+type GitSafetyConfig struct {
+	BlockPush             bool `yaml:"block_push"`
+	BlockHardReset        bool `yaml:"block_hard_reset"`
+	BlockCheckoutDiscard  bool `yaml:"block_checkout_discard"`
+	BlockStashDrop        bool `yaml:"block_stash_drop"`
+	BlockCleanForce       bool `yaml:"block_clean_force"`
+	WarnBranchForceDelete bool `yaml:"warn_branch_force_delete"`
+}
+
+// RmSafetyConfig configures rm command safety
+type RmSafetyConfig struct {
+	AllowInTemp         bool `yaml:"allow_in_temp"`
+	AllowInWorkspaceCwd bool `yaml:"allow_in_workspace_cwd"`
+	BlockWorkspaceRoot  bool `yaml:"block_workspace_root"`
+}
+
+// InterpreterConfig configures interpreter one-liner blocking
+type InterpreterConfig struct {
+	BlockOneLiners bool     `yaml:"block_one_liners"`
+	Allowed        []string `yaml:"allowed"`
 }
 
 // PromptsConfig configures prompt template system
@@ -252,6 +295,15 @@ func Load(path string) (*Config, error) {
 	// NotifyFileChanges defaults to true (Go zero value is false, so we check if unset)
 	// Since YAML unmarshals false as false, we need a different approach
 	// For now, we'll leave it as the struct default behavior
+
+	// Safety config defaults (all features disabled for backward compatibility)
+	if cfg.Safety.Audit.LogDir == "" {
+		cfg.Safety.Audit.LogDir = "~/.kvit-coder/safety-logs"
+	}
+	if cfg.Safety.Audit.RetentionDays == 0 {
+		cfg.Safety.Audit.RetentionDays = 30
+	}
+	// All other safety features default to false (disabled)
 
 	return &cfg, nil
 }
