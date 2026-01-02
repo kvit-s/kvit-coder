@@ -48,7 +48,7 @@ func (p *Progress) StartRun(benchmarkID string, run int) {
 }
 
 // CompleteRun marks a run as complete and shows pass/fail status with statistics.
-func (p *Progress) CompleteRun(duration time.Duration, result *RunResult) {
+func (p *Progress) CompleteRun(duration time.Duration, result *RunResult, prompt string) {
 	p.completedRuns++
 	if result != nil && result.Success {
 		p.passedRuns++
@@ -94,6 +94,11 @@ func (p *Progress) CompleteRun(duration time.Duration, result *RunResult) {
 			result.LLMCalls,
 			result.Tokens,
 		)
+	}
+
+	// Print the prompt
+	if prompt != "" {
+		fmt.Fprintf(p.writer, "    prompt: %s\n", prompt)
 	}
 
 	p.Display()
