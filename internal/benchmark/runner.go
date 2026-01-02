@@ -101,7 +101,7 @@ func (r *Runner) RunAll(ctx context.Context) ([]RunResult, error) {
 			}
 
 			// Update progress
-			progress.StartRun(benchmark.ID, run)
+			progress.StartRun(benchmark.ID, run, benchmark.Task)
 
 			// Execute benchmark
 			runStart := time.Now()
@@ -146,7 +146,7 @@ func (r *Runner) RunAll(ctx context.Context) ([]RunResult, error) {
 			} else {
 				runResult = result.RunResult
 			}
-			progress.CompleteRun(runDuration, runResult, benchmark.Task)
+			progress.CompleteRun(runDuration, runResult)
 		}
 	}
 
