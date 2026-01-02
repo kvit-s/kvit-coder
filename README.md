@@ -290,6 +290,109 @@ tools:
     excluded_patterns: []
 ```
 
+## Enhanced Safety Mode
+
+The safety system provides semantic analysis of shell commands to prevent destructive operations. All safety features are **disabled by default** for backward compatibility.
+
+### Quick Enable
+
+Add to your `config.yaml` to enable recommended protections:
+
+```yaml
+safety:
+  git:
+    block_push: true              # Block all git push (run manually)
+    block_hard_reset: true        # Block git reset --hard
+    block_checkout_discard: true  # Block git checkout -- <file>
+    block_stash_drop: true        # Block git stash drop/clear
+    block_clean_force: true       # Block git clean -f
+  rm:
+    block_workspace_root: true    # Block rm -rf on workspace root
+```
+
+### Semantic Command Parsing
+
+Unlike simple string matching, the safety checker:
+- Parses commands semantically (handles quotes, flags, pipes)
+- Unwraps shell wrappers (`bash -c 'git push'` → detects `git push`)
+- Analyzes pipelines (`find . | xargs rm` → detects destructive xargs)
+
+### Protected Operations
+
+| Category | Command | Default | Description |
+|----------|---------|---------|-------------|
+| **Git** | `git push` | Allow | Block all pushes (user should run manually) |
+| | `git reset --hard` | Allow | Block hard resets |
+| | `git checkout -- <file>` | Allow | Block file discard |
+| | `git stash drop/clear` | Allow | Block stash deletion |
+| | `git clean -f` | Allow | Block force clean (allows `-n`) |
+| | `git branch -D` | Allow | Warn on force branch delete |
+| **rm** | `rm -rf /`, `~`, `/usr` | **Block** | System paths always blocked |
+| | `rm -rf .` (workspace root) | Allow | Block workspace root deletion |
+| | `rm -rf /tmp/...` | Allow | Allow temp directory cleanup |
+| | `rm -rf subdir` | Allow | Allow workspace subdirectory deletion |
+| **find** | `find ... -delete` | Allow | Block outside temp/workspace |
+| | `find ... -exec rm` | Allow | Block outside temp/workspace |
+| **xargs** | `... \| xargs rm` | **Block** | Destructive pipeline always blocked |
+| | `... \| xargs cat` | Allow | Safe pipelines allowed |
+
+### Strict Mode
+
+Enable fail-closed behavior for unparseable commands:
+
+```yaml
+safety:
+  strict_mode: true   # Block commands that can't be parsed
+```
+
+In non-strict mode (default), unparseable commands fall through to the legacy blocklist.
+
+### Audit Logging
+
+Log blocked commands for security review:
+
+```yaml
+safety:
+  audit:
+    enabled: true
+    log_dir: "~/.kvit-coder/safety-logs"
+    redact_secrets: true    # Redact API keys, tokens from logs
+    retention_days: 30
+```
+
+Logs are stored as JSONL files per session. Secrets matching common patterns (OpenAI keys, GitHub PATs, AWS keys, passwords) are automatically redacted.
+
+### Full Configuration Reference
+
+```yaml
+safety:
+  strict_mode: false            # Block unparseable commands (fail-closed)
+  paranoid_mode: false          # Extra aggressive restrictions
+
+  audit:
+    enabled: false
+    log_dir: "~/.kvit-coder/safety-logs"
+    redact_secrets: true
+    retention_days: 30
+
+  git:
+    block_push: false
+    block_hard_reset: false
+    block_checkout_discard: false
+    block_stash_drop: false
+    block_clean_force: false
+    warn_branch_force_delete: false
+
+  rm:
+    allow_in_temp: false        # Allow rm -rf in /tmp, /var/tmp
+    allow_in_workspace_cwd: false
+    block_workspace_root: false
+
+  interpreters:
+    block_one_liners: false     # Block python -c, node -e, etc.
+    allowed: []                 # Allowlist if blocking
+```
+
 ### Adding New Tools
 
 Implement the `Tool` interface:

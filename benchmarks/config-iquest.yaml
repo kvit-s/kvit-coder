@@ -1,7 +1,7 @@
 llm:
   base_url: "http://192.168.8.20:8080/v1"  # Your OpenAI-compatible endpoint
-  model: "ministral-3-14b"
-  context: 120000
+  model: "iquest-coder"
+  context: 128000
   merge_thinking: false  # true = merge reasoning into content, false = discard
   verbose: 0             # 0 = off, >0 = show tool output up to N lines
 
@@ -14,8 +14,8 @@ agent:
 
 backtrack:
   enabled: true             # Enable backtracking on semantic errors (LLM misuse)
-  max_retries: 5            # Max retries at same history point before falling back to error-in-history
-  inject_user_message: true # On limit reached: backtrack + inject user message (with error) instead of error-in-history
+  max_retries: 3            # Max retries at same history point before falling back to error-in-history
+  inject_user_message: false # On limit reached: backtrack + inject user message (with error) instead of error-in-history
 
 tools:
   # All tools are disabled by default - explicitly enable the ones you want
@@ -33,7 +33,7 @@ tools:
     max_file_size_kb: 128
     preview_mode: false         # enables edit.confirm/edit.cancel
     read_before_edit_msgs: 0    # require read within N messages before edit (0 = disabled)
-    pending_confirm_retries: 5  # max retries when LLM ignores confirm/cancel (0 = disabled, default 5)
+    pending_confirm_retries: 3  # max retries when LLM ignores confirm/cancel (0 = disabled, default 5)
     fuzzy_threshold: 0.0        # for searchreplace mode: 0 = exact only, 0.8 = enable fuzzy matching
 
   restore_file:
@@ -74,7 +74,7 @@ tools:
 
 # Enhanced safety mode configuration (all features disabled by default)
 safety:
-  strict_mode: false            # Block unparseable commands (fail-closed)
+  strict_mode: true            # Block unparseable commands (fail-closed)
   paranoid_mode: false          # Extra aggressive restrictions
 
   audit:
