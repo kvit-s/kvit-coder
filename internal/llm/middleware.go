@@ -79,17 +79,19 @@ func NormalizeToolCallTypes(msg *Message) {
 // ExtractNonToolCallContent extracts the non-tool-call parts from content
 // that contains XML-like tool call descriptions
 func ExtractNonToolCallContent(content string) string {
+	// Remove Anthropic-style function_calls blocks (with or without antml: prefix)
+	anthropicRegex := regexp.MustCompile(`(?is)<(?:antml:)?function_calls>.*?</(?:antml:)?function_calls>`)
+	cleaned := anthropicRegex.ReplaceAllString(content, "")
+
 	// Remove XML tool call blocks completely
-	regex := regexp.MustCompile("`(?is)<tool_call>.*?</tool_call>`")
-	cleaned := regex.ReplaceAllString(content, "")
+	toolCallRegex := regexp.MustCompile(`(?is)<tool_call>.*?</tool_call>`)
+	cleaned = toolCallRegex.ReplaceAllString(cleaned, "")
 
 	// Clean up any remaining tags and whitespace
 	cleaned = strings.ReplaceAll(cleaned, "<function=", "")
 	cleaned = strings.ReplaceAll(cleaned, "</function>", "")
 	cleaned = strings.ReplaceAll(cleaned, "<parameter=", "")
 	cleaned = strings.ReplaceAll(cleaned, "</parameter>", "")
-	cleaned = strings.ReplaceAll(cleaned, ">", "")
-	cleaned = strings.ReplaceAll(cleaned, "<", "")
 
 	// Trim and clean up whitespace
 	cleaned = strings.TrimSpace(cleaned)

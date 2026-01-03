@@ -122,7 +122,116 @@ func (r *Registry) LooksLikeMalformedToolCall(content string) bool {
 // This handles cases where LLM describes tool calls in XML-like format or JSON format
 func (r *Registry) ExtractToolCallsFromText(content string) []llm.ToolCall {
 	var toolCalls []llm.ToolCall
-	
+
+	// Try to find Anthropic-style XML format:
+	// <function_calls>
+	//   <invoke name="tool_name">
+	//     <parameter name="param1">value1</parameter>
+	//   </invoke>
+	// </function_calls>
+	// Also handles antml: namespace prefix variants
+	anthropicPattern := regexp.MustCompile(`(?is)<(?:antml:)?function_calls>(.*?)</(?:antml:)?function_calls>`)
+	anthropicMatches := anthropicPattern.FindAllStringSubmatch(content, -1)
+
+	for _, blockMatch := range anthropicMatches {
+		if len(blockMatch) >= 2 {
+			blockContent := blockMatch[1]
+
+			// Find all invoke blocks within this function_calls block
+			invokePattern := regexp.MustCompile(`(?is)<(?:antml:)?invoke\s+name="([^"]+)"[^>]*>(.*?)</(?:antml:)?invoke>`)
+			invokeMatches := invokePattern.FindAllStringSubmatch(blockContent, -1)
+
+			for _, invokeMatch := range invokeMatches {
+				if len(invokeMatch) >= 3 {
+					functionName := strings.TrimSpace(invokeMatch[1])
+					invokeContent := invokeMatch[2]
+
+					// Parse parameters from <parameter name="...">value</parameter> or <parameter ...>
+					paramPattern := regexp.MustCompile(`(?is)<(?:antml:)?parameter\s+name="([^"]+)"[^>]*>(.*?)</(?:antml:)?parameter>`)
+					paramMatches := paramPattern.FindAllStringSubmatch(invokeContent, -1)
+
+					argsMap := make(map[string]interface{})
+					for _, paramMatch := range paramMatches {
+						if len(paramMatch) >= 3 {
+							paramName := strings.TrimSpace(paramMatch[1])
+							paramValue := strings.TrimSpace(paramMatch[2])
+							// Try to parse as JSON first (for arrays, objects, numbers, booleans)
+							var jsonVal interface{}
+							if err := json.Unmarshal([]byte(paramValue), &jsonVal); err == nil {
+								argsMap[paramName] = jsonVal
+							} else {
+								argsMap[paramName] = paramValue
+							}
+						}
+					}
+
+					// Convert to JSON for the tool call
+					argsJSON, err := json.Marshal(argsMap)
+					if err == nil {
+						toolCalls = append(toolCalls, llm.ToolCall{
+							ID:   generateToolCallID(),
+							Type: "function",
+							Function: struct {
+								Name      string `json:"name"`
+								Arguments string `json:"arguments"`
+							}{
+								Name:      functionName,
+								Arguments: string(argsJSON),
+							},
+						})
+					}
+				}
+			}
+		}
+	}
+
+	// If we found Anthropic-style tool calls, return early
+	if len(toolCalls) > 0 {
+		return toolCalls
+	}
+
+	// Try to find JSON-in-tool_call format: <tool_call> {"name": "...", "arguments": {...}}</tool_call>
+	jsonToolCallPattern := regexp.MustCompile(`(?is)<tool_call>\s*(\{.*?\})\s*</tool_call>`)
+	jsonToolCallMatches := jsonToolCallPattern.FindAllStringSubmatch(content, -1)
+
+	for _, match := range jsonToolCallMatches {
+		if len(match) >= 2 {
+			jsonStr := strings.TrimSpace(match[1])
+			// Parse the JSON structure
+			var toolCallJSON struct {
+				Name      string          `json:"name"`
+				Arguments json.RawMessage `json:"arguments"`
+			}
+			if err := json.Unmarshal([]byte(jsonStr), &toolCallJSON); err == nil && toolCallJSON.Name != "" {
+				// Arguments might be a JSON object or already a string
+				argsStr := string(toolCallJSON.Arguments)
+				// If arguments is already a valid JSON object, use it directly
+				// Otherwise wrap it
+				var testObj map[string]interface{}
+				if json.Unmarshal(toolCallJSON.Arguments, &testObj) != nil {
+					// Not a valid object, try to use as-is
+					argsStr = "{}"
+				}
+				toolCalls = append(toolCalls, llm.ToolCall{
+					ID:   generateToolCallID(),
+					Type: "function",
+					Function: struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					}{
+						Name:      toolCallJSON.Name,
+						Arguments: argsStr,
+					},
+				})
+			}
+		}
+	}
+
+	// If we found JSON-style tool calls, return early
+	if len(toolCalls) > 0 {
+		return toolCalls
+	}
+
 	// Try to find XML-like tool call format: <tool_call><function=Name>...</tool_call>
 	// Also handle cases where <tool_call> opening tag is missing but closing tag is present
 	xmlPattern := regexp.MustCompile(`(?is)(?:<tool_call>\s*)?<function=([^>]+)>(.*?)</function>\s*</tool_call>`)
