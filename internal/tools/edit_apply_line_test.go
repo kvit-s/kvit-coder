@@ -70,6 +70,22 @@ func TestApplyLineEdit(t *testing.T) {
 			newText:   "inserted\n",
 			expected:  "line1\ninserted\nline2\nline3\n",
 		},
+		{
+			name:      "replace with empty line using newline",
+			content:   "line1\nline2\nline3\n",
+			startLine: 2,
+			endLine:   2,
+			newText:   "\n",
+			expected:  "line1\n\nline3\n",
+		},
+		{
+			name:      "replace multiple lines with single empty line",
+			content:   "line1\nline2\nline3\nline4\n",
+			startLine: 2,
+			endLine:   3,
+			newText:   "\n",
+			expected:  "line1\n\nline4\n",
+		},
 	}
 
 	for _, tt := range tests {

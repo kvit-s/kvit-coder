@@ -26,7 +26,7 @@ func LineEditJSONSchema() map[string]any {
 			},
 			"new_text": map[string]any{
 				"type":        "string",
-				"description": "Replacement text. Will replace all content from start_line to end_line.",
+				"description": "Replacement text. Use \"\" to DELETE lines entirely. Use \"\\n\" to replace with an empty line (keeps the line but clears content).",
 			},
 		},
 		"required": []string{"path", "start_line", "new_text"},
@@ -43,12 +43,14 @@ Examples:
 - ` + "`" + `Edit {"path": "file.py", "start_line": 10, "new_text": "new line\n"}` + "`" + ` - insert at line 10 (original line 10 shifts down)
 - ` + "`" + `Edit {"path": "file.py", "start_line": 10, "end_line": 10, "new_text": "    return 43\n"}` + "`" + ` - replace line 10
 - ` + "`" + `Edit {"path": "file.py", "start_line": 10, "end_line": 12, "new_text": "new content\n"}` + "`" + ` - replace lines 10-12
+- ` + "`" + `Edit {"path": "file.py", "start_line": 10, "end_line": 10, "new_text": ""}` + "`" + ` - DELETE line 10 entirely
+- ` + "`" + `Edit {"path": "file.py", "start_line": 10, "end_line": 10, "new_text": "\n"}` + "`" + ` - replace line 10 with empty line (keeps the line)
 
 **Parameters:**
 - ` + "`path`" + `: File path (required)
 - ` + "`start_line`" + `: Line number for insert/replace (1-based, required)
 - ` + "`end_line`" + `: Last line to replace (inclusive). Omit to insert without replacing.
-- ` + "`new_text`" + `: Text to insert or replace with (required)
+- ` + "`new_text`" + `: Text to insert/replace. Use "" to DELETE lines. Use "\n" to replace with empty line.
 - Always use Read before editing to get correct line numbers`
 
 	if previewMode {
