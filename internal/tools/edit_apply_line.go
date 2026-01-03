@@ -47,8 +47,8 @@ func ApplyLineEdit(content string, startLine, endLine int, newText string) (stri
 		resumeFrom = endLine // replace mode: skip replaced lines
 	}
 
-	// Ensure newline before remaining content
-	if resumeFrom < totalLines && !strings.HasSuffix(newText, "\n") {
+	// Ensure newline before remaining content (skip if deleting - empty newText)
+	if resumeFrom < totalLines && len(newText) > 0 && !strings.HasSuffix(newText, "\n") {
 		result.WriteString("\n")
 	}
 
