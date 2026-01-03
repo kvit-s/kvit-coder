@@ -84,8 +84,8 @@ func (r *Runner) RunAll(ctx context.Context) ([]RunResult, error) {
 	allResults = append(allResults, existingResults...)
 
 	// Run benchmarks
-	for _, benchmark := range r.benchmarks {
-		for run := 1; run <= r.config.RunsPerTask; run++ {
+	for run := 1; run <= r.config.RunsPerTask; run++ {
+		for _, benchmark := range r.benchmarks {
 			// Check if cancelled
 			select {
 			case <-ctx.Done():
