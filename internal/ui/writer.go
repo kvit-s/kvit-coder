@@ -261,8 +261,9 @@ func (w *Writer) ToolCall(name, argsDisplay, context string) {
 	if w.quiet {
 		return
 	}
-	// Reset progress line since a new tool is starting
+	// Reset progress tracking since a new tool is starting
 	progressLine = ""
+	progressDotCount = 0
 	var output string
 	if context != "" {
 		output = fmt.Sprintf("  (%s) %s[%s]", context, name, argsDisplay)
@@ -279,6 +280,12 @@ func (w *Writer) ToolCall(name, argsDisplay, context string) {
 // progressLine accumulates the current progress output
 var progressLine string
 
+// progressDotCount tracks dots on current line (for wrapping after 60 dots = 1 minute)
+var progressDotCount int
+
+// maxDotsPerLine is the maximum number of dots before wrapping to a new line
+const maxDotsPerLine = 60
+
 // ToolProgress prints a progress indicator (dots) for long-running tools.
 func (w *Writer) ToolProgress(dot string) {
 	if w.quiet {
@@ -293,8 +300,10 @@ func (w *Writer) ToolProgress(dot string) {
 		// Only print the final timing line
 		if strings.Contains(dot, "\n") {
 			progressLine = ""
+			progressDotCount = 0
 		} else if strings.HasPrefix(dot, "✨") {
 			progressLine = ""
+			progressDotCount = 0
 		} else {
 			progressLine += dot
 		}
@@ -305,12 +314,26 @@ func (w *Writer) ToolProgress(dot string) {
 		fmt.Print("\r")                       // Return to start of line
 		grayColor.Print(progressLine + dot)   // Print accumulated + final
 		progressLine = ""
+		progressDotCount = 0
 		return
 	}
 
 	// Reset if this is a new progress line (starts with sparkle)
 	if strings.HasPrefix(dot, "✨") {
 		progressLine = ""
+		progressDotCount = 0
+	}
+
+	// Track dot count for line wrapping
+	if dot == "." {
+		progressDotCount++
+		// Wrap to new line after maxDotsPerLine dots (1 minute)
+		if progressDotCount > maxDotsPerLine {
+			fmt.Print("\r")                  // Return to start of line
+			grayColor.Println(progressLine)  // Print current line with newline
+			progressLine = "✨ "             // Start new line with sparkle
+			progressDotCount = 1             // Reset counter (this dot counts)
+		}
 	}
 
 	// Accumulate and reprint entire line
@@ -325,8 +348,9 @@ func (w *Writer) ToolResult(summary, duration string) {
 	if w.quiet {
 		return
 	}
-	// Reset progress line since tool is done
+	// Reset progress tracking since tool is done
 	progressLine = ""
+	progressDotCount = 0
 	if w.headless {
 		if duration != "" {
 			fmt.Fprintf(w.stderr, "  %s\n", duration)
