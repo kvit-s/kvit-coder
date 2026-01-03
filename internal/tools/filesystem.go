@@ -825,7 +825,7 @@ func (t *ReadFileTool) formatLineResult(result *readLinesResult, startLine int, 
 			"last_read_byte":  result.LastByteRead,
 			"total_lines":     totalLines,
 			"total_bytes":     totalBytes,
-			"hint": fmt.Sprintf("Lines in this range too large. Showing partial content. Use char_mode to continue: Read {\"path\": \"%s\", \"char_mode\": true, \"start\": %d}",
+			"hint": fmt.Sprintf("Lines in this range too large. Showing partial content. Use char_mode to continue (start is BYTE position, not line): Read {\"path\": \"%s\", \"char_mode\": true, \"start\": %d}",
 				path, result.LastByteRead+1),
 		}, nil
 	}
@@ -953,11 +953,11 @@ func (t *ReadFileTool) readCharModeSeek(fullPath string, fileSize int64, start, 
 	if wasTruncated {
 		// Hit the max char_mode limit
 		remaining := fileSize - lastReadByte
-		response["hint"] = fmt.Sprintf("Content truncated (hit 64KB limit). %d bytes remaining. Read {\"path\": \"%s\", \"char_mode\": true, \"start\": %d} to continue.", remaining, path, lastReadByte+1)
+		response["hint"] = fmt.Sprintf("Content truncated (hit 64KB limit). %d bytes remaining. To continue, use char_mode (start is BYTE position, not line): Read {\"path\": \"%s\", \"char_mode\": true, \"start\": %d}", remaining, path, lastReadByte+1)
 	} else if lastReadByte < fileSize {
 		// More bytes available
 		remaining := fileSize - lastReadByte
-		response["hint"] = fmt.Sprintf("%d bytes remaining. Read {\"path\": \"%s\", \"char_mode\": true, \"start\": %d} to continue.", remaining, path, lastReadByte+1)
+		response["hint"] = fmt.Sprintf("%d bytes remaining. To continue, use char_mode (start is BYTE position, not line): Read {\"path\": \"%s\", \"char_mode\": true, \"start\": %d}", remaining, path, lastReadByte+1)
 	}
 
 	return response, nil
