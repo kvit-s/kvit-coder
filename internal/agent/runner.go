@@ -73,6 +73,11 @@ func NewRunner(opts RunnerOptions) *Runner {
 	}
 }
 
+// Writer returns the UI writer for output configuration.
+func (r *Runner) Writer() *ui.Writer {
+	return r.writer
+}
+
 // backtrackResult contains the result of handleToolError
 type backtrackResult struct {
 	shouldBacktrack   bool

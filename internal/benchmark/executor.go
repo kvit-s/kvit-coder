@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/creack/pty"
 	"github.com/kvit-s/kvit-coder/internal/agent"
 	"github.com/kvit-s/kvit-coder/internal/config"
 	"github.com/kvit-s/kvit-coder/internal/llm"
@@ -80,7 +79,7 @@ func (e *Executor) Execute(ctx context.Context, benchmark BenchmarkDef, runID in
 	agentResult, err := e.runner.Run(timeoutCtx, agent.RunConfig{
 		Messages:     messages,
 		UseFileFirst: false,
-		QuietMode:    true,
+		QuietMode:    false,
 	})
 
 	completedAt := time.Now()
@@ -181,50 +180,26 @@ func (e *Executor) executeExternalCommand(ctx context.Context, benchmark Benchma
 		// Create timeout context for this attempt
 		timeoutCtx, cancel := context.WithTimeout(ctx, e.timeout)
 
-		// Execute the command in the benchmark workspace directory using pty
-		// This captures all terminal output including /dev/tty writes
+		// Execute the command in the benchmark workspace directory
 		cmd := exec.CommandContext(timeoutCtx, "sh", "-c", cmdStr)
 		cmd.Dir = absWorkspaceDir
 
-		// Start command with a pty to capture all terminal output
-		ptmx, err := pty.Start(cmd)
-		if err != nil {
-			cancel()
-			cmdErr = fmt.Errorf("failed to start pty: %w", err)
-			errorCount++
-			if attempt < maxRetries {
-				backoff := time.Duration(1<<(attempt-1)) * time.Second
-				fmt.Fprintf(e.stderrWriter, "  [benchmark %s run %d] pty start failed (attempt %d/%d): %v, retrying in %v\n",
-					benchmark.ID, runID, attempt, maxRetries, err, backoff)
-				select {
-				case <-time.After(backoff):
-					continue
-				case <-ctx.Done():
-					cmdErr = ctx.Err()
-					break
-				}
-			}
-			continue
-		}
-
 		// Capture output while also displaying to user
-		var output bytes.Buffer
-		outputWriter := io.MultiWriter(&output, e.stdoutWriter)
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = io.MultiWriter(&stdout, e.stdoutWriter)
+		cmd.Stderr = io.MultiWriter(&stderr, e.stderrWriter)
 
-		// Copy pty output to both buffer and terminal
-		copyDone := make(chan error, 1)
-		go func() {
-			_, err := io.Copy(outputWriter, ptmx)
-			copyDone <- err
-		}()
-
-		// Wait for command to finish
-		cmdErr = cmd.Wait()
-		ptmx.Close()
-		<-copyDone // Wait for copy to finish
+		cmdErr = cmd.Run()
 		cancel()
 
-		finalOutput = output.String()
+		// Combine stdout and stderr for verification
+		finalOutput = stdout.String()
+		if stderr.Len() > 0 {
+			if finalOutput != "" {
+				finalOutput += "\n"
+			}
+			finalOutput += stderr.String()
+		}
 
 		// If command succeeded, break out of retry loop
 		if cmdErr == nil {

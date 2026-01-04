@@ -278,7 +278,7 @@ func (r *Registry) ExtractToolCallsFromText(content string) []llm.ToolCall {
 		// Look for toolName{"param": "value"}
 		jsonPattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(toolName) + `\s*\{([^}]*)\}`)
 		jsonMatches := jsonPattern.FindAllStringSubmatch(content, -1)
-		
+
 		for _, jsonMatch := range jsonMatches {
 			if len(jsonMatch) >= 2 {
 				argsStr := "{" + jsonMatch[1] + "}"
@@ -301,7 +301,59 @@ func (r *Registry) ExtractToolCallsFromText(content string) []llm.ToolCall {
 			}
 		}
 	}
-	
+
+	if len(toolCalls) > 0 {
+		return toolCalls
+	}
+
+	// Try to find JSON object with tool name as key: {"tool_name": {"param": "value"}}
+	// This handles cases where LLM outputs JSON with tool calls as object keys
+	// The JSON might be embedded in text, so we try to find and extract it
+	jsonStart := strings.Index(content, "{")
+	if jsonStart >= 0 {
+		// Find matching closing brace by counting braces
+		jsonContent := content[jsonStart:]
+		braceCount := 0
+		jsonEnd := -1
+		for i, c := range jsonContent {
+			if c == '{' {
+				braceCount++
+			} else if c == '}' {
+				braceCount--
+				if braceCount == 0 {
+					jsonEnd = i + 1
+					break
+				}
+			}
+		}
+		if jsonEnd > 0 {
+			jsonStr := jsonContent[:jsonEnd]
+			var jsonObj map[string]interface{}
+			if err := json.Unmarshal([]byte(jsonStr), &jsonObj); err == nil {
+				for toolName := range r.tools {
+					if args, ok := jsonObj[toolName]; ok {
+						if argsMap, ok := args.(map[string]interface{}); ok {
+							argsJSON, err := json.Marshal(argsMap)
+							if err == nil {
+								toolCalls = append(toolCalls, llm.ToolCall{
+									ID:   generateToolCallID(),
+									Type: "function",
+									Function: struct {
+										Name      string `json:"name"`
+										Arguments string `json:"arguments"`
+									}{
+										Name:      toolName,
+										Arguments: string(argsJSON),
+									},
+								})
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	return toolCalls
 }
 

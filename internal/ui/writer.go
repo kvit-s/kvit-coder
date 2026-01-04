@@ -115,6 +115,16 @@ func (w *Writer) IsHeadless() bool {
 	return w.headless
 }
 
+// SetStdout sets a custom stdout writer.
+func (w *Writer) SetStdout(stdout io.Writer) {
+	w.stdout = stdout
+}
+
+// SetStderr sets a custom stderr writer.
+func (w *Writer) SetStderr(stderr io.Writer) {
+	w.stderr = stderr
+}
+
 // jsonContent accumulates the final content for JSON output
 var jsonContent string
 

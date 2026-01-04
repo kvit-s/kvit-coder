@@ -92,6 +92,13 @@ func Run(ctx context.Context, flags CLIFlags, runner *agent.Runner, cfg *config.
 	stdoutWriter := io.MultiWriter(os.Stdout, terminalFile)
 	stderrWriter := io.MultiWriter(os.Stderr, terminalFile)
 
+	// Configure the runner's writer to use terminal file (headless mode routes through stderr/stdout)
+	writer := runner.Writer()
+	writer.SetHeadless(true)
+	writer.SetQuiet(false)
+	writer.SetStdout(stdoutWriter)
+	writer.SetStderr(stderrWriter)
+
 	// Find benchmarks.yaml file (use original workspace)
 	benchmarksFile := FindBenchmarksFile(originalWorkspaceRoot)
 	if benchmarksFile == "" {
