@@ -1,432 +1,57 @@
 # kvit-coder
 
-A minimal coding agent in Go with OpenAI-compatible LLM support and pluggable tools.
+A benchmarking framework for evaluating LLM coding agents on tool-use tasks.
 
-## Architecture
+## Overview
 
-The application is split into two binaries:
-
-- **`kvit-coder`** - Headless agent engine for scripting and automation
-- **`kvit-coder-ui`** - Interactive terminal UI that orchestrates `kvit-coder`
+This project provides a standardized benchmark suite to measure LLM performance on coding agent tasks including file operations, code search, and multi-step problem solving. It's designed to test local/self-hosted models against a consistent set of challenges.
 
 ## Quick Start
 
 ### Build
 
 ```bash
-# Build both binaries
 go build -o kvit-coder ./cmd/kvit-coder
-go build -o kvit-coder-ui ./cmd/kvit-coder-ui
-```
-
-Release build (optimized with embedded version info):
-
-```bash
-./scripts/release.sh
 ```
 
 ### Configure
 
-Edit `config.yaml` to set your LLM endpoint:
+Create a config file for your model (e.g., `config-mymodel.yaml`):
 
 ```yaml
 llm:
-  base_url: "http://127.0.0.1:8080/v1"  # Your OpenAI-compatible endpoint
-  api_key_env: "OPENAI_API_KEY"          # Environment variable for API key
-  model: "gpt-oss-20b"                   # Model name
+  base_url: "http://127.0.0.1:8080/v1"
+  api_key_env: "OPENAI_API_KEY"
+  model: "my-model-name"
   temperature: 0.2
   max_output_tokens: 2048
-```
 
-### Run
-
-**Interactive mode (kvit-coder-ui):**
-
-```bash
-./kvit-coder-ui
-```
-
-**Headless mode (kvit-coder):**
-
-```bash
-# Run a single prompt
-./kvit-coder -p "fix the failing tests"
-
-# Quiet mode (final answer only to stdout)
-./kvit-coder -pq "what is 2+2"
-
-# JSON output mode
-./kvit-coder -p "list the files" --json
-```
-
-### Testing
-
-Run the test suite:
-
-```bash
-# Run all tests
-go test ./...
-
-# Run tests with coverage
-go test ./... -cover
-
-# Generate detailed coverage report
-go test ./internal/... -coverprofile=coverage.out
-go tool cover -html=coverage.out -o coverage.html
-```
-
-## kvit-coder (Headless Agent)
-
-The headless agent is designed for scripting and automation. It requires either `-p` (prompt) or `--benchmark` mode.
-
-### Output Protocol
-
-```
-stdout: Final LLM response only (the answer)
-stderr: Progress, tool outputs, status, errors
-
-Exit codes:
-  0 = success
-  1 = error (LLM error, tool error, etc.)
-  2 = user interrupt (SIGINT)
-```
-
-This allows piping the final answer:
-
-```bash
-./kvit-coder -p "summarize this file" > summary.txt
-```
-
-### Flags
-
-| Flag | Description |
-|------|-------------|
-| `-p <prompt>` | Run with this prompt and exit |
-| `-pq <prompt>` | Quiet mode: only print final answer to stdout |
-| `--json` | Output structured JSON messages |
-| `-s <name>` | Session name: continue existing or create new |
-| `--config <path>` | Config file path (default: config.yaml) |
-| `--model <name>` | Override model name |
-| `--base-url <url>` | Override LLM base URL |
-| `--log <path>` | Log file path (default: kvit-coder.log) |
-| `--benchmark` | Run benchmark mode |
-| `--sessions` | List all sessions and exit |
-| `--session-show <name>` | Show session history and exit |
-| `--session-delete <name>` | Delete a session and exit |
-
-### JSON Output Mode
-
-With `--json`, all progress output is suppressed and a single JSON object is output to stdout:
-
-```bash
-./kvit-coder -p "hello" --json > result.json
-```
-
-**JSON output format:**
-
-```json
-{
-  "content": "The final LLM response text...",
-  "stats": {
-    "session": "2024-01-15-abc123",
-    "prompt_tokens": 1234,
-    "completion_tokens": 567,
-    "total_tokens": 1801,
-    "cache_read_tokens": 500,
-    "total_cost_usd": 0.0025,
-    "cache_discount_usd": 0.0005,
-    "duration_ms": 3500,
-    "steps": 3
-  }
-}
-```
-
-## kvit-coder-ui (Interactive UI)
-
-The interactive UI provides a readline-based interface with session management.
-
-```bash
-./kvit-coder-ui
-```
-
-### UI Commands
-
-| Command | Description |
-|---------|-------------|
-| `:help`, `:h` | Show help |
-| `:quit`, `:q` | Exit |
-| `:new` | Start a new session |
-| `:switch <name>` | Switch to an existing session |
-| `:sessions` | List all sessions |
-| `:history` | Show current session history |
-| `:clear` | Clear the terminal |
-| `:config` | Show configuration |
-
-### Flags
-
-| Flag | Description |
-|------|-------------|
-| `-s <name>` | Start with this session |
-| `--config <path>` | Config file path |
-| `--agent-path <path>` | Path to kvit-coder binary |
-| `--sessions` | List all sessions and exit |
-| `--session-show <name>` | Show session history and exit |
-| `--session-delete <name>` | Delete a session and exit |
-
-## Sessions
-
-Sessions allow you to persist conversation history and continue previous conversations.
-
-### Basic Usage
-
-```bash
-# Exec mode auto-generates a session name
-./kvit-coder -p "fix the failing tests"
-# Output ends with: Session: 2024-01-15-x7k9m2
-
-# Continue the session
-./kvit-coder -p "the login test is still failing" -s 2024-01-15-x7k9m2
-
-# Use a named session from the start
-./kvit-coder -p "implement user auth" -s auth-feature
-
-# Continue named session
-./kvit-coder -p "add password reset" -s auth-feature
-```
-
-### Interactive Mode with Sessions
-
-```bash
-# Start interactive mode with existing session history
-./kvit-coder-ui -s auth-feature
-
-# Start fresh interactive mode (no session)
-./kvit-coder-ui
-```
-
-### Session Management
-
-```bash
-# List all sessions
-./kvit-coder --sessions
-# or
-./kvit-coder-ui --sessions
-
-# View session history
-./kvit-coder --session-show my-feature
-
-# Delete a session
-./kvit-coder --session-delete my-feature
-```
-
-### Storage
-
-Sessions are stored as JSONL files in `~/.kvit-coder/sessions/`:
-
-```
-~/.kvit-coder/sessions/
-├── my-feature.jsonl
-├── 2024-01-15-abc123.jsonl
-└── 2024-01-15-def456.jsonl
-```
-
-Auto-generated session names use the format `YYYY-MM-DD-<random6>`.
-
-## Available Tools
-
-Tools are disabled by default and must be explicitly enabled in `config.yaml`:
-
-**Core Tools:**
-- `read` - Read file contents or list directories
-- `edit` - Edit or create files by line range
-- `search` - Search for code patterns with ripgrep
-- `shell` - Execute shell commands from the workspace
-
-**Group Tools (enable all at once):**
-- `plan.*` - Plan management tools (plan.create, plan.complete_step, plan.add_step, plan.remove_step, plan.move_step)
-- `checkpoint.*` - Checkpoint tools (checkpoint.list, checkpoint.restore, checkpoint.diff, checkpoint.undo)
-
-**Conditional Tools:**
-- `restore_file` - Requires `restore_file.enabled: true` and checkpoint infrastructure
-- `edit.confirm` / `edit.cancel` - Available when `edit.enabled: true` AND `edit.preview_mode: true`
-
-### Tool Configuration
-
-Enable tools in `config.yaml`:
-
-```yaml
 tools:
-  # All tools are disabled by default - explicitly enable the ones you want
-
   read:
     enabled: true
-    max_file_size_kb: 128
-    max_read_size_kb: 24
-    max_partial_lines: 150
-
   edit:
     enabled: true
-    max_file_size_kb: 128
-    preview_mode: false         # enables edit.confirm/edit.cancel
-    read_before_edit_msgs: 0
-
-  restore_file:
-    enabled: false
-
   search:
     enabled: true
-
   shell:
     enabled: true
-    allowed_commands: []        # empty = allow all
-
-  plan:
-    enabled: false              # group toggle for all plan.* tools
-
-  checkpoint:
-    enabled: false              # group toggle for all checkpoint.* tools
-    max_turns: 100
-    max_file_size_kb: 1024
-    excluded_patterns: []
 ```
 
-## Enhanced Safety Mode
+### Run Benchmarks
 
-The safety system provides semantic analysis of shell commands to prevent destructive operations. All safety features are **disabled by default** for backward compatibility.
+```bash
+# Run all benchmarks (10 runs each by default)
+./kvit-coder --benchmark mymodel
 
-### Quick Enable
+# Custom number of runs
+./kvit-coder --benchmark mymodel -n 5
 
-Add to your `config.yaml` to enable recommended protections:
+# Run specific category
+./kvit-coder --benchmark mymodel --benchmark-category search
 
-```yaml
-safety:
-  git:
-    block_push: true              # Block all git push (run manually)
-    block_hard_reset: true        # Block git reset --hard
-    block_checkout_discard: true  # Block git checkout -- <file>
-    block_stash_drop: true        # Block git stash drop/clear
-    block_clean_force: true       # Block git clean -f
-  rm:
-    block_workspace_root: true    # Block rm -rf on workspace root
+# Run specific benchmark IDs
+./kvit-coder --benchmark mymodel --benchmark-id S1,S2,R1
 ```
-
-### Semantic Command Parsing
-
-Unlike simple string matching, the safety checker:
-- Parses commands semantically (handles quotes, flags, pipes)
-- Unwraps shell wrappers (`bash -c 'git push'` → detects `git push`)
-- Analyzes pipelines (`find . | xargs rm` → detects destructive xargs)
-
-### Protected Operations
-
-| Category | Command | Default | Description |
-|----------|---------|---------|-------------|
-| **Git** | `git push` | Allow | Block all pushes (user should run manually) |
-| | `git reset --hard` | Allow | Block hard resets |
-| | `git checkout -- <file>` | Allow | Block file discard |
-| | `git stash drop/clear` | Allow | Block stash deletion |
-| | `git clean -f` | Allow | Block force clean (allows `-n`) |
-| | `git branch -D` | Allow | Warn on force branch delete |
-| **rm** | `rm -rf /`, `~`, `/usr` | **Block** | System paths always blocked |
-| | `rm -rf .` (workspace root) | Allow | Block workspace root deletion |
-| | `rm -rf /tmp/...` | Allow | Allow temp directory cleanup |
-| | `rm -rf subdir` | Allow | Allow workspace subdirectory deletion |
-| **find** | `find ... -delete` | Allow | Block outside temp/workspace |
-| | `find ... -exec rm` | Allow | Block outside temp/workspace |
-| **xargs** | `... \| xargs rm` | **Block** | Destructive pipeline always blocked |
-| | `... \| xargs cat` | Allow | Safe pipelines allowed |
-
-### Strict Mode
-
-Enable fail-closed behavior for unparseable commands:
-
-```yaml
-safety:
-  strict_mode: true   # Block commands that can't be parsed
-```
-
-In non-strict mode (default), unparseable commands fall through to the legacy blocklist.
-
-### Audit Logging
-
-Log blocked commands for security review:
-
-```yaml
-safety:
-  audit:
-    enabled: true
-    log_dir: "~/.kvit-coder/safety-logs"
-    redact_secrets: true    # Redact API keys, tokens from logs
-    retention_days: 30
-```
-
-Logs are stored as JSONL files per session. Secrets matching common patterns (OpenAI keys, GitHub PATs, AWS keys, passwords) are automatically redacted.
-
-### Full Configuration Reference
-
-```yaml
-safety:
-  strict_mode: false            # Block unparseable commands (fail-closed)
-  paranoid_mode: false          # Extra aggressive restrictions
-
-  audit:
-    enabled: false
-    log_dir: "~/.kvit-coder/safety-logs"
-    redact_secrets: true
-    retention_days: 30
-
-  git:
-    block_push: false
-    block_hard_reset: false
-    block_checkout_discard: false
-    block_stash_drop: false
-    block_clean_force: false
-    warn_branch_force_delete: false
-
-  rm:
-    allow_in_temp: false        # Allow rm -rf in /tmp, /var/tmp
-    allow_in_workspace_cwd: false
-    block_workspace_root: false
-
-  interpreters:
-    block_one_liners: false     # Block python -c, node -e, etc.
-    allowed: []                 # Allowlist if blocking
-```
-
-### Adding New Tools
-
-Implement the `Tool` interface:
-
-```go
-type Tool interface {
-    Name() string                                           // Tool identifier (e.g., "shell", "read")
-    Description() string                                    // For LLM
-    JSONSchema() map[string]any                            // OpenAI function schema
-    Check(ctx context.Context, args json.RawMessage) error // Validation
-    Call(ctx context.Context, args json.RawMessage) (any, error) // Execution
-    PromptSection() string                                 // System prompt docs
-    PromptCategory() string                                // "filesystem", "shell", "plan", "checkpoint"
-    PromptOrder() int                                      // Sort order within category
-}
-```
-
-Then enable in main.go:
-```go
-myTool := tools.NewMyTool(cfg)
-registry.Enable(myTool)
-```
-
-## Compatible LLM Providers
-
-The agent works with any OpenAI-compatible API endpoint:
-
-- **OpenRouter**: `https://openrouter.ai/api/v1`
-- **llama.cpp server**: `http://localhost:8080/v1`
-- **Local models**: Any server implementing the OpenAI chat completions API
-
-## Benchmarks
-
-The agent includes a benchmarking system for testing LLM tool usage precision, recovery, and consistency.
 
 ### List Available Benchmarks
 
@@ -434,77 +59,55 @@ The agent includes a benchmarking system for testing LLM tool usage precision, r
 ./kvit-coder --benchmark-list
 ```
 
-Output:
-```
-Available benchmarks (24 total):
+## Benchmark Categories
 
-## SEARCH
-  S1 - Simple Pattern Search
-  S2 - Multi-Pattern Search
-  ...
+| Category | Description |
+|----------|-------------|
+| **search** | Code pattern search with ripgrep |
+| **read** | File reading and directory listing |
+| **edit** | File creation and modification |
+| **shell** | Shell command execution |
+| **compound** | Multi-step tasks combining multiple tools |
 
-## READ
-  R1 - Simple File Read
-  ...
+## Output Files
 
-## COMPOUND
-  C5 - Needle in Haystack Search
-  C6 - Multi-Step Definition Tracing
-```
+Each benchmark run produces:
 
-### Run Benchmarks
+| File | Description |
+|------|-------------|
+| `benchmark-{name}-{timestamp}.md` | Markdown report with summary tables and statistics |
+| `terminal-{name}-{timestamp}.txt` | Full terminal output from the run |
+| `.kvit-coder-benchmark/benchmark-{timestamp}.csv` | Raw CSV data (enables resume on interrupt) |
 
-```bash
-# Run all benchmarks with 10 runs each (default)
-./kvit-coder --benchmark .
-
-# Run with custom number of runs
-./kvit-coder --benchmark . -n 5
-
-# Run specific category
-./kvit-coder --benchmark . -n 5 --benchmark-category search
-
-# Run specific benchmark(s)
-./kvit-coder --benchmark . -n 10 --benchmark-id S1
-./kvit-coder --benchmark . -n 10 --benchmark-id S1,S2,R1
-
-# Output to specific file
-./kvit-coder --benchmark . -n 10 -o results/my-benchmark.md
-
-# Force fresh start (ignore previous results)
-./kvit-coder --benchmark . -n 10 --no-resume
-```
-
-### Benchmark Flags
+## Benchmark Flags
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `--benchmark <suffix>` | Enable benchmark mode (use `.` for no suffix) | - |
-| `-n` | Number of runs per benchmark | 10 |
-| `--benchmark-category` | Filter by category (comma-separated) | all |
-| `--benchmark-id` | Run specific benchmark IDs (comma-separated) | all |
-| `-o` | Output file path | `.kvit-coder-benchmark/results/benchmark-{timestamp}.md` |
+| `--benchmark <name>` | Run benchmarks using `config-{name}.yaml` | - |
+| `-n <count>` | Number of runs per benchmark | 10 |
+| `--benchmark-category <cat>` | Filter by category (comma-separated) | all |
+| `--benchmark-id <ids>` | Run specific benchmark IDs (comma-separated) | all |
+| `-o <path>` | Output file path | auto-generated |
 | `--no-resume` | Force fresh start, ignore existing CSV | false |
 
-### Output
+## External LLM Support
 
-Benchmarks produce:
-- **Markdown report** (`-o` path): Summary table, per-benchmark statistics, failure analysis
-- **CSV file** (same path with `.csv`): Raw data for each run, enables resume on interrupt
+To benchmark an external tool (like Claude Code), use `benchmark_cmd` in your config:
 
-Example report excerpt:
-```markdown
-## Summary
-
-| Benchmark | Success Rate | Avg LLM Calls | Avg Tokens | Avg Cost | Avg Duration |
-|-----------|--------------|---------------|------------|----------|--------------|
-| S1        | 100%         | 1.0           | 1,234      | $0.002   | 1.2s         |
-| S2        | 90%          | 1.3           | 2,456      | $0.004   | 2.1s         |
+```yaml
+llm:
+  benchmark_cmd: "claude -p {prompt} --allowedTools Edit Bash Read"
 ```
 
-### Adding Custom Benchmarks
+The `{prompt}` placeholder is replaced with the benchmark task.
 
-Define benchmarks in `benchmarks.yaml`:
+## Results
+
+Benchmark results are stored in the `benchmarks/` directory. See [benchmarks/README.md](benchmarks/README.md) for details on interpreting results.
+
+## Adding Custom Benchmarks
+
+Define benchmarks in `benchmarks/benchmarks.yaml`:
 
 ```yaml
 benchmarks:
@@ -512,7 +115,6 @@ benchmarks:
     name: "My Custom Benchmark"
     category: custom
     goal: "Test something specific"
-    readonly: true  # Optional: setup once, block write tools
     setup:
       - file: "test.go"
         content: |
@@ -524,16 +126,16 @@ benchmarks:
         expected: "test.go"
       - type: tool_called
         expected: "search"
-    tags: ["custom"]
 ```
 
-**Benchmark Options:**
-- `readonly: true` - Setup files once (reused across runs), only allow read-only tools:
-  - `search`, `read` tools
-  - Shell commands: `grep`, `rg`, `find`, `ls`, `cat`, `head`, `tail`, `wc`, etc.
-  - Fails if LLM calls `edit`, `write`, or destructive shell commands
-
 **Validation types:** `file_contains`, `file_equals`, `file_exists`, `file_not_exists`, `file_line_count`, `tool_called`, `tool_called_with`, `output_contains`, `output_not_contains`, `output_matches`, `multi_tool_calls`
+
+## Architecture
+
+The agent consists of two binaries:
+
+- **`kvit-coder`** - Headless agent for benchmarking and automation
+- **`kvit-coder-ui`** - Interactive terminal UI (not used for benchmarking)
 
 ## License
 
