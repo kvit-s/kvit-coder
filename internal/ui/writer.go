@@ -125,6 +125,12 @@ func (w *Writer) SetStderr(stderr io.Writer) {
 	w.stderr = stderr
 }
 
+// SetColorOutput sets the output for colored text (used by fatih/color package).
+// This should be called when you want colored output to go somewhere other than os.Stdout.
+func (w *Writer) SetColorOutput(stdout io.Writer) {
+	color.Output = stdout
+}
+
 // jsonContent accumulates the final content for JSON output
 var jsonContent string
 

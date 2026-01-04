@@ -92,12 +92,14 @@ func Run(ctx context.Context, flags CLIFlags, runner *agent.Runner, cfg *config.
 	stdoutWriter := io.MultiWriter(os.Stdout, terminalFile)
 	stderrWriter := io.MultiWriter(os.Stderr, terminalFile)
 
-	// Configure the runner's writer to use terminal file (headless mode routes through stderr/stdout)
+	// Configure the runner's writer to capture output to terminal file
+	// Use non-headless mode to preserve colors, but route color output through MultiWriter
 	writer := runner.Writer()
-	writer.SetHeadless(true)
+	writer.SetHeadless(false)
 	writer.SetQuiet(false)
 	writer.SetStdout(stdoutWriter)
 	writer.SetStderr(stderrWriter)
+	writer.SetColorOutput(stdoutWriter) // Route colored output to terminal file too
 
 	// Find benchmarks.yaml file (use original workspace)
 	benchmarksFile := FindBenchmarksFile(originalWorkspaceRoot)
