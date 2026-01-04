@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -24,16 +23,20 @@ type Executor struct {
 	systemPrompt string
 	env          *Environment
 	timeout      time.Duration
+	stdoutWriter io.Writer
+	stderrWriter io.Writer
 }
 
 // NewExecutor creates a new benchmark executor.
-func NewExecutor(runner *agent.Runner, cfg *config.Config, systemPrompt string, env *Environment, timeout time.Duration) *Executor {
+func NewExecutor(runner *agent.Runner, cfg *config.Config, systemPrompt string, env *Environment, timeout time.Duration, stdoutWriter, stderrWriter io.Writer) *Executor {
 	return &Executor{
 		runner:       runner,
 		cfg:          cfg,
 		systemPrompt: systemPrompt,
 		env:          env,
 		timeout:      timeout,
+		stdoutWriter: stdoutWriter,
+		stderrWriter: stderrWriter,
 	}
 }
 
@@ -183,8 +186,8 @@ func (e *Executor) executeExternalCommand(ctx context.Context, benchmark Benchma
 
 		// Capture output while also displaying to user
 		var stdout, stderr bytes.Buffer
-		cmd.Stdout = io.MultiWriter(&stdout, os.Stdout)
-		cmd.Stderr = io.MultiWriter(&stderr, os.Stderr)
+		cmd.Stdout = io.MultiWriter(&stdout, e.stdoutWriter)
+		cmd.Stderr = io.MultiWriter(&stderr, e.stderrWriter)
 
 		cmdErr = cmd.Run()
 		cancel()
@@ -214,7 +217,7 @@ func (e *Executor) executeExternalCommand(ctx context.Context, benchmark Benchma
 		// Log the error and retry info
 		if attempt < maxRetries {
 			backoff := time.Duration(1<<(attempt-1)) * time.Second // 1s, 2s, 4s, 8s
-			fmt.Fprintf(os.Stderr, "  [benchmark %s run %d] command failed (attempt %d/%d, %d errors): %s, retrying in %v\n",
+			fmt.Fprintf(e.stderrWriter, "  [benchmark %s run %d] command failed (attempt %d/%d, %d errors): %s, retrying in %v\n",
 				benchmark.ID, runID, attempt, maxRetries, errorCount, errMsg, backoff)
 
 			// Wait with backoff before retrying
@@ -226,7 +229,7 @@ func (e *Executor) executeExternalCommand(ctx context.Context, benchmark Benchma
 				break
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "  [benchmark %s run %d] command failed (attempt %d/%d, %d errors): %s, giving up\n",
+			fmt.Fprintf(e.stderrWriter, "  [benchmark %s run %d] command failed (attempt %d/%d, %d errors): %s, giving up\n",
 				benchmark.ID, runID, attempt, maxRetries, errorCount, errMsg)
 		}
 	}
@@ -260,7 +263,7 @@ func (e *Executor) executeExternalCommand(ctx context.Context, benchmark Benchma
 	} else {
 		// Log if we succeeded after retries
 		if errorCount > 0 {
-			fmt.Fprintf(os.Stderr, "  [benchmark %s run %d] command succeeded after %d errors\n",
+			fmt.Fprintf(e.stderrWriter, "  [benchmark %s run %d] command succeeded after %d errors\n",
 				benchmark.ID, runID, errorCount)
 		}
 

@@ -3,6 +3,7 @@ package benchmark
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -50,6 +51,47 @@ func Run(ctx context.Context, flags CLIFlags, runner *agent.Runner, cfg *config.
 	// Determine base directory (use original workspace, not the overridden one)
 	baseDir := filepath.Join(originalWorkspaceRoot, ".kvit-coder-benchmark")
 
+	// Determine output paths early so we can create the terminal log file
+	outputPath := flags.OutputFile
+	timestamp := time.Now().Format("20060102-150405")
+	if outputPath == "" {
+		if flags.Suffix != "" {
+			outputPath = filepath.Join(originalWorkspaceRoot, fmt.Sprintf("benchmark-%s-%s.md", flags.Suffix, timestamp))
+		} else {
+			outputPath = filepath.Join(originalWorkspaceRoot, fmt.Sprintf("benchmark-%s.md", timestamp))
+		}
+	}
+
+	// CSV goes in .kvit-coder-benchmark directory
+	csvPath := filepath.Join(baseDir, fmt.Sprintf("benchmark-%s.csv", timestamp))
+
+	// Terminal output file - same directory and naming pattern as markdown report
+	var terminalPath string
+	if flags.Suffix != "" {
+		terminalPath = filepath.Join(originalWorkspaceRoot, fmt.Sprintf("terminal-%s-%s.txt", flags.Suffix, timestamp))
+	} else {
+		terminalPath = filepath.Join(originalWorkspaceRoot, fmt.Sprintf("terminal-%s.txt", timestamp))
+	}
+
+	// Ensure output directories exist
+	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
+	}
+	if err := os.MkdirAll(baseDir, 0755); err != nil {
+		return fmt.Errorf("failed to create benchmark directory: %w", err)
+	}
+
+	// Create terminal output file and MultiWriter
+	terminalFile, err := os.Create(terminalPath)
+	if err != nil {
+		return fmt.Errorf("failed to create terminal output file: %w", err)
+	}
+	defer terminalFile.Close()
+
+	// Write to both terminal streams and the file
+	stdoutWriter := io.MultiWriter(os.Stdout, terminalFile)
+	stderrWriter := io.MultiWriter(os.Stderr, terminalFile)
+
 	// Find benchmarks.yaml file (use original workspace)
 	benchmarksFile := FindBenchmarksFile(originalWorkspaceRoot)
 	if benchmarksFile == "" {
@@ -62,7 +104,7 @@ func Run(ctx context.Context, flags CLIFlags, runner *agent.Runner, cfg *config.
 		return fmt.Errorf("failed to load benchmarks: %w", err)
 	}
 
-	fmt.Printf("Loaded %d benchmarks from %s\n", len(benchmarks), benchmarksFile)
+	fmt.Fprintf(stdoutWriter, "Loaded %d benchmarks from %s\n", len(benchmarks), benchmarksFile)
 
 	// Filter by category/ID
 	var categories, ids []string
@@ -78,33 +120,11 @@ func Run(ctx context.Context, flags CLIFlags, runner *agent.Runner, cfg *config.
 		return fmt.Errorf("no benchmarks match the specified filters")
 	}
 
-	fmt.Printf("Running %d benchmarks with %d runs each\n", len(benchmarks), flags.Runs)
+	fmt.Fprintf(stdoutWriter, "Running %d benchmarks with %d runs each\n", len(benchmarks), flags.Runs)
 
 	// Indicate if using external command mode
 	if cfg.LLM.BenchmarkCmd != "" {
-		fmt.Printf("Using external command: %s\n", cfg.LLM.BenchmarkCmd)
-	}
-
-	// Determine output path - report goes in same directory as config.yaml
-	outputPath := flags.OutputFile
-	timestamp := time.Now().Format("20060102-150405")
-	if outputPath == "" {
-		if flags.Suffix != "" {
-			outputPath = filepath.Join(originalWorkspaceRoot, fmt.Sprintf("benchmark-%s-%s.md", flags.Suffix, timestamp))
-		} else {
-			outputPath = filepath.Join(originalWorkspaceRoot, fmt.Sprintf("benchmark-%s.md", timestamp))
-		}
-	}
-
-	// CSV goes in .kvit-coder-benchmark directory
-	csvPath := filepath.Join(baseDir, fmt.Sprintf("benchmark-%s.csv", timestamp))
-
-	// Ensure output directories exist
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0755); err != nil {
-		return fmt.Errorf("failed to create output directory: %w", err)
-	}
-	if err := os.MkdirAll(baseDir, 0755); err != nil {
-		return fmt.Errorf("failed to create benchmark directory: %w", err)
+		fmt.Fprintf(stdoutWriter, "Using external command: %s\n", cfg.LLM.BenchmarkCmd)
 	}
 
 	// Create benchmark configuration
@@ -123,10 +143,10 @@ func Run(ctx context.Context, flags CLIFlags, runner *agent.Runner, cfg *config.
 	env.WorkspaceDir = cfg.Workspace.Root
 
 	// Create executor
-	executor := NewExecutor(runner, cfg, systemPrompt, env, time.Duration(benchConfig.TimeoutPerRun)*time.Second)
+	executor := NewExecutor(runner, cfg, systemPrompt, env, time.Duration(benchConfig.TimeoutPerRun)*time.Second, stdoutWriter, stderrWriter)
 
 	// Create runner
-	benchRunner := NewRunner(executor, env, benchConfig, benchmarks, os.Stdout, csvPath)
+	benchRunner := NewRunner(executor, env, benchConfig, benchmarks, stdoutWriter, csvPath)
 
 	// Run benchmarks
 	results, err := benchRunner.RunAll(ctx)
@@ -134,9 +154,14 @@ func Run(ctx context.Context, flags CLIFlags, runner *agent.Runner, cfg *config.
 		return fmt.Errorf("benchmark run failed: %w", err)
 	}
 
-	// Load config.yaml for report (use original workspace)
+	// Load config file for report (use original workspace)
+	// If benchmark suffix is set, use config-{suffix}.yaml, otherwise config.yaml
 	configYAML := ""
-	configPath := filepath.Join(originalWorkspaceRoot, "config.yaml")
+	configFileName := "config.yaml"
+	if flags.Suffix != "" {
+		configFileName = fmt.Sprintf("config-%s.yaml", flags.Suffix)
+	}
+	configPath := filepath.Join(originalWorkspaceRoot, configFileName)
 	if data, err := os.ReadFile(configPath); err == nil {
 		configYAML = string(data)
 	}
@@ -147,8 +172,9 @@ func Run(ctx context.Context, flags CLIFlags, runner *agent.Runner, cfg *config.
 		return fmt.Errorf("failed to write report: %w", err)
 	}
 
-	fmt.Printf("\nReport written to: %s\n", outputPath)
-	fmt.Printf("CSV data saved to: %s\n", csvPath)
+	fmt.Fprintf(stdoutWriter, "\nReport written to: %s\n", outputPath)
+	fmt.Fprintf(stdoutWriter, "CSV data saved to: %s\n", csvPath)
+	fmt.Fprintf(stdoutWriter, "Terminal log saved to: %s\n", terminalPath)
 
 	return nil
 }
