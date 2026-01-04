@@ -21,14 +21,14 @@ tools:
   # All tools are disabled by default - explicitly enable the ones you want
 
   read:
-    enabled: true
+    enabled: false
     max_file_size_kb: 128
     max_read_size_kb: 24
     max_partial_lines: 150
     show_line_numbers: true     # set to false for content-based edit modes (searchreplace, patch)
 
   edit:
-    enabled: true
+    enabled: false
     mode: "lines"               # "lines" (default), "searchreplace", or "patch"
     max_file_size_kb: 128
     preview_mode: true         # enables edit.confirm/edit.cancel
@@ -40,7 +40,7 @@ tools:
     enabled: false
 
   search:
-    enabled: true
+    enabled: false
     max_snippet_results: 20   # Full snippets up to this many matches
     max_compact_results: 100  # file:line:match up to this many; above saves to temp file
 
