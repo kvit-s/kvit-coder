@@ -1,6 +1,6 @@
 llm:
   base_url: "http://192.168.8.20:8080/v1"  # Your OpenAI-compatible endpoint
-  model: "gpt-oss-4.2b-q80"
+  model: "gpt-oss-6b-q6k"
   context: 128000
   merge_thinking: false  # true = merge reasoning into content, false = discard
   verbose: 0             # 0 = off, >0 = show tool output up to N lines
