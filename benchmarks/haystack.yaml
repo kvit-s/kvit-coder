@@ -1,0 +1,202 @@
+# Haystack (Needle Retrieval) Benchmarks
+# Large context window tests - no tool usage
+# Text injected into prompt, questions appended
+#
+# Run with: kvit-coder --bench-haystack
+#
+# Runner behavior:
+# 1. Groups benchmarks by haystack for prompt caching
+# 2. Loads haystack content once as prefix
+# 3. Appends each question as suffix
+# 4. Disables tools (pure context retrieval)
+# 5. Does NOT log full haystack to terminal (too large)
+
+haystacks:
+  kvit-coder:
+    file: "haystacks/kvit-coder.go.txt"
+    generate: "scripts/amalgamate-go.sh"
+    description: "kvit-coder Go source amalgamated (~32k lines, ~1MB)"
+
+benchmarks:
+  # ------------------------------------------
+  # 1-hop retrieval: find single fact
+  # ------------------------------------------
+
+  - id: NR1
+    name: "1-hop: Default constant value"
+    haystack: kvit-coder
+    task: "What is the default value of maxFileSizeKB in the checkpoint Manager?"
+    validation:
+      - type: output_contains
+        expected: "1024"
+    tags: ["1-hop", "constant"]
+
+  - id: NR2
+    name: "1-hop: Struct field type"
+    haystack: kvit-coder
+    task: "In the checkpoint.Manager struct, what is the type of the 'mu' field?"
+    validation:
+      - type: output_contains
+        expected: "sync.RWMutex"
+    tags: ["1-hop", "struct"]
+
+  - id: NR3
+    name: "1-hop: Default exclude pattern"
+    haystack: kvit-coder
+    task: "What is the first default exclude pattern used by checkpoint.NewManager?"
+    validation:
+      - type: output_contains
+        expected: ".git/*"
+    tags: ["1-hop", "config"]
+
+  - id: NR4
+    name: "1-hop: Git environment variable"
+    haystack: kvit-coder
+    task: "What email address is set in GIT_AUTHOR_EMAIL when creating checkpoint commits?"
+    validation:
+      - type: output_contains
+        expected: "go-coder@local"
+    tags: ["1-hop", "env"]
+
+  # ------------------------------------------
+  # 2-hop retrieval: follow one call/reference
+  # ------------------------------------------
+
+  - id: NR5
+    name: "2-hop: Safety rule registration"
+    haystack: kvit-coder
+    task: "NewChecker creates a Registry and registers rules. What are all the rule types registered?"
+    validation:
+      - type: output_contains
+        expected: "GitRule"
+      - type: output_contains
+        expected: "RmRule"
+      - type: output_contains
+        expected: "FindRule"
+      - type: output_contains
+        expected: "XargsRule"
+    tags: ["2-hop", "registration"]
+
+  - id: NR6
+    name: "2-hop: Command check flow"
+    haystack: kvit-coder
+    task: "When Checker.Check validates a command, what function parses the command string, and what is the maximum unwrap depth?"
+    validation:
+      - type: output_contains
+        expected: "ParseCommand"
+      - type: output_contains
+        expected: "5"
+    tags: ["2-hop", "flow"]
+
+  - id: NR7
+    name: "2-hop: Checkpoint tag naming"
+    haystack: kvit-coder
+    task: "In checkpoint.Manager, what is the format of git tags created for each turn, and where is the checkpoint directory created?"
+    validation:
+      - type: output_contains
+        expected: "turn-"
+      - type: output_contains
+        expected: "TempDir"
+    tags: ["2-hop", "naming"]
+
+  - id: NR8
+    name: "2-hop: Strict mode behavior"
+    haystack: kvit-coder
+    task: "When StrictMode is enabled in SafetyConfig and ParseCommand fails, what RuleResult action is returned?"
+    validation:
+      - type: output_contains
+        expected: "Block"
+    tags: ["2-hop", "error-handling"]
+
+  # ------------------------------------------
+  # 3-hop retrieval: follow multiple calls
+  # ------------------------------------------
+
+  - id: NR9
+    name: "3-hop: Restore chain"
+    haystack: kvit-coder
+    task: "Trace Manager.Restore: it calls commitTurn after restoring. What parameters does commitTurn receive that indicate this was a restore operation?"
+    validation:
+      - type: output_contains
+        expected: "isRestore"
+      - type: output_contains
+        expected: "restoredTo"
+    tags: ["3-hop", "restore"]
+
+  - id: NR10
+    name: "3-hop: External file tracking"
+    haystack: kvit-coder
+    task: "When TrackExternalFile is called, it generates a key for the file. Trace through: what function loads existing mappings, and what format is used for the key (describe the pattern)?"
+    validation:
+      - type: output_contains
+        expected: "loadExternalMappings"
+      - type: output_contains
+        expected: "counter"
+    tags: ["3-hop", "external-files"]
+
+  - id: NR11
+    name: "3-hop: Safety check pipeline"
+    haystack: kvit-coder
+    task: "Trace the full safety check pipeline: Checker.Check calls what to parse, then what to handle shell wrappers, then what to apply rules? Name all three functions."
+    validation:
+      - type: output_contains
+        expected: "ParseCommand"
+      - type: output_contains
+        expected: "UnwrapAll"
+      - type: output_contains
+        expected: "CheckAll"
+    tags: ["3-hop", "pipeline"]
+
+  - id: NR12
+    name: "3-hop: Audit logging chain"
+    haystack: kvit-coder
+    task: "When a command is blocked, trace: what Checker method calls audit, what condition must be true for audit to log, and what AuditLogger method is called?"
+    validation:
+      - type: output_contains
+        expected: "audit"
+      - type: output_contains
+        expected: "Block"
+      - type: output_contains
+        expected: "LogBlocked"
+    tags: ["3-hop", "audit"]
+
+  # ------------------------------------------
+  # Cross-file retrieval: find related items
+  # ------------------------------------------
+
+  - id: NR13
+    name: "Cross-file: All safety rules"
+    haystack: kvit-coder
+    task: "List all struct types that implement safety rules (types with Rule suffix in the safety package)."
+    validation:
+      - type: output_contains
+        expected: "GitRule"
+      - type: output_contains
+        expected: "RmRule"
+      - type: output_contains
+        expected: "XargsRule"
+    tags: ["cross-file", "aggregation"]
+
+  - id: NR14
+    name: "Cross-file: TurnInfo fields"
+    haystack: kvit-coder
+    task: "What are all the fields in the TurnInfo struct and their JSON tags?"
+    validation:
+      - type: output_contains
+        expected: "turn"
+      - type: output_contains
+        expected: "files_changed"
+      - type: output_contains
+        expected: "is_restore"
+    tags: ["cross-file", "struct"]
+
+  - id: NR15
+    name: "Cross-file: SafetyConfig features"
+    haystack: kvit-coder
+    task: "What boolean fields in SafetyConfig control different safety features? List at least 4."
+    validation:
+      - type: output_contains
+        expected: "StrictMode"
+      - type: output_contains
+        expected: "ParanoidMode"
+    tags: ["cross-file", "config"]

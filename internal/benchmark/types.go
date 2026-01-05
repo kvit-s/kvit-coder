@@ -16,6 +16,15 @@ type BenchmarkDef struct {
 	Task       string            `yaml:"task"`
 	Validation []ValidationCheck `yaml:"validation"`
 	Tags       []string          `yaml:"tags"`
+	Haystack   string            `yaml:"haystack,omitempty"` // For needle_retrieval: haystack ID to use
+}
+
+// HaystackDef defines a large context file for needle retrieval benchmarks.
+type HaystackDef struct {
+	File        string `yaml:"file"`        // Path to haystack file (relative to benchmarks dir)
+	Generate    string `yaml:"generate"`    // Optional script to generate the file
+	Source      string `yaml:"source"`      // Optional download URL
+	Description string `yaml:"description"` // Human-readable description
 }
 
 // SetupFile defines a file to create for benchmark setup.

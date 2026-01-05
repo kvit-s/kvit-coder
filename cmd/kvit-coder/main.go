@@ -52,6 +52,10 @@ func main() {
 	benchmarkNoResume := flag.Bool("no-resume", false, "force fresh benchmark start (ignore existing results)")
 	benchmarkList := flag.Bool("benchmark-list", false, "list available benchmarks and exit")
 
+	// Haystack benchmark flags (needle retrieval - large context tests)
+	benchHaystack := flag.String("bench-haystack", "", "run haystack (needle retrieval) benchmarks (optional suffix)")
+	benchHaystackID := flag.String("bench-haystack-id", "", "run specific haystack benchmark IDs (comma-separated)")
+
 	// Session flags
 	sessionName := flag.String("s", "", "session name: continue existing session or create new one with this name")
 	sessionList := flag.Bool("sessions", false, "list all sessions and exit")
@@ -334,6 +338,33 @@ func main() {
 
 		if err := benchmark.Run(context.Background(), flags, runner, cfg, systemPrompt, version, originalWorkspaceRoot); err != nil {
 			log.Fatalf("Benchmark failed: %v", err)
+		}
+		return
+	}
+
+	// Run haystack (needle retrieval) benchmark mode if requested
+	haystackEnabled := *benchHaystack != ""
+	if haystackEnabled {
+		haystackSuffix := *benchHaystack
+		if haystackSuffix == "true" {
+			haystackSuffix = ""
+		}
+
+		writer.StartupInfo("Haystack Benchmark Mode (Needle Retrieval)")
+		writer.StartupInfo(fmt.Sprintf("Model: %s @ %s", cfg.LLM.Model, cfg.LLM.BaseURL))
+		fmt.Println()
+
+		flags := benchmark.HaystackCLIFlags{
+			Enabled:     true,
+			Runs:        *benchmarkRuns,
+			BenchmarkID: *benchHaystackID,
+			OutputFile:  *benchmarkOutput,
+			NoResume:    *benchmarkNoResume,
+			Suffix:      haystackSuffix,
+		}
+
+		if err := benchmark.RunHaystack(context.Background(), flags, cfg, version, originalWorkspaceRoot); err != nil {
+			log.Fatalf("Haystack benchmark failed: %v", err)
 		}
 		return
 	}
