@@ -1,5 +1,8 @@
 # LLM Tool Usage Benchmarks
 # See benchmarks.md for detailed documentation
+#
+# For haystack (needle retrieval) benchmarks, see haystack.yaml
+# Run with: kvit-coder --bench-haystack
 
 benchmarks:
   # ============================================
