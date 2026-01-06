@@ -58,8 +58,8 @@ func (g *ReportGenerator) GenerateMarkdown() string {
 
 	// Summary Table - grouped by benchmark class
 	sb.WriteString("## Summary\n\n")
-	sb.WriteString("| Class | Success Rate | Avg Time/Run |\n")
-	sb.WriteString("|-------|--------------|--------------|")
+	sb.WriteString("| Class | Success Rate | Avg Time/Run | Avg Gen/Run |\n")
+	sb.WriteString("|-------|--------------|--------------|-------------|")
 	sb.WriteString("\n")
 
 	// Group by class (first letter of benchmark ID)
@@ -71,39 +71,46 @@ func (g *ReportGenerator) GenerateMarkdown() string {
 	sort.Strings(classes)
 
 	var totalSuccesses, totalRuns int
-	var totalDurationMS int64
+	var totalDurationMS, totalGeneratedTokens int64
 	for _, class := range classes {
 		cs := classStats[class]
 		totalSuccesses += cs.Successes
 		totalRuns += cs.TotalRuns
 		totalDurationMS += cs.TotalDurationMS
+		totalGeneratedTokens += cs.TotalGeneratedTokens
 		avgTimePerRun := 0.0
+		avgGenPerRun := int64(0)
 		if g.numRuns > 0 {
 			avgTimePerRun = float64(cs.TotalDurationMS) / float64(g.numRuns) / 1000
+			avgGenPerRun = cs.TotalGeneratedTokens / int64(g.numRuns)
 		}
-		sb.WriteString(fmt.Sprintf("| %s | %.0f%% (%d/%d) | %.1fs |\n",
+		sb.WriteString(fmt.Sprintf("| %s | %.0f%% (%d/%d) | %.1fs | %d |\n",
 			class,
 			cs.SuccessRate*100,
 			cs.Successes,
 			cs.TotalRuns,
 			avgTimePerRun,
+			avgGenPerRun,
 		))
 	}
 
 	// Total row
 	totalSuccessRate := 0.0
 	totalAvgTimePerRun := 0.0
+	totalAvgGenPerRun := int64(0)
 	if totalRuns > 0 {
 		totalSuccessRate = float64(totalSuccesses) / float64(totalRuns)
 	}
 	if g.numRuns > 0 {
 		totalAvgTimePerRun = float64(totalDurationMS) / float64(g.numRuns) / 1000
+		totalAvgGenPerRun = totalGeneratedTokens / int64(g.numRuns)
 	}
-	sb.WriteString(fmt.Sprintf("| **Total** | **%.0f%% (%d/%d)** | **%.1fs** |\n",
+	sb.WriteString(fmt.Sprintf("| **Total** | **%.0f%% (%d/%d)** | **%.1fs** | **%d** |\n",
 		totalSuccessRate*100,
 		totalSuccesses,
 		totalRuns,
 		totalAvgTimePerRun,
+		totalAvgGenPerRun,
 	))
 	sb.WriteString("\n")
 
@@ -618,12 +625,13 @@ func stddevInt64(values []int64) float64 {
 
 // ClassStats holds aggregated statistics for a benchmark class (e.g., C, E, R, S, W)
 type ClassStats struct {
-	Class           string
-	TotalRuns       int
-	Successes       int
-	Failures        int
-	SuccessRate     float64
-	TotalDurationMS int64
+	Class                string
+	TotalRuns            int
+	Successes            int
+	Failures             int
+	SuccessRate          float64
+	TotalDurationMS      int64
+	TotalGeneratedTokens int64
 }
 
 // sortNatural sorts strings naturally (E1, E2, ..., E10 instead of E1, E10, E2)
@@ -667,6 +675,8 @@ func (g *ReportGenerator) calculateClassStats(statsMap map[string]*AggregatedSta
 		cs.Failures += stats.Failures
 		// Sum total duration (mean * runs gives approximate total for this benchmark)
 		cs.TotalDurationMS += int64(stats.DurationMeanMS * float64(stats.TotalRuns))
+		// Sum total generated tokens
+		cs.TotalGeneratedTokens += int64(stats.GeneratedTokensMean * float64(stats.TotalRuns))
 	}
 
 	// Calculate success rates
