@@ -342,6 +342,15 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 		totalBenchmarks += len(group)
 	}
 
+	// Calculate total runs for progress
+	totalRuns := 0
+	for _, group := range groups {
+		totalRuns += len(group) * flags.Runs
+	}
+	completedRuns := 0
+	var totalDuration time.Duration
+	startTimeAll := time.Now()
+
 	// Run benchmarks grouped by haystack for prompt caching
 	for haystackID, benchmarkGroup := range groups {
 		haystackContent := haystackContents[haystackID]
@@ -361,6 +370,18 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 					return nil
 				default:
 				}
+
+				// Show progress and ETA
+				completedRuns++
+				progress := float64(completedRuns) / float64(totalRuns) * 100
+				var etaStr string
+				if completedRuns > 1 && totalDuration > 0 {
+					avgDuration := totalDuration / time.Duration(completedRuns-1)
+					remaining := time.Duration(totalRuns-completedRuns+1) * avgDuration
+					etaStr = fmt.Sprintf(" | ETA: %s", formatDuration(remaining))
+				}
+				fmt.Fprintf(stdoutWriter, "\n  \033[1m[%d/%d %.1f%%]%s\033[0m %s run %d\n",
+					completedRuns, totalRuns, progress, etaStr, b.ID, run)
 
 				startTime := time.Now()
 
@@ -382,8 +403,7 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 					// No Tools - pure text completion
 				}
 
-				// Show progress (not the full prompt!)
-				fmt.Fprintf(stdoutWriter, "\n  [%s] run %d: %s\n", b.ID, run, b.Name)
+				fmt.Fprintf(stdoutWriter, "  %s\n", b.Name)
 				fmt.Fprintf(stdoutWriter, "  Question: %s\n", b.Task)
 
 				resp, err := llmClient.Chat(ctx, req)
@@ -414,13 +434,13 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 						finalOutput = reasoningOutput
 					}
 
-					// Show thinking if available
+					// Show thinking if available (in gray/subdued color)
 					if reasoningOutput != "" {
-						fmt.Fprintf(stdoutWriter, "  Thinking: %s\n", truncateString(reasoningOutput, 200))
+						fmt.Fprintf(stdoutWriter, "  \033[90mThinking: %s\033[0m\n", reasoningOutput)
 					}
 
 					// Show answer
-					fmt.Fprintf(stdoutWriter, "  Answer: %s\n", truncateString(finalOutput, 300))
+					fmt.Fprintf(stdoutWriter, "  Answer: %s\n", finalOutput)
 
 					// Validate
 					validator := NewValidator("", finalOutput, nil)
@@ -435,13 +455,14 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 					// Note: CachedTokens not available in standard ChatResponse
 
 					if success {
-						fmt.Fprintf(stdoutWriter, "  Result: PASS (%d tokens, %dms)\n", result.Tokens, durationMS)
+						fmt.Fprintf(stdoutWriter, "  Result: \033[32mPASS\033[0m (%d tokens, %dms)\n", result.Tokens, durationMS)
 					} else {
-						fmt.Fprintf(stdoutWriter, "  Result: FAIL - %v\n", validationErrors)
+						fmt.Fprintf(stdoutWriter, "  Result: \033[31mFAIL\033[0m - %v (%d tokens, %dms)\n", validationErrors, result.Tokens, durationMS)
 					}
 				}
 
 				allResults = append(allResults, result)
+				totalDuration += time.Since(startTime)
 
 				// Write to CSV
 				if csvErr := csvWriter.WriteResult(&result); csvErr != nil {
@@ -452,6 +473,7 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 	}
 
 	// Print summary
+	totalElapsed := time.Since(startTimeAll)
 	fmt.Fprintf(stdoutWriter, "\n--- Summary ---\n")
 	passed := 0
 	failed := 0
@@ -464,8 +486,8 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 		}
 		totalTokens += r.Tokens
 	}
-	fmt.Fprintf(stdoutWriter, "Total: %d, Passed: %d, Failed: %d\n", len(allResults), passed, failed)
-	fmt.Fprintf(stdoutWriter, "Total tokens used: %d\n", totalTokens)
+	fmt.Fprintf(stdoutWriter, "Total: %d, \033[32mPassed: %d\033[0m, \033[31mFailed: %d\033[0m\n", len(allResults), passed, failed)
+	fmt.Fprintf(stdoutWriter, "Total tokens: %d | Total time: %s\n", totalTokens, formatDuration(totalElapsed))
 
 	// Convert HaystackBenchmarkDef to BenchmarkDef for report generation
 	var benchmarkDefs []BenchmarkDef
