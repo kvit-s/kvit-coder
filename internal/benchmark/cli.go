@@ -472,22 +472,89 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 		}
 	}
 
-	// Print summary
+	// Print summary grouped by hop class (first char of ID: 1, 2, 3, X)
 	totalElapsed := time.Since(startTimeAll)
 	fmt.Fprintf(stdoutWriter, "\n--- Summary ---\n")
-	passed := 0
-	failed := 0
-	totalTokens := 0
-	for _, r := range allResults {
-		if r.Success {
-			passed++
-		} else {
-			failed++
-		}
-		totalTokens += r.Tokens
+
+	// Group results by class
+	type classStats struct {
+		passed   int
+		failed   int
+		totalMs  int64
+		tokens   int
 	}
-	fmt.Fprintf(stdoutWriter, "Total: %d, \033[32mPassed: %d\033[0m, \033[31mFailed: %d\033[0m\n", len(allResults), passed, failed)
-	fmt.Fprintf(stdoutWriter, "Total tokens: %d | Total time: %s\n", totalTokens, formatDuration(totalElapsed))
+	classes := make(map[string]*classStats)
+	classOrder := []string{"1", "2", "3", "4", "5", "M"}
+	for _, c := range classOrder {
+		classes[c] = &classStats{}
+	}
+
+	for _, r := range allResults {
+		class := string(r.BenchmarkID[0])
+		if _, ok := classes[class]; !ok {
+			classes[class] = &classStats{}
+			classOrder = append(classOrder, class)
+		}
+		if r.Success {
+			classes[class].passed++
+		} else {
+			classes[class].failed++
+		}
+		classes[class].totalMs += r.DurationMS
+		classes[class].tokens += r.Tokens
+	}
+
+	// Print table
+	fmt.Fprintf(stdoutWriter, "| Class   | Success Rate     | Avg Time |\n")
+	fmt.Fprintf(stdoutWriter, "|---------|------------------|----------|\n")
+
+	totalPassed := 0
+	totalFailed := 0
+	var totalMs int64
+	totalTokens := 0
+
+	for _, class := range classOrder {
+		stats := classes[class]
+		total := stats.passed + stats.failed
+		if total == 0 {
+			continue
+		}
+		rate := float64(stats.passed) / float64(total) * 100
+		avgMs := stats.totalMs / int64(total)
+
+		className := class + "-hop"
+		if class == "M" {
+			className = "multi"
+		}
+
+		// Color based on success rate
+		var rateColor string
+		if rate >= 90 {
+			rateColor = "\033[32m" // green
+		} else if rate >= 70 {
+			rateColor = "\033[33m" // yellow
+		} else {
+			rateColor = "\033[31m" // red
+		}
+
+		fmt.Fprintf(stdoutWriter, "| %-7s | %s%5.1f%% (%d/%d)\033[0m | %6.1fs |\n",
+			className, rateColor, rate, stats.passed, total, float64(avgMs)/1000)
+
+		totalPassed += stats.passed
+		totalFailed += stats.failed
+		totalMs += stats.totalMs
+		totalTokens += stats.tokens
+	}
+
+	// Total row
+	totalCount := totalPassed + totalFailed
+	totalRate := float64(totalPassed) / float64(totalCount) * 100
+	avgMs := totalMs / int64(totalCount)
+	fmt.Fprintf(stdoutWriter, "|---------|------------------|----------|\n")
+	fmt.Fprintf(stdoutWriter, "| \033[1mTotal\033[0m   | \033[1m%5.1f%% (%d/%d)\033[0m | \033[1m%6.1fs\033[0m |\n",
+		totalRate, totalPassed, totalCount, float64(avgMs)/1000)
+
+	fmt.Fprintf(stdoutWriter, "\nTotal tokens: %d | Total time: %s\n", totalTokens, formatDuration(totalElapsed))
 
 	// Convert HaystackBenchmarkDef to BenchmarkDef for report generation
 	var benchmarkDefs []BenchmarkDef
