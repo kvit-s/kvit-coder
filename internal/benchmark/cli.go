@@ -383,7 +383,8 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 				}
 
 				// Show progress (not the full prompt!)
-				fmt.Fprintf(stdoutWriter, "  [%s] run %d: %s... ", b.ID, run, truncateString(b.Name, 40))
+				fmt.Fprintf(stdoutWriter, "\n  [%s] run %d: %s\n", b.ID, run, b.Name)
+				fmt.Fprintf(stdoutWriter, "  Question: %s\n", b.Task)
 
 				resp, err := llmClient.Chat(ctx, req)
 				completedAt := time.Now()
@@ -400,17 +401,26 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 				if err != nil {
 					result.Success = false
 					result.Errors = []string{err.Error()}
-					fmt.Fprintf(stdoutWriter, "ERROR: %v\n", err)
+					fmt.Fprintf(stdoutWriter, "  ERROR: %v\n", err)
 				} else if len(resp.Choices) == 0 {
 					result.Success = false
 					result.Errors = []string{"no response from LLM"}
-					fmt.Fprintf(stdoutWriter, "ERROR: no response\n")
+					fmt.Fprintf(stdoutWriter, "  ERROR: no response\n")
 				} else {
 					// Extract response
 					finalOutput := resp.Choices[0].Message.Content
+					reasoningOutput := resp.Choices[0].Message.ReasoningContent
 					if finalOutput == "" {
-						finalOutput = resp.Choices[0].Message.ReasoningContent
+						finalOutput = reasoningOutput
 					}
+
+					// Show thinking if available
+					if reasoningOutput != "" {
+						fmt.Fprintf(stdoutWriter, "  Thinking: %s\n", truncateString(reasoningOutput, 200))
+					}
+
+					// Show answer
+					fmt.Fprintf(stdoutWriter, "  Answer: %s\n", truncateString(finalOutput, 300))
 
 					// Validate
 					validator := NewValidator("", finalOutput, nil)
@@ -425,9 +435,9 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 					// Note: CachedTokens not available in standard ChatResponse
 
 					if success {
-						fmt.Fprintf(stdoutWriter, "PASS (%d tokens)\n", result.Tokens)
+						fmt.Fprintf(stdoutWriter, "  Result: PASS (%d tokens, %dms)\n", result.Tokens, durationMS)
 					} else {
-						fmt.Fprintf(stdoutWriter, "FAIL: %v\n", validationErrors)
+						fmt.Fprintf(stdoutWriter, "  Result: FAIL - %v\n", validationErrors)
 					}
 				}
 
