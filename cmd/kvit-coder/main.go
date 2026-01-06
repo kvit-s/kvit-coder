@@ -164,8 +164,18 @@ func main() {
 	if benchmarkSuffix == "." {
 		benchmarkSuffix = "" // "." means no suffix
 	}
+
+	// Also handle --bench-haystack suffix
+	haystackSuffix := *benchHaystack
+	if haystackSuffix == "." || haystackSuffix == "true" {
+		haystackSuffix = ""
+	}
+
+	// Use config-{suffix}.yaml if suffix is provided (from either benchmark mode)
 	if benchmarkSuffix != "" && *configPath == "config.yaml" {
 		actualConfigPath = fmt.Sprintf("config-%s.yaml", benchmarkSuffix)
+	} else if haystackSuffix != "" && *configPath == "config.yaml" {
+		actualConfigPath = fmt.Sprintf("config-%s.yaml", haystackSuffix)
 	}
 
 	// Load config
@@ -345,11 +355,6 @@ func main() {
 	// Run haystack (needle retrieval) benchmark mode if requested
 	haystackEnabled := *benchHaystack != ""
 	if haystackEnabled {
-		haystackSuffix := *benchHaystack
-		if haystackSuffix == "true" {
-			haystackSuffix = ""
-		}
-
 		writer.StartupInfo("Haystack Benchmark Mode (Needle Retrieval)")
 		writer.StartupInfo(fmt.Sprintf("Model: %s @ %s", cfg.LLM.Model, cfg.LLM.BaseURL))
 		fmt.Println()
