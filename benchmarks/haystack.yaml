@@ -1,71 +1,73 @@
 # Haystack (Needle Retrieval) Benchmarks
 # Large context window tests - no tool usage
-# Text injected into prompt, questions appended
 #
-# Run with: kvit-coder --bench-haystack
+# Multi-hop questions require tracing execution paths:
+# - Entry point (function/method name)
+# - Follow the logic/computation
+# - Find the answer (numeric value, format string, etc.)
 #
-# Runner behavior:
-# 1. Groups benchmarks by haystack for prompt caching
-# 2. Loads haystack content once as prefix
-# 3. Appends each question as suffix
-# 4. Disables tools (pure context retrieval)
-# 5. Does NOT log full haystack to terminal (too large)
+# Key: answer value should NOT be findable by grepping question keywords
 
 haystacks:
   kvit-coder:
     file: "haystacks/kvit-coder.go.txt"
     generate: "scripts/amalgamate-go.sh"
-    description: "kvit-coder Go source amalgamated (~32k lines, ~1MB)"
+    description: "kvit-coder Go source amalgamated (~8k lines)"
 
 benchmarks:
   # ------------------------------------------
-  # 1-hop retrieval: find single fact
+  # 1-hop retrieval: find single fact directly
   # ------------------------------------------
 
   - id: 1H1
-    name: "Default constant value"
+    name: "Default file size limit"
     haystack: kvit-coder
-    task: "What is the default value of maxFileSizeKB in the checkpoint Manager?"
+    task: "In the checkpoint Manager, what is the default value assigned to maxFileSizeKB when the parameter is zero?"
+    # Hops: Find NewManager → see "if maxFileSizeKB == 0 { maxFileSizeKB = 1024 }"
     validation:
       - type: output_contains
         expected: "1024"
     tags: ["1-hop", "constant"]
 
   - id: 1H2
-    name: "Struct field type"
+    name: "Mutex field type"
     haystack: kvit-coder
-    task: "In the checkpoint.Manager struct, what is the type of the 'mu' field?"
+    task: "What synchronization primitive type is used for the 'mu' field in checkpoint.Manager?"
+    # Hops: Find Manager struct → see "mu sync.RWMutex"
     validation:
       - type: output_contains
         expected: "sync.RWMutex"
     tags: ["1-hop", "struct"]
 
   - id: 1H3
-    name: "Default exclude pattern"
+    name: "First exclude pattern"
     haystack: kvit-coder
-    task: "What is the first default exclude pattern used by checkpoint.NewManager?"
+    task: "When no exclude patterns are provided to NewManager, what is the very first pattern in the default list?"
+    # Hops: Find NewManager → see excludePatterns default slice → first element
     validation:
       - type: output_contains
         expected: ".git/*"
     tags: ["1-hop", "config"]
 
   - id: 1H4
-    name: "Git environment variable"
+    name: "Git commit email"
     haystack: kvit-coder
-    task: "What email address is set in GIT_AUTHOR_EMAIL when creating checkpoint commits?"
+    task: "What email address is configured in the environment for git commits made by the checkpoint system?"
+    # Hops: Find GIT_AUTHOR_EMAIL or GIT_COMMITTER_EMAIL env var setting
     validation:
       - type: output_contains
         expected: "go-coder@local"
     tags: ["1-hop", "env"]
 
   # ------------------------------------------
-  # 2-hop retrieval: follow one call/reference
+  # 2-hop retrieval: find fact in related code
   # ------------------------------------------
 
   - id: 2H1
-    name: "Safety rule registration"
+    name: "Registered rule types"
     haystack: kvit-coder
-    task: "NewChecker creates a Registry and registers rules. What are all the rule types registered?"
+    task: "The safety checker creates a registry and populates it with rules. List all the struct types that are registered."
+    # Hops: Find NewChecker → see reg.Register calls → list registered types
     validation:
       - type: output_contains
         expected: "GitRule"
@@ -78,231 +80,220 @@ benchmarks:
     tags: ["2-hop", "registration"]
 
   - id: 2H2
-    name: "Command check flow"
+    name: "Loop history capacity"
     haystack: kvit-coder
-    task: "When Checker.Check validates a command, what function parses the command string, and what is the maximum unwrap depth?"
+    task: "The LoopDetector trims old entries from its history. What is the maximum number of entries kept?"
+    # Hops: Find LoopDetector struct or NewLoopDetector → see maxHistory field/value
     validation:
       - type: output_contains
-        expected: "ParseCommand"
-      - type: output_contains
-        expected: "5"
-    tags: ["2-hop", "flow"]
+        expected: "20"
+    tags: ["2-hop", "limit"]
 
   - id: 2H3
-    name: "Checkpoint tag naming"
+    name: "Checkpoint directory prefix"
     haystack: kvit-coder
-    task: "In checkpoint.Manager, what is the format of git tags created for each turn, and where is the checkpoint directory created?"
+    task: "The checkpoint manager creates its working directory in TempDir. What string prefix is used in the directory name before the session ID?"
+    # Hops: Find NewManager → see filepath.Join(os.TempDir(), fmt.Sprintf("PREFIX%s", sessionID))
     validation:
       - type: output_contains
-        expected: "turn-"
-      - type: output_contains
-        expected: "TempDir"
+        expected: "go-coder-checkpoints-"
     tags: ["2-hop", "naming"]
 
   - id: 2H4
-    name: "Strict mode behavior"
+    name: "Shell unwrap depth"
     haystack: kvit-coder
-    task: "When StrictMode is enabled in SafetyConfig and ParseCommand fails, what RuleResult action is returned?"
+    task: "The safety checker handles nested shell wrappers like 'bash -c \"sh -c ...\"' by recursively unwrapping them. How many levels deep will it unwrap before stopping?"
+    # Hops: Find safety Checker → find Check method → find unwrap call → extract depth parameter
     validation:
       - type: output_contains
-        expected: "Block"
-    tags: ["2-hop", "error-handling"]
+        expected: "5"
+    tags: ["2-hop", "limit"]
 
   # ------------------------------------------
-  # 3-hop retrieval: follow multiple calls
+  # 3-hop retrieval: trace through function logic
   # ------------------------------------------
 
   - id: 3H1
-    name: "Restore chain"
+    name: "Hash string length"
     haystack: kvit-coder
-    task: "Trace Manager.Restore: it calls commitTurn after restoring. What parameters does commitTurn receive that indicate this was a restore operation?"
+    task: "In LoopDetector.Record, after SHA256 hashing and hex encoding, the hash string is truncated. How many characters is the final hash?"
+    # Hops: Find Record → see sha256.New() → see hex.EncodeToString → see [:16] truncation
     validation:
       - type: output_contains
-        expected: "isRestore"
-      - type: output_contains
-        expected: "restoredTo"
-    tags: ["3-hop", "restore"]
+        expected: "16"
+    tags: ["3-hop", "computation"]
 
   - id: 3H2
-    name: "External file tracking"
+    name: "Result prefix length"
     haystack: kvit-coder
-    task: "When TrackExternalFile is called, it generates a key for the file. Trace through: what function loads existing mappings, and what format is used for the key (describe the pattern)?"
+    task: "When LoopDetector.Record creates a hash, it uses only a prefix of the result string. What is the maximum length of this prefix?"
+    # Hops: Find Record → see resultPrefix variable → see "if len > N" → see [:N] truncation
     validation:
       - type: output_contains
-        expected: "loadExternalMappings"
-      - type: output_contains
-        expected: "counter"
-    tags: ["3-hop", "external-files"]
+        expected: "200"
+    tags: ["3-hop", "computation"]
 
   - id: 3H3
-    name: "Safety check pipeline"
+    name: "Path sanitize limit"
     haystack: kvit-coder
-    task: "Trace the full safety check pipeline: Checker.Check calls what to parse, then what to handle shell wrappers, then what to apply rules? Name all three functions."
+    task: "In TrackExternalFile, the absolute path is sanitized and may be truncated. What is the maximum length of the sanitized path?"
+    # Hops: Find TrackExternalFile → see sanitized variable → see "if len > N" → see [:N]
     validation:
       - type: output_contains
-        expected: "ParseCommand"
-      - type: output_contains
-        expected: "UnwrapAll"
-      - type: output_contains
-        expected: "CheckAll"
-    tags: ["3-hop", "pipeline"]
+        expected: "50"
+    tags: ["3-hop", "computation"]
 
   - id: 3H4
-    name: "Audit logging chain"
+    name: "External file key format"
     haystack: kvit-coder
-    task: "When a command is blocked, trace: what Checker method calls audit, what condition must be true for audit to log, and what AuditLogger method is called?"
+    task: "In TrackExternalFile, what format string is used to create the key from counter and sanitized path?"
+    # Hops: Find TrackExternalFile → see counter calculation → see fmt.Sprintf format
     validation:
       - type: output_contains
-        expected: "audit"
-      - type: output_contains
-        expected: "Block"
-      - type: output_contains
-        expected: "LogBlocked"
-    tags: ["3-hop", "audit"]
+        expected: "%04d"
+    tags: ["3-hop", "format"]
 
   # ------------------------------------------
-  # 4-hop retrieval: follow 4 levels of calls
+  # 4-hop retrieval: trace through multiple functions
   # ------------------------------------------
 
   - id: 4H1
-    name: "Tool execution error handling"
+    name: "Loop detection threshold"
     haystack: kvit-coder
-    task: "Trace: Runner.executeTools -> executeSingleTool -> when tool.Check fails, what function handles the error, and what struct does it return?"
+    task: "When the agent runner detects it might be stuck repeating the same tool calls, it checks for consecutive identical calls. How many consecutive identical calls are needed to trigger loop detection?"
+    # Hops: Find Runner → find loop handling code → find detection call → extract threshold parameter
     validation:
       - type: output_contains
-        expected: "handleToolError"
-      - type: output_contains
-        expected: "backtrackResult"
-    tags: ["4-hop", "tool-execution"]
+        expected: "3"
+    tags: ["4-hop", "call-trace"]
 
   - id: 4H2
-    name: "Loop detection trigger"
+    name: "Alternating loop entries needed"
     haystack: kvit-coder
-    task: "Trace: In runner_iteration, when the agent enters an iteration, what detects loops, what method is called to check, and what happens when maxConsecutive is exceeded?"
+    task: "The loop detector can identify alternating patterns (A-B-A-B-A-B). For a threshold of 3 complete cycles, how many history entries does it need to examine?"
+    # Hops: Find LoopDetector → find alternating detection → see "needed := threshold * 2" → compute 3 * 2
     validation:
       - type: output_contains
-        expected: "LoopDetector"
-      - type: output_contains
-        expected: "RecordAndCheck"
-      - type: output_contains
-        expected: "backtrack"
-    tags: ["4-hop", "loop-detection"]
+        expected: "6"
+    tags: ["4-hop", "computation"]
 
   - id: 4H3
-    name: "Benchmark validation chain"
+    name: "Tool timeout duration"
     haystack: kvit-coder
-    task: "Trace: benchmark.Runner.RunAll -> Executor.Execute -> after getting LLM response, what creates the validator, what method validates, and what does it return on failure?"
+    task: "When the agent executes a tool that is not a shell command, a timeout is enforced to prevent hanging. How many seconds does a non-shell tool have before it times out?"
+    # Hops: Find Runner → find tool execution → find timeout logic → see Shell check → extract timeout seconds
     validation:
       - type: output_contains
-        expected: "NewValidator"
-      - type: output_contains
-        expected: "Validate"
-      - type: output_contains
-        expected: "validationErrors"
-    tags: ["4-hop", "benchmark"]
+        expected: "15"
+    tags: ["4-hop", "timeout"]
 
   - id: 4H4
-    name: "Pending edit state analysis"
+    name: "Backtrack retry default"
     haystack: kvit-coder
-    task: "Trace: executeSingleTool analyzes pending edit state. What function does this analysis, what does it check in the message history, and what function uses the result to potentially block?"
+    task: "When a tool call fails with a semantic error, the agent can backtrack and retry. By default, how many retry attempts are allowed before the agent gives up on backtracking?"
+    # Hops: Find backtrack handling → find config creation → find default config function → extract retry limit
     validation:
       - type: output_contains
-        expected: "AnalyzePendingEditState"
-      - type: output_contains
-        expected: "CheckPendingEditBlock"
-    tags: ["4-hop", "edit-state"]
+        expected: "5"
+    tags: ["4-hop", "default"]
 
   # ------------------------------------------
-  # 5-hop retrieval: follow 5 levels of calls
+  # 5-hop retrieval: trace through multiple levels
   # ------------------------------------------
 
   - id: 5H1
-    name: "Backtrack on tool error"
+    name: "Exclude file relative path"
     haystack: kvit-coder
-    task: "Trace the full backtrack flow: executeSingleTool -> handleToolError -> BacktrackTracker. What method on BacktrackTracker is called, what does it check against maxBacktracks, and what field in backtrackResult indicates injection?"
+    task: "The checkpoint manager writes exclude patterns to a file. Starting from checkpointDir, what is the relative path to this file?"
+    # Hops: Find Initialize/createInitialCommit → gitDir = checkpointDir + ".git"
+    #       → infoDir = gitDir + "info" → excludeFile = infoDir + "exclude"
+    #       → combine: .git/info/exclude
     validation:
       - type: output_contains
-        expected: "handleToolError"
-      - type: output_contains
-        expected: "BacktrackTracker"
-      - type: output_contains
-        expected: "injectUserMessage"
-    tags: ["5-hop", "backtrack"]
+        expected: ".git/info/exclude"
+    tags: ["5-hop", "path-trace"]
 
   - id: 5H2
-    name: "Git rule safety check"
+    name: "Hash input count"
     haystack: kvit-coder
-    task: "Trace: Checker.Check -> ParseCommand -> UnwrapAll -> registry.CheckAll -> GitRule.Check. What specific git subcommands does GitRule block, and what action does it return?"
+    task: "In LoopDetector.Record, data is written to a SHA256 hasher using h.Write calls. How many separate Write calls are made?"
+    # Hops: Find Record → find sha256.New() → count h.Write(toolName)
+    #       → count h.Write(normalizedArgs) → count h.Write(resultPrefix) = 3
+    validation:
+      - type: output_matches
+        expected: "(?i)\\b(3|three)\\b"
+    tags: ["5-hop", "count"]
+
+  - id: 5H3
+    name: "Alternating loop entries from caller"
+    haystack: kvit-coder
+    task: "The agent runner checks for alternating loop patterns during execution. Find the threshold value used when checking for alternating loops, then calculate how many history entries are needed based on the detection formula."
+    # Hops: Find Runner → find loop handling → find alternating check call → extract threshold (3)
+    #       → find detection function → see needed = threshold * 2 → compute 3*2=6
+    validation:
+      - type: output_contains
+        expected: "6"
+    tags: ["5-hop", "computation"]
+
+  - id: 5H4
+    name: "Inject message condition"
+    haystack: kvit-coder
+    task: "When a tool error exhausts all backtrack retries, the agent may inject a 'STOP.' message to the conversation. Find the code that generates this STOP message and determine what condition must be true for it to be injected."
+    # Hops: Find tool error handling → find backtrack exhaustion → find "STOP." string
+    #       → see conditional check → determine boolean condition must be true
+    validation:
+      - type: output_contains
+        expected: "true"
+    tags: ["5-hop", "condition"]
+
+  # ------------------------------------------
+  # Multi-location retrieval: aggregate facts
+  # ------------------------------------------
+
+  - id: MH1
+    name: "All retry limit constants"
+    haystack: kvit-coder
+    task: "Find all constants in the agent runner that define maximum retry or attempt limits (constants starting with 'max'). List their names."
+    # Hops: Scan for "const (" blocks → find max* constants → list names
+    validation:
+      - type: output_contains
+        expected: "maxConsecutiveDuplicates"
+      - type: output_contains
+        expected: "maxContextOverflowRetries"
+      - type: output_contains
+        expected: "maxDifferentApproachAttempts"
+    tags: ["multi", "constants"]
+
+  - id: MH2
+    name: "Git subcommand handlers"
+    haystack: kvit-coder
+    task: "In GitRule.Check, what are all the git subcommands handled in the switch statement?"
+    # Hops: Find GitRule.Check → find switch statement → list all case values
     validation:
       - type: output_contains
         expected: "push"
       - type: output_contains
-        expected: "Block"
-    tags: ["5-hop", "git-safety"]
-
-  - id: 5H3
-    name: "Context overflow recovery"
-    haystack: kvit-coder
-    task: "Trace: In runner.go, when a context overflow occurs, what field tracks retries, what is the max retry count, and what strategy is used to recover (what gets trimmed from messages)?"
-    validation:
-      - type: output_contains
-        expected: "contextOverflowRetries"
-      - type: output_contains
-        expected: "trim"
-    tags: ["5-hop", "context-overflow"]
-
-  - id: 5H4
-    name: "Checkpoint restore verification"
-    haystack: kvit-coder
-    task: "Trace: Manager.Restore -> what git command checks out the state, then what function commits the restore, what special parameters indicate it was a restore, and what gets recorded in TurnInfo?"
-    validation:
+        expected: "reset"
       - type: output_contains
         expected: "checkout"
       - type: output_contains
-        expected: "commitTurn"
+        expected: "clean"
       - type: output_contains
-        expected: "isRestore"
-      - type: output_contains
-        expected: "restoredTo"
-    tags: ["5-hop", "checkpoint"]
+        expected: "branch"
+    tags: ["multi", "switch-cases"]
 
-  # ------------------------------------------
-  # Multi-file retrieval: find related items across files
-  # ------------------------------------------
-
-  - id: MH1
-    name: "All safety rules"
+  - id: MH3
+    name: "All safety rule types"
     haystack: kvit-coder
-    task: "List all struct types that implement safety rules (types with Rule suffix in the safety package)."
+    task: "List all struct types registered as safety rules in NewChecker."
+    # Hops: Find NewChecker → find all reg.Register(&XRule{}) calls → list X types
     validation:
       - type: output_contains
         expected: "GitRule"
       - type: output_contains
         expected: "RmRule"
       - type: output_contains
+        expected: "FindRule"
+      - type: output_contains
         expected: "XargsRule"
-    tags: ["multi-file", "aggregation"]
-
-  - id: MH2
-    name: "TurnInfo fields"
-    haystack: kvit-coder
-    task: "What are all the fields in the TurnInfo struct and their JSON tags?"
-    validation:
-      - type: output_contains
-        expected: "turn"
-      - type: output_contains
-        expected: "files_changed"
-      - type: output_contains
-        expected: "is_restore"
-    tags: ["multi-file", "struct"]
-
-  - id: MH3
-    name: "SafetyConfig features"
-    haystack: kvit-coder
-    task: "What boolean fields in SafetyConfig control different safety features? List at least 4."
-    validation:
-      - type: output_contains
-        expected: "StrictMode"
-      - type: output_contains
-        expected: "ParanoidMode"
-    tags: ["multi-file", "config"]
+    tags: ["multi", "registration"]

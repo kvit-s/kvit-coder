@@ -348,6 +348,7 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 		totalRuns += len(group) * flags.Runs
 	}
 	completedRuns := 0
+	passedRuns := 0
 	var totalDuration time.Duration
 	startTimeAll := time.Now()
 
@@ -380,8 +381,13 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 					remaining := time.Duration(totalRuns-completedRuns+1) * avgDuration
 					etaStr = fmt.Sprintf(" | ETA: %s", formatDuration(remaining))
 				}
-				fmt.Fprintf(stdoutWriter, "\n  \033[1m[%d/%d %.1f%%]%s\033[0m %s run %d\n",
-					completedRuns, totalRuns, progress, etaStr, b.ID, run)
+				var passStr string
+				if completedRuns > 1 {
+					passRate := float64(passedRuns) / float64(completedRuns-1) * 100
+					passStr = fmt.Sprintf(" | Pass: %.0f%%", passRate)
+				}
+				fmt.Fprintf(stdoutWriter, "\n  \033[1m[%d/%d %.1f%%]%s%s\033[0m %s run %d\n",
+					completedRuns, totalRuns, progress, passStr, etaStr, b.ID, run)
 
 				startTime := time.Now()
 
@@ -462,6 +468,9 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 				}
 
 				allResults = append(allResults, result)
+				if result.Success {
+					passedRuns++
+				}
 				totalDuration += time.Since(startTime)
 
 				// Write to CSV
@@ -478,10 +487,11 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 
 	// Group results by class
 	type classStats struct {
-		passed   int
-		failed   int
-		totalMs  int64
-		tokens   int
+		passed          int
+		failed          int
+		totalMs         int64
+		tokens          int
+		generatedTokens int
 	}
 	classes := make(map[string]*classStats)
 	classOrder := []string{"1", "2", "3", "4", "5", "M"}
@@ -502,16 +512,18 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 		}
 		classes[class].totalMs += r.DurationMS
 		classes[class].tokens += r.Tokens
+		classes[class].generatedTokens += r.GeneratedTokens
 	}
 
 	// Print table
-	fmt.Fprintf(stdoutWriter, "| Class   | Success Rate     | Avg Time |\n")
-	fmt.Fprintf(stdoutWriter, "|---------|------------------|----------|\n")
+	fmt.Fprintf(stdoutWriter, "| Class   | Success Rate     | Avg Time | Avg Gen Tok |\n")
+	fmt.Fprintf(stdoutWriter, "|---------|------------------|----------|-------------|\n")
 
 	totalPassed := 0
 	totalFailed := 0
 	var totalMs int64
 	totalTokens := 0
+	totalGeneratedTokens := 0
 
 	for _, class := range classOrder {
 		stats := classes[class]
@@ -521,6 +533,7 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 		}
 		rate := float64(stats.passed) / float64(total) * 100
 		avgMs := stats.totalMs / int64(total)
+		avgGenTok := stats.generatedTokens / total
 
 		className := class + "-hop"
 		if class == "M" {
@@ -537,22 +550,24 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 			rateColor = "\033[31m" // red
 		}
 
-		fmt.Fprintf(stdoutWriter, "| %-7s | %s%5.1f%% (%d/%d)\033[0m | %6.1fs |\n",
-			className, rateColor, rate, stats.passed, total, float64(avgMs)/1000)
+		fmt.Fprintf(stdoutWriter, "| %-7s | %s%5.1f%% (%d/%d)\033[0m | %6.1fs | %11d |\n",
+			className, rateColor, rate, stats.passed, total, float64(avgMs)/1000, avgGenTok)
 
 		totalPassed += stats.passed
 		totalFailed += stats.failed
 		totalMs += stats.totalMs
 		totalTokens += stats.tokens
+		totalGeneratedTokens += stats.generatedTokens
 	}
 
 	// Total row
 	totalCount := totalPassed + totalFailed
 	totalRate := float64(totalPassed) / float64(totalCount) * 100
 	avgMs := totalMs / int64(totalCount)
-	fmt.Fprintf(stdoutWriter, "|---------|------------------|----------|\n")
-	fmt.Fprintf(stdoutWriter, "| \033[1mTotal\033[0m   | \033[1m%5.1f%% (%d/%d)\033[0m | \033[1m%6.1fs\033[0m |\n",
-		totalRate, totalPassed, totalCount, float64(avgMs)/1000)
+	avgGenTok := totalGeneratedTokens / totalCount
+	fmt.Fprintf(stdoutWriter, "|---------|------------------|----------|-------------|\n")
+	fmt.Fprintf(stdoutWriter, "| \033[1mTotal\033[0m   | \033[1m%5.1f%% (%d/%d)\033[0m | \033[1m%6.1fs\033[0m | \033[1m%11d\033[0m |\n",
+		totalRate, totalPassed, totalCount, float64(avgMs)/1000, avgGenTok)
 
 	fmt.Fprintf(stdoutWriter, "\nTotal tokens: %d | Total time: %s\n", totalTokens, formatDuration(totalElapsed))
 
