@@ -101,6 +101,50 @@ llm:
 
 The `{prompt}` placeholder is replaced with the benchmark task.
 
+## Haystack Benchmarks
+
+Haystack benchmarks test needle retrieval in large context windows. Unlike tool-use benchmarks, these require no tools—only context comprehension. Benchmarks range from 1-hop (single fact lookup) to 5-hop (tracing through multiple functions).
+
+### Run Haystack Benchmarks
+
+```bash
+# Run all haystack benchmarks
+./kvit-coder --bench-haystack mymodel
+
+# Run specific benchmark IDs
+./kvit-coder --bench-haystack mymodel --bench-haystack-id 1H1,2H1,3H1
+```
+
+### Haystack Benchmark Flags
+
+| Flag | Description |
+|------|-------------|
+| `--bench-haystack <name>` | Run haystack benchmarks using `config-{name}.yaml` |
+| `--bench-haystack-id <ids>` | Run specific benchmark IDs (comma-separated) |
+| `-n <count>` | Number of runs per benchmark (default: 10) |
+
+### Defining Haystacks
+
+Haystack benchmarks are defined in `benchmarks/haystack.yaml`:
+
+```yaml
+haystacks:
+  my-codebase:
+    file: "haystacks/my-codebase.txt"
+    generate: "scripts/amalgamate.sh"  # optional
+    description: "Amalgamated source code"
+
+benchmarks:
+  - id: 1H1
+    name: "Find constant value"
+    haystack: my-codebase
+    task: "What is the default timeout in milliseconds?"
+    validation:
+      - type: output_contains
+        expected: "5000"
+    tags: ["1-hop", "constant"]
+```
+
 ## Results
 
 Benchmark results are stored in the `benchmarks/` directory. See [benchmarks/README.md](benchmarks/README.md) for details on interpreting results.

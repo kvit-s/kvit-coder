@@ -89,9 +89,12 @@ func Run(ctx context.Context, flags CLIFlags, runner *agent.Runner, cfg *config.
 	}
 	defer terminalFile.Close()
 
-	// Write to both terminal streams and the file
-	stdoutWriter := io.MultiWriter(os.Stdout, terminalFile)
-	stderrWriter := io.MultiWriter(os.Stderr, terminalFile)
+	// Wrap terminal file with ANSI strip writer to remove color codes
+	terminalWriter := NewANSIStripWriter(terminalFile)
+
+	// Write to both terminal streams and the file (with ANSI codes stripped for file)
+	stdoutWriter := io.MultiWriter(os.Stdout, terminalWriter)
+	stderrWriter := io.MultiWriter(os.Stderr, terminalWriter)
 
 	// Configure the runner's writer to capture output to terminal file
 	// Use non-headless mode to preserve colors, but route color output through MultiWriter
@@ -252,8 +255,11 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 	}
 	defer terminalFile.Close()
 
-	// Write to both terminal and file (but we'll be careful what we write)
-	stdoutWriter := io.MultiWriter(os.Stdout, terminalFile)
+	// Wrap terminal file with ANSI strip writer to remove color codes
+	terminalWriter := NewANSIStripWriter(terminalFile)
+
+	// Write to both terminal and file (with ANSI codes stripped for file)
+	stdoutWriter := io.MultiWriter(os.Stdout, terminalWriter)
 
 	// Find haystack.yaml
 	haystackFile := FindHaystackFile(originalWorkspaceRoot)
