@@ -61,6 +61,7 @@ func main() {
 	sessionList := flag.Bool("sessions", false, "list all sessions and exit")
 	sessionDelete := flag.String("session-delete", "", "delete a session and exit")
 	sessionShow := flag.String("session-show", "", "show session history and exit")
+	agentFile := flag.String("agent-file", "", "path to agent file (content appended to system prompt)")
 
 	flag.Parse()
 
@@ -202,6 +203,9 @@ func main() {
 	if *baseURL != "" {
 		cfg.LLM.BaseURL = *baseURL
 	}
+	if *agentFile != "" {
+		cfg.Agent.AgentFile = *agentFile
+	}
 
 	// Override workspace for benchmark mode - set BEFORE tools are initialized
 	// Store original workspace root for finding benchmarks.yaml
@@ -314,6 +318,13 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error generating system prompt: %v\n", err)
 		os.Exit(1)
+	}
+	if cfg.Agent.AgentFile != "" {
+		agentContent, err := os.ReadFile(cfg.Agent.AgentFile)
+		if err != nil {
+			log.Fatalf("Failed to read agent file %q: %v", cfg.Agent.AgentFile, err)
+		}
+		systemPrompt += "\n\n" + string(agentContent)
 	}
 
 	// Create agent runner

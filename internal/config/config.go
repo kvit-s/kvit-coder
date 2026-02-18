@@ -35,7 +35,8 @@ type Config struct {
 	} `yaml:"workspace"`
 
 	Agent struct {
-		MaxIterations int `yaml:"max_tool_iterations"`
+		MaxIterations int    `yaml:"max_tool_iterations"`
+		AgentFile     string `yaml:"agent_file"`
 	} `yaml:"agent"`
 
 	Backtrack BacktrackConfig `yaml:"backtrack"`
