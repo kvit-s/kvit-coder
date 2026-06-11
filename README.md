@@ -1,10 +1,6 @@
 # kvit-coder
 
-A benchmarking framework for evaluating LLM coding agents on tool-use tasks.
-
-## Overview
-
-This project provides a standardized benchmark suite to measure LLM performance on coding agent tasks including file operations, code search, and multi-step problem solving. It's designed to test local/self-hosted models against a consistent set of challenges.
+An LLM coding agent with tool-use capabilities, designed for local/self-hosted models via OpenAI-compatible APIs. Includes a built-in benchmark suite for evaluating model performance.
 
 ## Quick Start
 
@@ -12,146 +8,271 @@ This project provides a standardized benchmark suite to measure LLM performance 
 
 ```bash
 go build -o kvit-coder ./cmd/kvit-coder
+go build -o kvit-coder-ui ./cmd/kvit-coder-ui
 ```
 
 ### Configure
 
-Create a config file for your model (e.g., `config-mymodel.yaml`):
+Create `config.yaml`:
 
 ```yaml
 llm:
   base_url: "http://127.0.0.1:8080/v1"
   api_key_env: "OPENAI_API_KEY"
-  model: "my-model-name"
+  model: "my-model"
   temperature: 0.2
   max_output_tokens: 2048
+
+workspace:
+  root: "."
+
+agent:
+  max_tool_iterations: 25
 
 tools:
   read:
     enabled: true
   edit:
     enabled: true
+    mode: "lines"          # "lines", "searchreplace", or "patch"
   search:
     enabled: true
   shell:
     enabled: true
+  checkpoint:
+    enabled: true
 ```
+
+### Run
+
+```bash
+# Headless mode (single prompt, exits after completion)
+./kvit-coder -p "Find all TODO comments in the codebase"
+
+# Quiet mode (only print final answer)
+./kvit-coder -pq "What does main.go do?"
+
+# Interactive TUI
+./kvit-coder-ui
+```
+
+## Architecture
+
+Two binaries:
+
+- **`kvit-coder`** — Headless agent for automation, scripting, and benchmarking. Requires `-p` or `--benchmark`.
+- **`kvit-coder-ui`** — Interactive terminal UI (BubbleTea) with multi-line input, command history, and syntax highlighting.
+
+## Tools
+
+| Tool | Description |
+|------|-------------|
+| **read** | Read file contents or list directories. Supports partial reads and character mode for large files. |
+| **edit** | Modify files. Three modes: **lines** (line ranges), **searchreplace** (find/replace with optional fuzzy matching), **patch** (unified diffs). Optional preview mode with confirm/cancel. |
+| **restore_file** | Restore a file to its state at session start. |
+| **search** (grep) | Search file contents with regex patterns and glob filters. Uses ripgrep. |
+| **shell** | Execute shell commands with configurable timeouts, working directory, and command allow/blocklists. |
+| **plan.\*** | Multi-step plan management: create, add/remove/reorder steps, mark complete. |
+| **checkpoint.\*** | Turn-based file history: list, restore, diff, undo. Auto-checkpoints after each turn. |
+| **Tasks.\*** | Context compression: wrap exploratory work in tasks so intermediate steps can be collapsed. Includes diff review (accept/decline) and rollback. |
+
+Plan/Checkpoint tools and Tasks tools are mutually exclusive — enable one group or the other.
+
+## CLI Flags
+
+### kvit-coder
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-p <prompt>` | Run with prompt and exit | - |
+| `-pq <prompt>` | Quiet mode: only print final response | - |
+| `-config <path>` | Config file path | `config.yaml` |
+| `-model <name>` | Override model | from config |
+| `-base-url <url>` | Override LLM endpoint | from config |
+| `-agent-file <path>` | Append file content to system prompt | - |
+| `-log <path>` | Log file (empty to disable) | `kvit-coder.log` |
+| `--json` | Structured JSON output to stderr | false |
+| `-s <name>` | Continue or create named session | - |
+| `--sessions` | List sessions | - |
+| `--session-show <name>` | Show session history | - |
+| `--session-delete <name>` | Delete a session | - |
+| `--version` | Show version info | - |
+
+### kvit-coder-ui
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-config <path>` | Config file path | `config.yaml` |
+| `-agent-path <path>` | Path to kvit-coder binary | auto-detected |
+| `-s <name>` | Continue or create named session | - |
+
+## Sessions
+
+Conversation history persists across runs via named sessions:
+
+```bash
+# Start or continue a session
+./kvit-coder -p "set up the project" -s my-feature
+./kvit-coder -p "now add tests" -s my-feature
+
+# Manage sessions
+./kvit-coder --sessions              # list all
+./kvit-coder --session-show my-feature   # view history
+./kvit-coder --session-delete my-feature # delete
+```
+
+Sessions are stored as JSON lines in `~/.kvit-coder/sessions/`.
+
+## Agent File
+
+Append custom instructions to the system prompt without modifying config:
+
+```bash
+./kvit-coder -p "refactor auth module" -agent-file AGENT.md
+```
+
+Or in config:
+
+```yaml
+agent:
+  agent_file: AGENT.md
+```
+
+## Configuration Reference
+
+### `llm`
+
+| Key | Description |
+|-----|-------------|
+| `base_url` | OpenAI-compatible API endpoint |
+| `api_key` / `api_key_env` | API key or env var name |
+| `model` | Model name |
+| `temperature` | Sampling temperature |
+| `max_output_tokens` | Max output tokens |
+| `context` | Max context size for display (0 = hide) |
+| `merge_thinking` | Merge `reasoning_content` into `content` |
+| `verbose` | Tool output verbosity (0 = off, N = show up to N lines) |
+| `benchmark_cmd` | External command for benchmarks (`{prompt}` placeholder) |
+
+### `workspace`
+
+| Key | Description |
+|-----|-------------|
+| `root` | Workspace root directory |
+| `path_safety_mode` | `block`, `warn`, `ask_once` (default), `ask_always` |
+| `allowed_paths` / `allowed_read_paths` | Paths allowed outside workspace |
+| `denied_paths` | Explicitly denied paths |
+
+### `agent`
+
+| Key | Description |
+|-----|-------------|
+| `max_tool_iterations` | Max tool calls per run |
+| `agent_file` | Path to agent instructions file |
+
+### `tools`
+
+Each tool group has `enabled: true/false` plus tool-specific options:
+
+- **`edit.mode`** — `"lines"`, `"searchreplace"`, or `"patch"`
+- **`edit.preview_mode`** — Enable confirm/cancel workflow for edits
+- **`edit.fuzzy_threshold`** — Fuzzy matching for searchreplace mode (0 = exact only)
+- **`edit.read_before_edit_msgs`** — Require a read within N messages before editing
+- **`shell.allowed_commands`** / **`shell.disallowed_commands`** — Command allow/blocklists
+- **`checkpoint.max_turns`** — Max checkpoints before rotating (default: 100)
+- **`tasks.collapse`** — Enable context collapsing (stage 2)
+- **`tasks.plan`** — Enable plan-based task tools (stage 3)
+
+### `backtrack`
+
+Automatic retry on failed tool calls (disabled by default):
+
+```yaml
+backtrack:
+  enabled: true
+  max_retries: 5
+  inject_user_message: false
+```
+
+### `safety`
+
+Enterprise safety controls (all disabled by default):
+
+```yaml
+safety:
+  strict_mode: false       # fail-closed on parse errors
+  paranoid_mode: false      # aggressive restrictions
+  audit:
+    enabled: false
+    log_dir: "~/.kvit-coder/safety-logs"
+  git:
+    block_push: false
+    block_hard_reset: false
+  rm:
+    block_workspace_root: false
+  interpreters:
+    block_one_liners: false
+```
+
+### `prompts`
+
+Optional template-based prompt system:
+
+```yaml
+prompts:
+  use_templates: false
+  templates_dir: ""        # override embedded templates
+  hot_reload: false        # reload on each request (dev mode)
+```
+
+## Benchmarking
 
 ### Run Benchmarks
 
 ```bash
-# Run all benchmarks (10 runs each by default)
+# Run all benchmarks (uses config-mymodel.yaml)
 ./kvit-coder --benchmark mymodel
 
-# Custom number of runs
+# Custom runs, category filter, specific IDs
 ./kvit-coder --benchmark mymodel -n 5
-
-# Run specific category
-./kvit-coder --benchmark mymodel --benchmark-category search
-
-# Run specific benchmark IDs
+./kvit-coder --benchmark mymodel --benchmark-category search,edit
 ./kvit-coder --benchmark mymodel --benchmark-id S1,S2,R1
-```
 
-### List Available Benchmarks
-
-```bash
+# List available benchmarks
 ./kvit-coder --benchmark-list
 ```
 
-## Benchmark Categories
+### Benchmark Categories
 
 | Category | Description |
 |----------|-------------|
-| **search** | Code pattern search with ripgrep |
+| **search** | Code pattern search |
 | **read** | File reading and directory listing |
 | **edit** | File creation and modification |
 | **shell** | Shell command execution |
 | **compound** | Multi-step tasks combining multiple tools |
 
-## Output Files
+### External LLM Support
 
-Each benchmark run produces:
-
-| File | Description |
-|------|-------------|
-| `benchmark-{name}-{timestamp}.md` | Markdown report with summary tables and statistics |
-| `terminal-{name}-{timestamp}.txt` | Full terminal output from the run |
-| `.kvit-coder-benchmark/benchmark-{timestamp}.csv` | Raw CSV data (enables resume on interrupt) |
-
-## Benchmark Flags
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `--benchmark <name>` | Run benchmarks using `config-{name}.yaml` | - |
-| `-n <count>` | Number of runs per benchmark | 10 |
-| `--benchmark-category <cat>` | Filter by category (comma-separated) | all |
-| `--benchmark-id <ids>` | Run specific benchmark IDs (comma-separated) | all |
-| `-o <path>` | Output file path | auto-generated |
-| `--no-resume` | Force fresh start, ignore existing CSV | false |
-
-## External LLM Support
-
-To benchmark an external tool (like Claude Code), use `benchmark_cmd` in your config:
+Benchmark an external tool (e.g., Claude Code):
 
 ```yaml
 llm:
   benchmark_cmd: "claude -p {prompt} --allowedTools Edit Bash Read"
 ```
 
-The `{prompt}` placeholder is replaced with the benchmark task.
+### Haystack Benchmarks
 
-## Haystack Benchmarks
-
-Haystack benchmarks test needle retrieval in large context windows. Unlike tool-use benchmarks, these require no tools—only context comprehension. Benchmarks range from 1-hop (single fact lookup) to 5-hop (tracing through multiple functions).
-
-### Run Haystack Benchmarks
+Needle retrieval in large context windows (1-5 hop reasoning, no tools required):
 
 ```bash
-# Run all haystack benchmarks
 ./kvit-coder --bench-haystack mymodel
-
-# Run specific benchmark IDs
-./kvit-coder --bench-haystack mymodel --bench-haystack-id 1H1,2H1,3H1
+./kvit-coder --bench-haystack mymodel --bench-haystack-id 1H1,2H1
 ```
 
-### Haystack Benchmark Flags
+### Adding Custom Benchmarks
 
-| Flag | Description |
-|------|-------------|
-| `--bench-haystack <name>` | Run haystack benchmarks using `config-{name}.yaml` |
-| `--bench-haystack-id <ids>` | Run specific benchmark IDs (comma-separated) |
-| `-n <count>` | Number of runs per benchmark (default: 10) |
-
-### Defining Haystacks
-
-Haystack benchmarks are defined in `benchmarks/haystack.yaml`:
-
-```yaml
-haystacks:
-  my-codebase:
-    file: "haystacks/my-codebase.txt"
-    generate: "scripts/amalgamate.sh"  # optional
-    description: "Amalgamated source code"
-
-benchmarks:
-  - id: 1H1
-    name: "Find constant value"
-    haystack: my-codebase
-    task: "What is the default timeout in milliseconds?"
-    validation:
-      - type: output_contains
-        expected: "5000"
-    tags: ["1-hop", "constant"]
-```
-
-## Results
-
-Benchmark results are stored in the `benchmarks/` directory. See [benchmarks/README.md](benchmarks/README.md) for details on interpreting results.
-
-## Adding Custom Benchmarks
-
-Define benchmarks in `benchmarks/benchmarks.yaml`:
+Define in `benchmarks/benchmarks.yaml`:
 
 ```yaml
 benchmarks:
@@ -168,18 +289,9 @@ benchmarks:
     validation:
       - type: output_contains
         expected: "test.go"
-      - type: tool_called
-        expected: "search"
 ```
 
-**Validation types:** `file_contains`, `file_equals`, `file_exists`, `file_not_exists`, `file_line_count`, `tool_called`, `tool_called_with`, `output_contains`, `output_not_contains`, `output_matches`, `multi_tool_calls`
-
-## Architecture
-
-The agent consists of two binaries:
-
-- **`kvit-coder`** - Headless agent for benchmarking and automation
-- **`kvit-coder-ui`** - Interactive terminal UI (not used for benchmarking)
+Validation types: `file_contains`, `file_equals`, `file_exists`, `file_not_exists`, `file_line_count`, `tool_called`, `tool_called_with`, `output_contains`, `output_not_contains`, `output_matches`, `multi_tool_calls`
 
 ## License
 
