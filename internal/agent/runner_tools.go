@@ -85,7 +85,7 @@ func (r *Runner) executeSingleTool(
 	tool := r.registry.Get(tc.Function.Name)
 	if tool == nil {
 		unknownErr := tools.SemanticErrorf("Unknown tool '%s'. Available tools can be found in the system prompt.", tc.Function.Name)
-		btResult := r.handleToolError(unknownErr, tc, state.backtracker, rollbackPoint, promptTokens, completionTokens, requestCost)
+		btResult := r.handleToolError(ctx, unknownErr, tc, state, rollbackPoint, promptTokens, completionTokens, requestCost)
 		if btResult.shouldBacktrack {
 			result.shouldBacktrack = true
 			if btResult.injectUserMessage {
@@ -113,7 +113,20 @@ func (r *Runner) executeSingleTool(
 	pendingState := tools.AnalyzePendingEditState(roles, contents, toolNames)
 
 	if blockErr := tools.CheckPendingEditBlockWithState(tc.Function.Name, pendingState, r.cfg, r.toolCtx); blockErr != nil {
-		btResult := r.handleToolError(blockErr, tc, state.backtracker, rollbackPoint, promptTokens, completionTokens, requestCost)
+		// Anomaly: the model keeps issuing non-confirm/cancel calls while an edit is
+		// pending. Interrogate once the model has ignored the pending state repeatedly.
+		if r.interrogator.Enabled() && pendingState.BlockCountSincePending >= r.cfg.Diagnostics.GetInterrogateIdenticalThreshold() {
+			r.interrogator.Interrogate(ctx, Episode{
+				Trigger:       TriggerPendingBlocked,
+				Key:           "pending_blocked:" + pendingState.PendingPath,
+				TriggerCount:  pendingState.BlockCountSincePending,
+				OffendingTool: tc.Function.Name,
+				OffendingArgs: tc.Function.Arguments,
+				PendingDiff:   r.toolCtx.GetPendingEditDiff(),
+			}, state)
+		}
+
+		btResult := r.handleToolError(ctx, blockErr, tc, state, rollbackPoint, promptTokens, completionTokens, requestCost)
 		if btResult.shouldBacktrack {
 			result.shouldBacktrack = true
 			if btResult.injectUserMessage {
@@ -143,7 +156,7 @@ func (r *Runner) executeSingleTool(
 	// Run safety checks
 	if err := tool.Check(ctx, checkArgs); err != nil {
 		checkErr := tools.WrapAsSemantic(err)
-		btResult := r.handleToolError(checkErr, tc, state.backtracker, rollbackPoint, promptTokens, completionTokens, requestCost)
+		btResult := r.handleToolError(ctx, checkErr, tc, state, rollbackPoint, promptTokens, completionTokens, requestCost)
 		if btResult.shouldBacktrack {
 			result.shouldBacktrack = true
 			if btResult.injectUserMessage {
@@ -179,6 +192,19 @@ func (r *Runner) executeSingleTool(
 		state.consecutiveDuplicates++
 
 		if state.consecutiveDuplicates >= maxConsecutiveDuplicates {
+			// Last-chance capture: interrogate before the fatal cancel so even
+			// terminal loops are explained in the side-channel log.
+			if r.interrogator.Enabled() {
+				r.interrogator.Interrogate(ctx, Episode{
+					Trigger:       TriggerFatal,
+					Key:           fmt.Sprintf("fatal:%s:%s", tc.Function.Name, tc.Function.Arguments),
+					TriggerCount:  state.consecutiveDuplicates,
+					OffendingTool: tc.Function.Name,
+					OffendingArgs: tc.Function.Arguments,
+					PriorResult:   lastToolResult(state.messages),
+				}, state)
+			}
+
 			r.writer.Error(fmt.Sprintf("FATAL: %s called %d times with identical arguments - stopping to prevent infinite loop",
 				tc.Function.Name, state.consecutiveDuplicates))
 
@@ -191,8 +217,20 @@ func (r *Runner) executeSingleTool(
 			return result
 		}
 
+		// Anomaly: consecutive identical calls before the fatal threshold.
+		if r.interrogator.Enabled() && state.consecutiveDuplicates >= r.cfg.Diagnostics.GetInterrogateIdenticalThreshold() {
+			r.interrogator.Interrogate(ctx, Episode{
+				Trigger:       TriggerDuplicateCall,
+				Key:           fmt.Sprintf("duplicate_call:%s:%s", tc.Function.Name, tc.Function.Arguments),
+				TriggerCount:  state.consecutiveDuplicates,
+				OffendingTool: tc.Function.Name,
+				OffendingArgs: tc.Function.Arguments,
+				PriorResult:   lastToolResult(state.messages),
+			}, state)
+		}
+
 		dupErr := tools.SemanticErrorf("DUPLICATE CALL ERROR: You just made this exact same call with identical arguments. The result will be the same. You MUST try a different approach or different arguments. Repeated duplicate calls will cause the session to terminate.")
-		btResult := r.handleToolError(dupErr, tc, state.backtracker, rollbackPoint, promptTokens, completionTokens, requestCost)
+		btResult := r.handleToolError(ctx, dupErr, tc, state, rollbackPoint, promptTokens, completionTokens, requestCost)
 		if btResult.shouldBacktrack {
 			result.shouldBacktrack = true
 			if btResult.injectUserMessage {
@@ -234,7 +272,7 @@ func (r *Runner) executeSingleTool(
 
 	// Handle tool error (backtrackable)
 	if toolErr != nil && tools.IsBacktrackable(toolErr) {
-		btResult := r.handleToolError(toolErr, tc, state.backtracker, rollbackPoint, promptTokens, completionTokens, requestCost)
+		btResult := r.handleToolError(ctx, toolErr, tc, state, rollbackPoint, promptTokens, completionTokens, requestCost)
 		if btResult.shouldBacktrack {
 			result.shouldBacktrack = true
 			if btResult.injectUserMessage {

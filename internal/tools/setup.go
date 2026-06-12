@@ -91,6 +91,23 @@ func SetupRegistry(sc SetupConfig) *Registry {
 			cancelEditTool := NewCancelEditTool(cfg, toolCtx)
 			registry.Enable(cancelEditTool)
 			debug(fmt.Sprintf("Enabled tool: %s", cancelEditTool.Name()))
+
+			// Edit.undo_autoindent reverts a first-line indent auto-correction.
+			// Only meaningful when smart_first_line_indent is on, but it is a safe
+			// no-op otherwise, so register it whenever preview mode is available.
+			if cfg.Tools.Edit.SmartFirstLineIndent {
+				undoAutoindentTool := NewUndoAutoindentTool(cfg, toolCtx)
+				registry.Enable(undoAutoindentTool)
+				debug(fmt.Sprintf("Enabled tool: %s", undoAutoindentTool.Name()))
+			}
+		}
+
+		// DeleteLines: explicit, first-class line removal tool (Improvement 3).
+		// Edit-mode independent; only registered when explicit_delete is on.
+		if cfg.Tools.Edit.ExplicitDelete {
+			deleteLinesTool := NewDeleteLinesTool(cfg, toolCtx)
+			registry.Enable(deleteLinesTool)
+			debug(fmt.Sprintf("Enabled tool: %s", deleteLinesTool.Name()))
 		}
 	}
 

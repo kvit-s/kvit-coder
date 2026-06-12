@@ -37,7 +37,7 @@ func (t *UnifiedEditTool) Description() string {
 	case "patch":
 		return PatchEditDescription()
 	default:
-		return LineEditDescription()
+		return LineEditDescription(t.Config.Tools.Edit.ExplicitDelete)
 	}
 }
 
@@ -48,7 +48,7 @@ func (t *UnifiedEditTool) JSONSchema() map[string]any {
 	case "patch":
 		return PatchEditJSONSchema()
 	default:
-		return LineEditJSONSchema()
+		return LineEditJSONSchema(t.Config.Tools.Edit.ExplicitDelete)
 	}
 }
 
@@ -90,7 +90,7 @@ func (t *UnifiedEditTool) PromptSection() string {
 	case "patch":
 		return PatchEditPromptSection(previewMode)
 	default:
-		return LineEditPromptSection(previewMode)
+		return LineEditPromptSection(previewMode, t.Config.Tools.Edit.ExplicitDelete)
 	}
 }
 
@@ -506,6 +506,22 @@ func (t *UnifiedEditTool) callLineMode(ctx context.Context, path string, startLi
 		return result, nil
 	}
 
+	// Improvement 3 ("" -blank flip): with explicit_delete on, a replace (end_line set)
+	// with empty new_text means "blank the addressed line(s)" (keep them) rather than
+	// delete - matching the model's line-addressed expectation. A range collapses to one
+	// blank line. Deletes go through DeleteLines instead. Insert mode ("" with no end_line)
+	// is unaffected. "\n" already blanks, so this is a no-op for it.
+	if t.Config.Tools.Edit.ExplicitDelete && endLine != 0 && newText == "" {
+		newText = "\n"
+	}
+
+	// First-line indent auto-correction (opt-in, preview mode only). A no-op unless the
+	// first line of new_text is under-indented relative to the line it replaces.
+	var indentCorrection *IndentAutocorrection
+	if t.Config.Tools.Edit.SmartFirstLineIndent && t.Config.Tools.Edit.PreviewMode {
+		newText, indentCorrection = ReconcileFirstLineIndent(oldContent, startLine, endLine, newText, t.Config.Tools.Edit.GetMaxAutoindentFix())
+	}
+
 	// Apply line edit
 	newContent, editStartLine, editEndLine, err := ApplyLineEdit(oldContent, startLine, endLine, newText)
 	if err != nil {
@@ -516,7 +532,7 @@ func (t *UnifiedEditTool) callLineMode(ctx context.Context, path string, startLi
 	diff, _ := generateUnifiedDiff(oldContent, newContent, path)
 
 	// Use shared finalize logic
-	return FinalizeEdit(&t.BaseEditTool, path, fullPath, oldContent, newContent, diff, editStartLine, editEndLine, false)
+	return FinalizeEditWithCorrection(&t.BaseEditTool, path, fullPath, oldContent, newContent, diff, editStartLine, editEndLine, false, indentCorrection)
 }
 
 // HandleNoMatch returns a helpful error result when search text is not found

@@ -1,8 +1,29 @@
 # Tool Improvements — Edit Reliability & Anomaly Diagnostics
 
-Status: **design / spec only** (nothing implemented yet)
+Status: **all three improvements implemented** (Jun 2026). Off by default; opt in via config.
 Author context: distilled from the qwen3.6-27 vs gpt-oss-20b vs devstral-small-2 benchmark
 investigation (Jun 2026).
+
+Implementation summary:
+
+- **Improvement 1 (autoindent)** — config: `tools.edit.smart_first_line_indent` (default
+  off, active only with `preview_mode`) + `tools.edit.max_autoindent_fix` (default 1). Pure
+  helper `ReconcileFirstLineIndent` in `internal/tools/edit_apply_line.go`, wired into
+  `callLineMode` (`edit.go`) via `FinalizeEditWithCorrection` (`edit_common.go`). New
+  zero-arg tool `Edit.undo_autoindent` (`filesystem.go`), allowlisted in
+  `CheckPendingEditBlockWithState` and registered in `setup.go`. Tests in
+  `edit_autoindent_test.go`.
+- **Improvement 2 (interrogation)** — config block `diagnostics:`
+  (`internal/config/config.go`). `Interrogator` in `internal/agent/interrogate.go`, wired
+  into the duplicate-call / FATAL / pending-blocked / alternating-loop / backtrack triggers
+  across `runner_tools.go` and `runner_iteration.go`. Observability only: it logs JSONL to
+  `interrogate_log_dir`, prints the Q&A on screen, and does not alter recovery. Tests in
+  `interrogate_test.go`.
+- **Improvement 3 (explicit delete + `""`-blank flip)** — config
+  `tools.edit.explicit_delete` (default off). New `DeleteLines` tool
+  (`internal/tools/edit_delete.go`), `""`-blank flip in `callLineMode` (`edit.go`), prompt
+  + schema variants in `edit_line.go`, registration in `setup.go`. Tests in
+  `edit_delete_test.go`.
 
 ---
 
@@ -393,10 +414,129 @@ to confirm/refute the hypotheses:
 
 ---
 
+## Improvement 3 — Explicit delete tool + line-addressed-consistent empty semantics
+
+Status: **implemented** (Jun 2026). Off by default; opt in via `tools.edit.explicit_delete`.
+
+Implementation: config `tools.edit.explicit_delete` (default off). New `DeleteLines`
+tool in `internal/tools/edit_delete.go` (routes through `FinalizeEdit` /
+`ApplyLineEdit(.., "")`, applied by `Edit.confirm` / `Edit.cancel`), registered in
+`setup.go`. The `""`-blank flip is in `callLineMode` (`edit.go`), gated on the flag, for
+replace mode only. Prompt + schema flag-on variants in `edit_line.go`. Tests in
+`edit_delete_test.go`. Note: `DeleteLines` is **not** added to the pending-edit allowlist
+in `CheckPendingEditBlockWithState` — like `Edit`, it is blocked while another edit is
+pending (forcing confirm/cancel first), which preserves the single-pending-edit invariant
+and loop protection; its own pending edit is resolved by the already-allowlisted
+`Edit.confirm`/`Edit.cancel`.
+
+### Motivation
+
+"Delete a line = replace it with an empty string" is a *learned convention*, not an
+intuition. Multiple models (not just qwen) burn turns rediscovering it, and the line-range
+framing actively fights it: when the model addresses `start_line=5, end_line=5`, it expects
+line 5 to *persist* as the target, so `new_text=""` reads as **"make line 5 blank"** — but
+the tool's byte-splice semantics treat `""` as **"remove line 5."** That collision is the
+E9 failure (model wants a blank line, sends `""`, line vanishes, loops → shell) and the
+general "how do I delete?" friction.
+
+Diagnostic basis: the tool's encoding is *complete and unambiguous* (`""`=delete,
+`"\n"`=blank — see Improvement-1 discussion and `edit_apply_line.go:161-164`), and 20b/devstral
+navigate it correctly. The problem is the **byte-level trailing-newline convention deciding
+line existence under a line-addressed frame** — it's unintuitive, so weaker models trip and
+even strong ones spend tokens on it.
+
+### The change (coherent, not additive)
+
+Two parts, gated together behind one flag:
+
+1. **New tool `DeleteLines {path, start_line, end_line?}`** — removes lines. First-class,
+   obviously-named delete affordance. Edit-mode-independent (works the same in lines /
+   searchreplace / patch configs, since it's purely line-range based).
+2. **Flip lines-mode `""` to mean "blank the addressed line(s)"** (keep them, empty) instead
+   of delete. `"\n"` remains blank as a back-compat alias. Now the model's line-addressed
+   expectation and the tool agree.
+
+Why coherent over additive (add `DeleteLines` but keep `""`=delete): additive leaves `""`
+overloaded and creates *two* delete paths, so the E9/blank confusion is unfixed — you pay the
+cost (new surface) without the payoff. The delete tool's whole value is that it lets `""`
+become intuitive.
+
+### Semantics (flag off vs on)
+
+| Intent | Today (flag off) | Coherent (flag on) |
+|--------|------------------|--------------------|
+| Replace line(s) with text | `Edit{new_text:"text"}` | same |
+| **Blank** a line (keep it) | `Edit{new_text:"\n"}` | `Edit{new_text:""}` *or* `"\n"` |
+| **Delete** line(s) | `Edit{new_text:""}` | `DeleteLines{start,end}` |
+
+Replace stays internally consistent: `Edit` replace `[a,b]` with `new_text` always yields the
+new_text content as the new line(s); with `""` that's a single empty line (range → one blank
+line), never "vanishes."
+
+### `DeleteLines` design
+
+- **Params:** `path` (req), `start_line` (req, 1-based), `end_line` (optional, default
+  `start_line`; inclusive). Validate `start_line ≥ 1`, `end_line ≥ start_line`, within file;
+  friendly errors mirroring the other edit tools.
+- **Preview/confirm:** routes through the existing pending-edit machinery — stores a pending
+  edit (old = the lines, new = removed), returns `pending_confirmation` with a diff showing
+  the removed lines + surrounding context; applied by `Edit.confirm`, discarded by
+  `Edit.cancel` (already `Write.*` synonyms). Allowlist it in `CheckPendingEditBlockWithState`.
+- **Reuse:** `BaseEditTool` (`ValidateAndResolvePath`, `ReadFileForEdit`), `FinalizeEdit` /
+  `BuildEditPreviewResult` (`edit_common.go`), and `ApplyLineEdit(content, start, end, "")`
+  for the actual removal (its existing `""`→delete behavior is exactly right here). Large
+  files: `StreamingLineReplace(..., "")` (note: verify the empty-replacement streaming path
+  removes the range cleanly).
+
+### `""`-blank flip implementation
+
+- In `callLineMode` (`edit.go`), when `explicit_delete` is on and it's a **replace**
+  (`end_line` set) with `new_text == ""`, treat it as a blank line — i.e. substitute
+  `"\n"` before `ApplyLineEdit` (which already blanks on `"\n"`). One-line change, gated.
+- Insert mode (`""`, no `end_line`) stays a no-op/insert-nothing as today.
+- Interaction with Improvement 1: `ReconcileFirstLineIndent` already early-returns on
+  `newText == ""` and blank first lines (`edit_apply_line.go:54,67`), so autoindent is
+  unaffected either way.
+
+### API / schema / prompt
+
+- **Config** (`EditToolConfig`): `explicit_delete bool` (default `false`). When on: register
+  `DeleteLines`, apply the `""`-blank flip. When off: today's behavior exactly (no new tool,
+  `""`=delete).
+- **New tool** `DeleteLines` registered in `setup.go`; allowlisted while a pending edit
+  exists. (Namespacing: top-level `DeleteLines` reads as a primary op; `Edit.delete_lines` is
+  the alternative if you prefer keeping it in the Edit family — pick one.)
+- **Prompt** (`LineEditPromptSection`, flag-on variant): "To remove lines, use `DeleteLines`.
+  `Edit` with empty `new_text` blanks the line (keeps it)." Drop/replace the `""`=delete
+  bullet. This is what nudges 20b/devstral to move their deletes onto `DeleteLines`.
+
+### Scope & non-goals
+
+- The `""`-blank flip is **lines-mode only**. searchreplace's `replace:""` (delete matched
+  text) and patch's `-` lines are already content-based and intuitive — out of scope.
+- `DeleteLines` itself is mode-independent and useful regardless of edit mode.
+- Flag-gated and opt-in; default off ⇒ zero change for anyone not opting in.
+
+### Validation plan
+
+Run qwen + 20b + devstral with `explicit_delete: true`:
+- **qwen:** E9 (blank via `""`) should pass; delete cases via `DeleteLines` get cleaner/shorter.
+- **20b / devstral:** **E3 is the regression watch** — confirm they pick up `DeleteLines`
+  from the prompt and still delete (rather than blanking via the now-flipped `""`). Also
+  **compare token/turn counts flag-on vs flag-off** — hypothesis is the explicit tool *lowers*
+  them by removing the "rediscover the empty-string convention" step. Decide default from the
+  numbers.
+- **Unit tests:** `DeleteLines` single / range / out-of-bounds / preview+confirm; `""` blanks
+  under flag (replace); `""` still deletes with flag off (back-compat); `"\n"` blanks in both.
+
+---
+
 ## Suggested order
 
-1. **Improvement 1 (autoindent)** — smallest, opt-in, no-op for working models. First try.
-2. **Improvement 2 (interrogation, observability mode)** — run alongside to capture qwen's
-   reasoning on the *remaining* failures (esp. C3) and decide their deterministic fixes.
-3. Revisit deferred ideas (suffix-anchor "lite patch", C3 identical-Edit→confirm,
-   pending-edit guard reordering) using what (1) and (2) reveal.
+1. **Improvement 1 (autoindent)** — smallest, opt-in, no-op for working models. *(implemented)*
+2. **Improvement 2 (interrogation, observability mode)** — capture qwen's reasoning on the
+   *remaining* failures (esp. C3, and now E9 blank-vs-delete) to confirm root causes. *(implemented)*
+3. **Improvement 3 (explicit delete + `""`-blank flip)** — coherent fix for the delete/blank
+   confusion; opt-in flag, A/B-benchmarked on 20b/devstral for E3 regression + token deltas.
+4. Revisit deferred ideas (suffix-anchor "lite patch", C3 identical-Edit→confirm,
+   pending-edit guard reordering / non-backtrackable pending block) using what (1)–(3) reveal.

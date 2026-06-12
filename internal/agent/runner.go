@@ -27,6 +27,7 @@ type Runner struct {
 	contextMiddleware *ctxtools.Middleware
 	planManager       *tools.PlanManager
 	toolCtx           *tools.ToolContext
+	interrogator      *Interrogator
 }
 
 // RunnerOptions contains all dependencies for creating a Runner
@@ -59,7 +60,8 @@ type RunResult struct {
 
 // NewRunner creates a new agent runner
 func NewRunner(opts RunnerOptions) *Runner {
-	return &Runner{
+	runID := fmt.Sprintf("run-%s", time.Now().UTC().Format("20060102-150405"))
+	r := &Runner{
 		cfg:               opts.Cfg,
 		llmClient:         opts.LLMClient,
 		registry:          opts.Registry,
@@ -71,6 +73,9 @@ func NewRunner(opts RunnerOptions) *Runner {
 		planManager:       opts.PlanManager,
 		toolCtx:           opts.ToolCtx,
 	}
+	// nil when diagnostics are disabled; all call sites are nil-safe.
+	r.interrogator = NewInterrogator(opts.Cfg, opts.LLMClient, opts.Writer, opts.Logger, runID)
+	return r
 }
 
 // Writer returns the UI writer for output configuration.
@@ -106,6 +111,10 @@ type runState struct {
 	totalTokens                 int
 	agentStats                  *stats.AgentStats
 	normalizer                  *llm.ResponseNormalizer
+
+	// Anomaly interrogation state (Improvement 2), per-task.
+	interrogationCount int
+	seenInterrogations map[string]bool
 }
 
 // llmCallResult holds the outcome of an LLM call
@@ -267,7 +276,7 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 		toolResult := r.executeTools(iterCtx, assistantMsg.ToolCalls, state, rollbackPoint, promptTokens, completionTokens, requestCost, contextStr)
 
 		// Handle post-iteration processing
-		shouldBreak := r.handlePostIteration(assistantMsg, state, rollbackPoint, toolResult, rcfg)
+		shouldBreak := r.handlePostIteration(iterCtx, assistantMsg, state, rollbackPoint, toolResult, rcfg)
 
 		iterCancel()
 

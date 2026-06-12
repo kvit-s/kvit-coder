@@ -46,6 +46,69 @@ type Config struct {
 	Prompts PromptsConfig `yaml:"prompts"`
 
 	Safety SafetyConfig `yaml:"safety"`
+
+	Diagnostics DiagnosticsConfig `yaml:"diagnostics"`
+}
+
+// DiagnosticsConfig configures anomaly interrogation/logging (Improvement 2).
+// When enabled, the agent loop asks the model to explain "odd" behavior (loops,
+// repeated identical calls, ignored confirm/cancel) and logs the Q&A to a side
+// channel for offline analysis. Observability only: it does not alter recovery.
+type DiagnosticsConfig struct {
+	// InterrogateOnAnomaly enables interrogation. Default off.
+	InterrogateOnAnomaly bool `yaml:"interrogate_on_anomaly"`
+	// InterrogateTriggers selects which anomaly triggers fire interrogation. Empty = all.
+	// Valid values: duplicate_call, pending_blocked, alternating_loop, fatal, backtrack.
+	InterrogateTriggers []string `yaml:"interrogate_triggers"`
+	// InterrogateIdenticalThreshold is the consecutive-identical-call count that triggers
+	// interrogation. Default 2.
+	InterrogateIdenticalThreshold int `yaml:"interrogate_identical_threshold"`
+	// InterrogateMaxPerTask hard-caps interrogations per task to avoid interrogation loops.
+	// Default 3.
+	InterrogateMaxPerTask int `yaml:"interrogate_max_per_task"`
+	// InterrogateLogDir is where JSONL episode logs are written. Default
+	// "benchmarks/.kvit-coder-benchmark/interrogations".
+	InterrogateLogDir string `yaml:"interrogate_log_dir"`
+	// InterrogateThenInject is reserved for the later recovery variant; no-op in v1.
+	InterrogateThenInject bool `yaml:"interrogate_then_inject"`
+}
+
+// GetInterrogateIdenticalThreshold returns the identical-call threshold, default 2.
+func (d *DiagnosticsConfig) GetInterrogateIdenticalThreshold() int {
+	if d.InterrogateIdenticalThreshold <= 0 {
+		return 2
+	}
+	return d.InterrogateIdenticalThreshold
+}
+
+// GetInterrogateMaxPerTask returns the per-task interrogation cap, default 3.
+func (d *DiagnosticsConfig) GetInterrogateMaxPerTask() int {
+	if d.InterrogateMaxPerTask <= 0 {
+		return 3
+	}
+	return d.InterrogateMaxPerTask
+}
+
+// GetInterrogateLogDir returns the log directory, with a default under benchmarks/.
+func (d *DiagnosticsConfig) GetInterrogateLogDir() string {
+	if d.InterrogateLogDir == "" {
+		return "benchmarks/.kvit-coder-benchmark/interrogations"
+	}
+	return d.InterrogateLogDir
+}
+
+// TriggerEnabled reports whether the given anomaly trigger should fire interrogation.
+// An empty trigger list means all triggers are enabled.
+func (d *DiagnosticsConfig) TriggerEnabled(trigger string) bool {
+	if len(d.InterrogateTriggers) == 0 {
+		return true
+	}
+	for _, t := range d.InterrogateTriggers {
+		if t == trigger {
+			return true
+		}
+	}
+	return false
 }
 
 // SafetyConfig holds enhanced safety mode configuration
@@ -126,12 +189,26 @@ type ReadToolConfig struct {
 // EditToolConfig configures the edit tool
 type EditToolConfig struct {
 	Enabled               bool    `yaml:"enabled"`
-	Mode                  string  `yaml:"mode"`                    // "lines" (default), "searchreplace", or "patch"
+	Mode                  string  `yaml:"mode"` // "lines" (default), "searchreplace", or "patch"
 	MaxFileSizeKB         int     `yaml:"max_file_size_kb"`
 	PreviewMode           bool    `yaml:"preview_mode"`            // enables edit.confirm/edit.cancel
 	ReadBeforeEditMsgs    int     `yaml:"read_before_edit_msgs"`   // require read within N messages before edit (0 = disabled)
 	PendingConfirmRetries int     `yaml:"pending_confirm_retries"` // max retries when LLM ignores confirm/cancel (0 = disabled, default 5)
 	FuzzyThreshold        float64 `yaml:"fuzzy_threshold"`         // for searchreplace mode: 0 = exact only, 0.8 = fuzzy matching
+
+	// SmartFirstLineIndent enables first-line indentation auto-correction in lines mode
+	// (the "autoindent" feature). Only active when PreviewMode is also true, since the
+	// correction is only reversible via Edit.undo_autoindent during preview. Default off.
+	SmartFirstLineIndent bool `yaml:"smart_first_line_indent"`
+	// MaxAutoindentFix is the dedent-guard threshold: the maximum under-indent deficit (in
+	// chars) that will be auto-corrected. Default 1 = fix only exact off-by-one under-indents.
+	MaxAutoindentFix int `yaml:"max_autoindent_fix"`
+
+	// ExplicitDelete enables the DeleteLines tool and flips lines-mode empty new_text
+	// semantics: with this on, an Edit replace with new_text="" blanks the addressed
+	// line(s) (keeps them) instead of deleting, and deletes go through DeleteLines.
+	// Default off = today's behavior exactly ("" deletes, no DeleteLines tool).
+	ExplicitDelete bool `yaml:"explicit_delete"`
 }
 
 // RestoreFileToolConfig configures the restore_file tool
@@ -207,11 +284,20 @@ func (e *EditToolConfig) GetEditMode() string {
 	return e.Mode
 }
 
+// GetMaxAutoindentFix returns the autoindent dedent-guard threshold, defaulting to 1
+// (fix only exact off-by-one under-indents) when unset or non-positive.
+func (e *EditToolConfig) GetMaxAutoindentFix() int {
+	if e.MaxAutoindentFix <= 0 {
+		return 1
+	}
+	return e.MaxAutoindentFix
+}
+
 // SafetyConfirmation tracks user confirmations for path access
 // This is memory-only and does not persist across sessions
 type SafetyConfirmation struct {
-	ToolName string    `yaml:"-"`
-	Path     string    `yaml:"-"`
+	ToolName  string    `yaml:"-"`
+	Path      string    `yaml:"-"`
 	Timestamp time.Time `yaml:"-"`
 }
 

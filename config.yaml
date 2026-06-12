@@ -35,6 +35,9 @@ tools:
     read_before_edit_msgs: 0    # require read within N messages before edit (0 = disabled)
     pending_confirm_retries: 5  # max retries when LLM ignores confirm/cancel (0 = disabled, default 5)
     fuzzy_threshold: 0.0        # for searchreplace mode: 0 = exact only, 0.8 = enable fuzzy matching
+    smart_first_line_indent: false  # lines mode: auto-correct an under-indented first line (only active with preview_mode; revertible via Edit.undo_autoindent)
+    max_autoindent_fix: 1       # max under-indent deficit (chars) to auto-correct; 1 = off-by-one only
+    explicit_delete: false      # enable DeleteLines tool; flips lines-mode empty new_text to "blank the line" instead of delete
 
   restore_file:
     enabled: false
@@ -105,3 +108,12 @@ prompts:
   use_templates: false          # Enable template-based prompt generation (default: false uses hardcoded)
   templates_dir: ""             # Override embedded templates with filesystem directory (e.g., "./prompts")
   hot_reload: false             # Reload templates on each request (useful for development)
+
+# Anomaly interrogation / diagnostics (observability only - does not change recovery)
+diagnostics:
+  interrogate_on_anomaly: false       # Ask the model to explain odd behavior (loops, repeated calls) and log the Q&A
+  interrogate_triggers: []            # Subset of: duplicate_call, pending_blocked, alternating_loop, fatal, backtrack ([] = all)
+  interrogate_identical_threshold: 2  # Fire after N consecutive identical calls / pending-edit blocks
+  interrogate_max_per_task: 3         # Hard cap on interrogations per task
+  interrogate_log_dir: "benchmarks/.kvit-coder-benchmark/interrogations"  # JSONL episode logs
+  interrogate_then_inject: false      # Reserved for the later recovery variant (no-op in v1)

@@ -185,3 +185,32 @@ func TestLoadInvalidYAML(t *testing.T) {
 		t.Error("Load() with invalid YAML should return error")
 	}
 }
+
+func TestDiagnosticsConfigDefaults(t *testing.T) {
+	d := &DiagnosticsConfig{}
+	if got := d.GetInterrogateIdenticalThreshold(); got != 2 {
+		t.Errorf("GetInterrogateIdenticalThreshold default = %d, want 2", got)
+	}
+	if got := d.GetInterrogateMaxPerTask(); got != 3 {
+		t.Errorf("GetInterrogateMaxPerTask default = %d, want 3", got)
+	}
+	if got := d.GetInterrogateLogDir(); got != "benchmarks/.kvit-coder-benchmark/interrogations" {
+		t.Errorf("GetInterrogateLogDir default = %q", got)
+	}
+}
+
+func TestDiagnosticsTriggerEnabled(t *testing.T) {
+	// Empty list = all triggers enabled.
+	empty := &DiagnosticsConfig{}
+	if !empty.TriggerEnabled("duplicate_call") {
+		t.Error("empty trigger list should enable all triggers")
+	}
+	// Explicit subset.
+	subset := &DiagnosticsConfig{InterrogateTriggers: []string{"pending_blocked"}}
+	if !subset.TriggerEnabled("pending_blocked") {
+		t.Error("pending_blocked should be enabled")
+	}
+	if subset.TriggerEnabled("duplicate_call") {
+		t.Error("duplicate_call should be disabled when not in subset")
+	}
+}

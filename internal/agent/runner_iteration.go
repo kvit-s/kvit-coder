@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -97,7 +98,7 @@ func (r *Runner) handleFinalAnswer(
 }
 
 // checkAndHandleLoops detects various loop patterns and injects intervention messages
-func (r *Runner) checkAndHandleLoops(state *runState) {
+func (r *Runner) checkAndHandleLoops(ctx context.Context, state *runState) {
 	if loopInfo := state.loopDetector.DetectLoop(3); loopInfo != nil {
 		var interventionMsg string
 
@@ -134,6 +135,17 @@ func (r *Runner) checkAndHandleLoops(state *runState) {
 	} else if loopInfo := state.loopDetector.DetectAlternatingLoop(3); loopInfo != nil {
 		r.writer.Warn(fmt.Sprintf("Alternating loop detected: %s is repeating the same cycle", loopInfo.ToolName))
 
+		// Interrogate on first detection of an alternating loop (e.g. Edit↔cancel cycles).
+		if r.interrogator.Enabled() {
+			r.interrogator.Interrogate(ctx, Episode{
+				Trigger:       TriggerAlternatingLoop,
+				Key:           "alternating_loop:" + loopInfo.ToolName,
+				TriggerCount:  loopInfo.Count,
+				OffendingTool: loopInfo.ToolName,
+				PriorResult:   lastToolResult(state.messages),
+			}, state)
+		}
+
 		interventionMsg := fmt.Sprintf("\n\n<system-reminder>\n"+
 			"ALTERNATING LOOP DETECTED: You are stuck in a cycle repeating '%s' with the same arguments followed by cancellation/undo. "+
 			"This pattern has repeated %d times. STOP and try a DIFFERENT approach - perhaps the edit you're attempting is not the right solution.\n"+
@@ -149,6 +161,7 @@ func (r *Runner) checkAndHandleLoops(state *runState) {
 // backtracking, checkpoints, loop detection, cancelled tools, and plan injection.
 // Returns true if the main loop should break.
 func (r *Runner) handlePostIteration(
+	ctx context.Context,
 	assistantMsg *llm.Message,
 	state *runState,
 	rollbackPoint int,
@@ -181,7 +194,7 @@ func (r *Runner) handlePostIteration(
 	}
 
 	// Check for loop detection
-	r.checkAndHandleLoops(state)
+	r.checkAndHandleLoops(ctx, state)
 
 	// Handle cancelled tools
 	if toolResult.toolsCancelled {
@@ -255,18 +268,33 @@ func (r *Runner) handlePostIteration(
 // handleToolError handles errors from tool validation or execution.
 // It decides whether to backtrack (discard and retry) or add error to history.
 func (r *Runner) handleToolError(
+	ctx context.Context,
 	err error,
 	tc llm.ToolCall,
-	backtracker *BacktrackTracker,
+	state *runState,
 	rollbackPoint int,
 	promptTokens, completionTokens int,
 	requestCost float64,
 ) backtrackResult {
+	backtracker := state.backtracker
+
 	// Check if this is a backtrackable (semantic) error
 	if tools.IsBacktrackable(err) && backtracker.ShouldBacktrack(rollbackPoint) {
 		errMsg := err.Error()
 		if idx := strings.Index(errMsg, "\n"); idx > 0 {
 			errMsg = errMsg[:idx]
+		}
+		// Anomaly: repeated backtrack retries at the same point. Interrogate one retry
+		// before the limit (last-chance capture before recovery gives up).
+		if r.interrogator.Enabled() && backtracker.GetRetryCount() >= backtracker.GetMaxRetries()-1 {
+			r.interrogator.Interrogate(ctx, Episode{
+				Trigger:       TriggerBacktrack,
+				Key:           fmt.Sprintf("backtrack:%d:%s", rollbackPoint, tc.Function.Name),
+				TriggerCount:  backtracker.GetRetryCount(),
+				OffendingTool: tc.Function.Name,
+				OffendingArgs: tc.Function.Arguments,
+				PriorResult:   err.Error(),
+			}, state)
 		}
 		r.writer.Info(fmt.Sprintf("↩ Retry [%d/%d]: %s - %s",
 			backtracker.GetRetryCount(), backtracker.GetMaxRetries(),
