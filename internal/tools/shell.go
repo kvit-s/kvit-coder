@@ -16,6 +16,31 @@ import (
 	"github.com/kvit-s/kvit-coder/internal/safety"
 )
 
+// wordBlock is a dangerous command token matched only as a whole shell word.
+type wordBlock struct {
+	name string
+	re   *regexp.Regexp
+}
+
+// wordBlockedCommands blocks the su/nc/ncat binaries and the eval builtin, but
+// only when they appear as a standalone shell token. A naive substring match
+// would falsely reject ordinary words ("calceval", "retrieval", "sync",
+// "concat", ...) that merely contain these letters. The delimiter class
+// intentionally excludes '-', '.', and '/' so only true shell tokens match.
+var wordBlockedCommands = buildWordBlocks("su", "nc", "ncat", "eval")
+
+func buildWordBlocks(words ...string) []wordBlock {
+	const delim = `[\s;&|()<>]`
+	out := make([]wordBlock, len(words))
+	for i, w := range words {
+		out[i] = wordBlock{
+			name: w,
+			re:   regexp.MustCompile(`(?:^|` + delim + `)` + regexp.QuoteMeta(w) + `(?:$|` + delim + `)`),
+		}
+	}
+	return out
+}
+
 // ShellTool - simple string-only interface, translates to Shell.advanced internally
 type ShellTool struct {
 	advanced *ShellAdvancedTool
@@ -433,7 +458,6 @@ func (t *ShellAdvancedTool) validateCommand(cmd string, baseDir string) error {
 	blocked := []string{
 		// Privilege escalation
 		"sudo ", "sudo\t",
-		"su ", "su\t",
 		"chroot ",
 		// Destructive filesystem operations
 		"rm -rf /", "rm -rf ~",
@@ -445,11 +469,7 @@ func (t *ShellAdvancedTool) validateCommand(cmd string, baseDir string) error {
 		// Network tools (data exfiltration risk)
 		"curl ", "curl\t",
 		"wget ", "wget\t",
-		"nc ", "nc\t",
 		"netcat ", "netcat\t",
-		"ncat ", "ncat\t",
-		// Shell builtins that can execute arbitrary code
-		"eval ", "eval\t",
 	}
 
 	// Interpreter one-liners (python -c, node -e, ...) are blocked by default to
@@ -481,6 +501,15 @@ func (t *ShellAdvancedTool) validateCommand(cmd string, baseDir string) error {
 		if strings.Contains(cmdLower, danger) {
 			dangerName := strings.TrimSpace(danger)
 			return fmt.Errorf("blocked dangerous command containing '%s'. If you need to run this command, explain why it's necessary and provide the exact command as a one-liner for the user to run manually", dangerName)
+		}
+	}
+
+	// Short command tokens (su, nc, ncat, the eval builtin) are matched on shell
+	// word boundaries, not as substrings — otherwise innocent words like
+	// "calceval", "retrieval", "sync", or "concat" would be falsely blocked.
+	for _, wb := range wordBlockedCommands {
+		if wb.re.MatchString(cmdLower) {
+			return fmt.Errorf("blocked dangerous command containing '%s'. If you need to run this command, explain why it's necessary and provide the exact command as a one-liner for the user to run manually", wb.name)
 		}
 	}
 
@@ -618,7 +647,6 @@ func (t *ShellAdvancedTool) checkPathSafety(cmd string, baseDir string) error {
 
 	return nil
 }
-
 
 // validateWorkingDir validates and resolves a working directory path
 func (t *ShellAdvancedTool) validateWorkingDir(dir string) (string, error) {
