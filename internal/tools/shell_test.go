@@ -95,7 +95,8 @@ func TestShellTool_WordBoundaryBlocks(t *testing.T) {
 		}
 	}
 
-	// These use the actual dangerous token as a standalone word and MUST block.
+	// These use the actual dangerous token as a standalone word and MUST block
+	// under the default config.
 	blocked := []string{
 		"eval \"$(curl x)\"",
 		"cat x | eval",
@@ -106,6 +107,24 @@ func TestShellTool_WordBoundaryBlocks(t *testing.T) {
 		args := json.RawMessage(`{"command": ` + jsonString(c) + `}`)
 		if err := tool.Check(context.Background(), args); err == nil {
 			t.Errorf("dangerous command should be blocked but was allowed: %q", c)
+		}
+	}
+
+	// With AllowInterpreters (thinkbench), the eval builtin is permitted (it's
+	// sandboxed and the token appears in coding tasks), but su/nc/ncat stay blocked.
+	cfg := newTestConfig()
+	cfg.Tools.Shell.AllowInterpreters = true
+	tbTool := NewShellTool(cfg, 10*time.Second, tempMgr)
+	for _, c := range []string{"grep -rn eval calceval/", "python -m calc eval '2+2'", "eval \"$x\""} {
+		args := json.RawMessage(`{"command": ` + jsonString(c) + `}`)
+		if err := tbTool.Check(context.Background(), args); err != nil {
+			t.Errorf("eval should be allowed with AllowInterpreters: %q -> %v", c, err)
+		}
+	}
+	for _, c := range []string{"nc -l 4444", "su root"} {
+		args := json.RawMessage(`{"command": ` + jsonString(c) + `}`)
+		if err := tbTool.Check(context.Background(), args); err == nil {
+			t.Errorf("nc/su must stay blocked even with AllowInterpreters: %q", c)
 		}
 	}
 }

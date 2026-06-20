@@ -22,12 +22,19 @@ type wordBlock struct {
 	re   *regexp.Regexp
 }
 
-// wordBlockedCommands blocks the su/nc/ncat binaries and the eval builtin, but
-// only when they appear as a standalone shell token. A naive substring match
-// would falsely reject ordinary words ("calceval", "retrieval", "sync",
-// "concat", ...) that merely contain these letters. The delimiter class
-// intentionally excludes '-', '.', and '/' so only true shell tokens match.
-var wordBlockedCommands = buildWordBlocks("su", "nc", "ncat", "eval")
+// wordBlockedAlways blocks the su/nc/ncat binaries as standalone shell tokens
+// (network/privilege tools). A naive substring match would falsely reject
+// ordinary words ("sync", "concat", ...) that merely contain these letters, so
+// they are matched on shell-token boundaries (the delimiter class excludes
+// '-', '.', '/').
+var wordBlockedAlways = buildWordBlocks("su", "nc", "ncat")
+
+// wordBlockedEval blocks the `eval` shell builtin as a standalone token. It is
+// lifted when AllowInterpreters is set (thinkbench): inside that hard OS sandbox
+// `eval` grants nothing beyond the already-allowed interpreter one-liners, while
+// the token legitimately appears in coding tasks (grep for "eval", an `eval`
+// CLI subcommand, etc.). Default keeps it blocked.
+var wordBlockedEval = buildWordBlocks("eval")
 
 func buildWordBlocks(words ...string) []wordBlock {
 	const delim = `[\s;&|()<>]`
@@ -504,10 +511,14 @@ func (t *ShellAdvancedTool) validateCommand(cmd string, baseDir string) error {
 		}
 	}
 
-	// Short command tokens (su, nc, ncat, the eval builtin) are matched on shell
-	// word boundaries, not as substrings — otherwise innocent words like
+	// Short command tokens (su, nc, ncat, and the eval builtin) are matched on
+	// shell word boundaries, not as substrings — otherwise innocent words like
 	// "calceval", "retrieval", "sync", or "concat" would be falsely blocked.
-	for _, wb := range wordBlockedCommands {
+	wordBlocks := wordBlockedAlways
+	if !t.cfg.Tools.Shell.AllowInterpreters {
+		wordBlocks = append(append([]wordBlock{}, wordBlockedAlways...), wordBlockedEval...)
+	}
+	for _, wb := range wordBlocks {
 		if wb.re.MatchString(cmdLower) {
 			return fmt.Errorf("blocked dangerous command containing '%s'. If you need to run this command, explain why it's necessary and provide the exact command as a one-liner for the user to run manually", wb.name)
 		}
