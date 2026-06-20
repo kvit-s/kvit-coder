@@ -1,0 +1,100 @@
+Start from an empty repository and implement a Python 3.11+ project named `slotfinder`.
+
+Build a meeting availability engine. Use only the Python standard library.
+
+Expose:
+
+```python
+def find_slots(request: dict) -> list[dict]: ...
+```
+
+Request format:
+
+```json
+{
+  "timezone": "America/New_York",
+  "duration_minutes": 30,
+  "search_start": "2026-01-05T00:00:00Z",
+  "search_end": "2026-01-10T00:00:00Z",
+  "participants": [
+    {
+      "id": "u1",
+      "working_hours": [{"days": [1,2,3,4,5], "start": "09:00", "end": "17:00"}],
+      "busy": [{"start": "2026-01-05T15:00:00Z", "end": "2026-01-05T16:00:00Z"}]
+    }
+  ]
+}
+```
+
+Find slots where all participants are within working hours and not busy. Output slots in UTC ISO format.
+
+Support timezones with `zoneinfo`, daylight saving transitions, multiple participants, multiple working-hour blocks, and configurable slot granularity with default 15 minutes.
+
+Include a CLI:
+
+```bash
+python -m slotfinder find request.json
+```
+
+Include tests for overlapping busy periods, working-hour boundaries, multiple timezones, DST transitions, no availability, deterministic ordering, and granularity.
+
+## Contract
+
+This section pins the behavior the grader checks. Anything the prose above leaves
+open is fixed here; do not contradict it.
+
+### Import path & CLI
+- Importable as `slotfinder.public` exposing `find_slots(request: dict) -> list[dict]`.
+- CLI entry point `python -m slotfinder find <request.json>` that prints the result of
+  `find_slots` to stdout as a JSON array. CLI output MUST be valid JSON (a JSON list of
+  slot objects). Reading the request from the given file path is the only required form.
+
+### Slot shape & ordering
+- Each returned slot is a dict with exactly the keys `start` and `end`:
+  `{"start": <ISO-UTC>, "end": <ISO-UTC>}`.
+- `start` and `end` are ISO-8601 timestamps in UTC. They denote the same instant
+  regardless of formatting; the grader compares instants, so either a `Z` suffix or a
+  `+00:00` offset is accepted, with or without a `T` separator as produced by
+  `datetime.isoformat()`. The slot length `end - start` equals `duration_minutes`.
+- Slots are returned sorted ascending by start instant (deterministic ordering).
+- Slots are NON-OVERLAPPING candidate windows: the returned set never contains two slots
+  whose `[start, end)` intervals overlap.
+
+### Time model (all comparisons are at instant level)
+- `duration_minutes` (int, required): the length of each slot in minutes.
+- `granularity_minutes` (int, optional, DEFAULT 15): candidate slot starts are aligned to
+  a grid of this many minutes, measured from `search_start`. A candidate window is
+  `[t, t + duration_minutes)` for grid points `t = search_start + k * granularity_minutes`.
+- `search_start` / `search_end` are ISO-8601 UTC instants. Only windows fully inside
+  `[search_start, search_end)` are considered (a window may not extend past `search_end`).
+- A grid point `t` becomes a returned slot iff EVERY participant is, for the WHOLE window
+  `[t, t + duration_minutes)`, both (1) within working hours and (2) not busy. Otherwise
+  the grid point is rejected.
+- Non-overlapping packing is greedy from the earliest valid grid point: scan grid points
+  in ascending order; when a window is accepted, the next candidate considered starts at
+  or after that window's end (windows already covered by an accepted slot are skipped).
+
+### Working hours
+- `working_hours` is a list of blocks; a participant with no blocks is never available.
+  Multiple blocks union (a moment is "within working hours" if it falls in ANY block).
+- `days` are ISO weekday integers in the participant's LOCAL timezone: Monday=1, Tuesday=2,
+  Wednesday=3, Thursday=4, Friday=5, Saturday=6, Sunday=7.
+- `start` / `end` are `"HH:MM"` wall-clock times in the participant's LOCAL timezone. A
+  block covers the LOCAL-time half-open interval `[start, end)` on each listed day.
+  `end` is exclusive; `end == start` means an empty block. `end` is on the same local day
+  (no overnight wrap). A window is "within working hours" only if the participant's entire
+  `[t, t+duration)` interval lies inside a single working-hours block for that local day.
+- Day membership and the `[start, end)` wall-clock bounds are evaluated in LOCAL time, so
+  they shift correctly across daylight-saving transitions (e.g. 09:00 local is a different
+  UTC instant before and after a DST change). The reference uses `zoneinfo` for this.
+
+### Timezone
+- The top-level `timezone` is an IANA name used as the default local zone for participants.
+- A participant MAY override with a `timezone` key; if absent, the top-level `timezone`
+  applies. Each participant's working hours are interpreted in that participant's zone.
+
+### Busy intervals
+- `busy` is a list of `{"start": <ISO-UTC>, "end": <ISO-UTC>}` instants (UTC). Each is a
+  half-open interval `[start, end)`. A window is blocked if it intersects ANY busy interval
+  of ANY participant. Touching at an endpoint (window start == busy end, or window end ==
+  busy start) does NOT count as a conflict.

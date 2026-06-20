@@ -1,0 +1,166 @@
+Start from an empty repository and implement a Python 3.11+ project named `microapi`.
+
+Build a small HTTP router on top of `http.server`. Use only the Python standard library.
+
+Expose:
+
+```python
+class App:
+    def route(self, method: str, path: str): ...
+    def handle_request(self, method: str, path: str, headers: dict, body: bytes) -> tuple[int, dict, bytes]: ...
+```
+
+Support route patterns:
+
+```text
+/users
+/users/{user_id}
+/files/{path:*}
+```
+
+Support:
+
+```text
+path parameters
+query strings
+JSON request body parsing
+JSON responses
+404 for no route
+405 for method not allowed
+structured error responses
+middleware functions
+```
+
+Include a runnable server:
+
+```bash
+python -m microapi serve --host 127.0.0.1 --port 8080
+```
+
+Provide example routes for a small in-memory todo API.
+
+Include tests for routing precedence, path params, wildcard paths, query parsing, JSON parsing, middleware ordering, 404, 405, and error responses.
+
+## Contract
+
+This section pins the behavior the held-out oracle grades. Anywhere the SPEC above
+left a shape unstated, the convention below is binding. The oracle never reads your
+tests and never exercises the `serve` CLI; it drives everything in-process through
+`handle_request`. Conform to this Contract and the SPEC and you pass.
+
+### Import path
+
+- The package is importable as `microapi`.
+- `microapi.public` exposes a class named `App`.
+- Constructing the app takes no required arguments: `app = App()`.
+
+### Registering routes
+
+- `app.route(method, path)` is a decorator factory: it returns a decorator that
+  registers the wrapped function as the handler for `(method, path)` and returns the
+  function unchanged. Usage:
+
+  ```python
+  app = App()
+
+  @app.route("GET", "/users/{user_id}")
+  def get_user(request, user_id):
+      ...
+  ```
+
+- `method` is an uppercase HTTP method string (e.g. "GET", "POST").
+- `path` is a pattern. Three segment kinds:
+  - static segment, e.g. `users` — matches that literal segment only.
+  - named parameter, e.g. `{user_id}` — matches exactly one path segment, captured
+    under the name `user_id`.
+  - trailing wildcard, e.g. `{path:*}` — matches one OR MORE remaining segments
+    (the rest of the path, slashes included), captured under the name `path`. A
+    wildcard is only valid as the final segment of a pattern.
+
+### Handler signature and how path params are delivered
+
+- A handler is called as `handler(request, **path_params)`.
+  - `request` is the first positional argument: an object (or mapping) carrying at
+    least the request method, path, headers, parsed query parameters, and parsed
+    JSON body (see "request" below).
+  - Each captured path parameter is passed as a KEYWORD argument whose name is the
+    parameter name in the pattern. For `/users/{user_id}` the handler receives
+    `user_id="..."`. For `/files/{path:*}` the handler receives `path="a/b/c"`.
+  - Path parameter values are always `str`. They are URL-decoded (percent-decoded).
+  - Wildcard values retain internal slashes and are NOT split.
+
+### The `request` object
+
+The first handler argument exposes, by attribute access:
+
+- `request.method` -> str, the uppercase method.
+- `request.path` -> str, the request path (no query string).
+- `request.headers` -> dict, the headers passed to `handle_request` (keys as given).
+- `request.query` -> dict[str, str]: parsed query string. For a repeated key, the
+  LAST value wins. Values are URL-decoded. Empty when there is no query string.
+- `request.json` -> the parsed JSON body (dict/list/scalar) when the request body is
+  non-empty and is valid JSON; otherwise `None`. Parsing JSON never raises out of
+  `handle_request` — a malformed body yields a structured 400 (see below).
+
+### What a handler returns, and JSON response encoding
+
+A handler returns the response body as a JSON-serializable Python value (commonly a
+dict or list). The framework serializes it. Specifically:
+
+- A handler may return a value `v` -> `(200, v)` semantics: status 200, body is
+  `json.dumps(v)` UTF-8 encoded.
+- A handler may return a 2-tuple `(status, v)` -> that status, body `json.dumps(v)`.
+- The response `Content-Type` header is `application/json`.
+
+### `handle_request` return shape
+
+`app.handle_request(method, path, headers, body)` returns a 3-tuple:
+
+```python
+(status: int, headers: dict, body: bytes)
+```
+
+- `status` is the integer HTTP status code.
+- `headers` is a dict of response headers; it includes
+  `"Content-Type": "application/json"` for every response this oracle exercises.
+- `body` is `bytes` (UTF-8). For every response this oracle exercises, `body`
+  decodes to a JSON document.
+- `headers` is the dict passed by the caller (may be empty `{}`). `body` is `bytes`
+  (may be empty `b""`).
+
+### Routing precedence
+
+When more than one registered pattern matches a path, precedence is:
+
+1. an all-static match (most specific) wins over
+2. a match that used one or more named parameters, which wins over
+3. a match that used a trailing wildcard (least specific).
+
+So with `/users/me` (static), `/users/{user_id}` (param), and `/files/{path:*}`
+registered, the path `/users/me` routes to the static handler, and `/users/42`
+routes to the param handler.
+
+### 404, 405, and error-body shape
+
+- 404: no registered pattern matches the path (for any method). Status 404.
+- 405: the path matches at least one registered pattern, but NOT for the requested
+  method. Status 405.
+- Every error response (404, 405, malformed-JSON 400, and any uncaught handler
+  exception -> 500) has body that is a JSON OBJECT containing a top-level key
+  `"error"` whose value is a non-empty string (or an object with a non-empty
+  message). `Content-Type` is `application/json`.
+
+### Middleware
+
+- `app.use(middleware)` registers a middleware. A middleware is a callable
+  `middleware(request, call_next) -> response`, where `call_next(request)` invokes
+  the next middleware (or finally the matched handler) and returns its response.
+- Middlewares run in REGISTRATION ORDER on the way in (the first registered wraps
+  the outermost / runs first), and unwind in reverse on the way out.
+- A middleware may short-circuit by returning without calling `call_next`.
+
+### serve CLI (NOT exercised by the oracle)
+
+- `python -m microapi serve --host 127.0.0.1 --port 8080` starts the HTTP server.
+- The oracle does NOT start the server or open a socket; it tests `handle_request`
+  in-process only. The CLI's existence and exact behavior are out of grading scope.

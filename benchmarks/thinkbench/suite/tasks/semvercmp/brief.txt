@@ -1,0 +1,99 @@
+You have inherited a small Python library named `semvercmp`: a Semantic
+Versioning 2.0 precedence comparator. The package is already written, imports
+cleanly, and the happy path works -- it orders plain `major.minor.patch`
+versions correctly and compares two simple word-only pre-releases (like
+`1.0.0-alpha` vs `1.0.0-beta`) the right way. It is used to decide which of two
+release tags is newer: `compare(a, b)` returns -1 when `a` precedes `b`, 0 when
+they have equal precedence, and 1 when `a` follows `b`.
+
+## Bug report
+
+The comparator is wrong at the edges, and the symptoms slipped through because
+coarse testing (plain `x.y.z` versions and two word-only pre-releases) looks
+fine:
+
+  1. A pre-release is ranked as EQUAL to its final release: `compare("1.0.0-rc.1",
+     "1.0.0")` returns 0. A released version is supposed to OUTRANK any of its
+     own pre-releases -- `1.0.0-rc.1` must come BEFORE (be less than) `1.0.0`.
+
+  2. Numeric pre-release identifiers are mis-ordered. `1.0.0-2` is reported as
+     NEWER than `1.0.0-10`, because the identifiers are compared as text
+     ("2" > "10" alphabetically). Numeric identifiers are supposed to compare as
+     NUMBERS. Relatedly, a numeric identifier is supposed to rank BELOW an
+     alphanumeric one regardless of letters, and that rule is not enforced
+     either.
+
+  3. When one pre-release is a leading run of the other, they are called EQUAL:
+     `compare("1.0.0-alpha", "1.0.0-alpha.1")` returns 0. The version with MORE
+     identifiers is supposed to win when every shared identifier matches, so
+     `1.0.0-alpha` must come BEFORE `1.0.0-alpha.1`.
+
+  4. Build metadata changes the answer when it must not. `compare("1.0.0+build.1",
+     "1.0.0+build.2")` returns -1, and a build tag can even flip a comparison
+     that should be a tie. Everything after a `+` is build metadata and must be
+     IGNORED for precedence.
+
+Find and fix the defects so the comparator honours the contract below exactly.
+Keep the public API and behaviour otherwise unchanged.
+
+## Contract
+
+- Package name: `semvercmp`. The grader imports `semvercmp.public` (falling back
+  to `semvercmp`); keep both import paths working.
+- Public API, UNCHANGED (do not rename anything or change the signature):
+      compare(a: str, b: str) -> int      # -1, 0, or 1
+- Inputs are valid SemVer 2.0 version strings of the shape
+  `major.minor.patch` optionally followed by `-<pre-release>` and/or
+  `+<build-metadata>`, in that order. `major`, `minor`, `patch` are
+  non-negative integers; pre-release and build are dot-separated identifiers.
+- `compare(a, b)` returns -1 if `a` has LOWER precedence than `b`, 1 if HIGHER,
+  and 0 if they have EQUAL precedence. Precedence is computed as follows:
+
+    a. Compare `major`, then `minor`, then `patch`, each NUMERICALLY (so
+       `1.0.0` < `1.0.10` < `1.1.0` < `2.0.0`). The first differing field
+       decides; if all three are equal, move on to the pre-release.
+
+    b. A version WITHOUT a pre-release has HIGHER precedence than the otherwise
+       identical version WITH one:
+         `1.0.0-anything` < `1.0.0`.
+       (Two versions that both lack a pre-release and are equal so far are
+       equal.)
+
+    c. When BOTH have a pre-release, compare their dot-separated identifiers
+       left to right:
+         * an identifier of only digits is NUMERIC; compare two numeric
+           identifiers as integers (so `2` < `10`, never as text);
+         * a numeric identifier always has LOWER precedence than an
+           alphanumeric one (so `1.0.0-1` < `1.0.0-alpha`);
+         * two alphanumeric identifiers compare by ASCII / lexical order;
+         * the first identifier that differs decides.
+
+    d. If every identifier they SHARE is equal, the pre-release with MORE
+       identifiers has the HIGHER precedence:
+         `1.0.0-alpha` < `1.0.0-alpha.1`.
+
+    e. Build metadata (everything after the first `+`) is IGNORED entirely for
+       precedence. It is NOT part of the comparison and never changes the
+       result: `1.0.0+build.1`, `1.0.0+build.2`, and `1.0.0` all have equal
+       precedence, and `1.0.0-alpha+x` equals `1.0.0-alpha`.
+
+## I/O example
+
+    >>> compare("1.0.0", "2.0.0")
+    -1
+    >>> compare("1.0.10", "1.0.2")          # patch compared numerically
+    1
+    >>> compare("1.0.0-alpha", "1.0.0")     # release outranks its pre-release
+    -1
+    >>> compare("1.0.0-2", "1.0.0-10")      # numeric identifiers: 2 < 10
+    -1
+    >>> compare("1.0.0-1", "1.0.0-alpha")   # numeric ranks below alphanumeric
+    -1
+    >>> compare("1.0.0-alpha", "1.0.0-alpha.1")   # more identifiers wins
+    -1
+    >>> compare("1.0.0+build.1", "1.0.0+build.2")  # build metadata ignored
+    0
+    >>> compare("1.0.0", "1.0.0")
+    0
+
+- Standard library only.

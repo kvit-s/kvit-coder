@@ -1,0 +1,46 @@
+BUG REPORT — repaircalc: the test suite is failing
+
+You have an existing Python package `repaircalc`, a small arithmetic expression
+evaluator. It ships with a unittest suite in `repaircalc/test_repaircalc.py`, and
+right now several of those tests FAIL. Fix the code so that ALL the tests pass.
+Do not rewrite the package from scratch and do not change its public API.
+
+## Symptom
+
+`evaluate(expr)` is supposed to parse and evaluate ordinary arithmetic, but it
+gets several expressions wrong:
+
+    from repaircalc.public import evaluate
+
+    evaluate("2+3*4")     # EXPECTED 14   ... ACTUAL 20   (precedence wrong)
+    evaluate("10-3-2")    # EXPECTED 5    ... ACTUAL 9    (associativity wrong)
+    evaluate("3.5+1.5")   # EXPECTED 5.0  ... ACTUAL 6    (decimals mishandled)
+
+Simple cases like `evaluate("2+2") == 4`, parentheses, and division by a nonzero
+value already work — only some precedence / associativity / decimal cases are
+broken.
+
+## Reproduce
+
+Run the visible tests from the directory that contains the `repaircalc` package:
+
+    python -m unittest repaircalc.test_repaircalc
+
+## Contract (must hold after your fix)
+
+* Package name stays `repaircalc`; import path `repaircalc` / `repaircalc.public`.
+* Keep the public API exactly: `evaluate(expr: str) -> number` and the
+  `CalcError` exception. Do not rename them.
+* `evaluate` supports the binary operators `+`, `-`, `*`, `/`, parentheses for
+  grouping, a leading unary `-`/`+`, and integer and decimal literals
+  (e.g. `3`, `3.5`, `.5`).
+* Standard precedence: `*` and `/` bind TIGHTER than `+` and `-`.
+* All binary operators are LEFT-associative:
+  `10 - 3 - 2 == 5` and `100 / 10 / 2 == 5`.
+* Decimal literals keep their fractional value: `3.5 + 1.5 == 5.0`,
+  `.5 + .5 == 1.0`.
+* Division by zero raises `CalcError` (it must not crash with some other error).
+* Do NOT use Python's built-in `eval` (or `exec`/`ast.literal_eval` tricks) —
+  keep the hand-written parser. Standard library only.
+
+Do not change the package name or the public function/exception names.

@@ -1,0 +1,76 @@
+BUG REPORT — graphbip: the test suite is failing
+
+You have an existing Python package `graphbip`, a bipartite 2-coloring routine
+for an undirected graph. It ships with a unittest suite in
+`graphbip/test_graphbip.py`, and right now several of those tests FAIL. Fix the
+code so that ALL the tests pass. Do not rewrite the package from scratch and do
+not change its public API.
+
+## Symptom
+
+`two_color(graph)` tries to paint every node one of two colors (0 / 1) so that
+no edge joins two same-colored nodes, returning the `{node: color}` map on
+success or `None` when the graph is not bipartite. A single connected bipartite
+graph already colors correctly, but several other cases come out wrong:
+
+    from graphbip.public import two_color
+
+    # only the first component gets colored:
+    two_color({"a": {"b"}, "b": {"a"}, "c": {"d"}, "d": {"c"}})
+    #   EXPECTED a full 0/1 map over {a, b, c, d}
+    #   ACTUAL   {"a": 0, "b": 1}            (c and d never colored)
+
+    # an odd cycle is wrongly reported as 2-colorable:
+    two_color({"a": {"b", "c"}, "b": {"a", "c"}, "c": {"a", "b"}})
+    #   EXPECTED None                        (triangle is not bipartite)
+    #   ACTUAL   {"a": 0, "b": 1, "c": 1}    (b and c share an edge AND a color)
+
+    # a self-loop is wrongly accepted:
+    two_color({"a": {"a", "b"}, "b": {"a"}})
+    #   EXPECTED None                        (a is adjacent to itself)
+    #   ACTUAL   {"a": 0, "b": 1}            (the self-loop is ignored)
+
+These defects interact: a graph whose FIRST component is a clean bipartite piece
+but whose LATER component contains an odd cycle (or a self-loop) must still come
+back `None` — you cannot decide bipartiteness from the first component alone.
+
+## Reproduce
+
+Run the visible tests from the directory that contains the `graphbip` package:
+
+    python -m unittest graphbip.test_graphbip
+
+## Contract (must hold after your fix)
+
+* Package name stays `graphbip`; import path `graphbip` / `graphbip.public`.
+* Keep the public API exactly: `two_color(graph: dict) -> dict | None` and the
+  `GraphError` exception. Do not rename them.
+* GRAPH REPRESENTATION: `graph` is an adjacency map `{node: neighbors}` where
+  `neighbors` is an iterable (a set OR a list) of the nodes adjacent to `node`.
+  The graph is UNDIRECTED: if `b` is in `graph[a]` then `a` is in `graph[b]`.
+  Nodes can be any hashable (strings, ints, ...). The graph MAY be DISCONNECTED
+  (several separate pieces) and may contain ISOLATED nodes whose neighbor
+  iterable is empty. Every key of `graph` is a node that must appear in the
+  result.
+* SUCCESS: return a dict mapping EVERY node of `graph` to either `0` or `1` such
+  that for every edge `(u, v)`, `color[u] != color[v]`. The empty graph `{}`
+  returns an empty dict `{}`. The specific colors are not fixed (any valid
+  2-coloring is accepted), only that the assignment is complete and conflict-free.
+* FAILURE: return `None` when the graph is NOT bipartite, i.e. it contains an
+  odd-length cycle. Two cases to handle:
+    - a SELF-LOOP (`node in graph[node]`) — a node adjacent to itself is an odd
+      cycle of length 1 and is never 2-colorable;
+    - any other ODD CYCLE — e.g. a triangle a-b-c-a. The decision is over the
+      WHOLE graph: if ANY component is non-bipartite the answer is `None`, even
+      if earlier components colored cleanly.
+* A passing argument that is not a dict raises `GraphError`.
+
+Example:
+
+    # first component a-b is fine; second component c-d-e is a triangle:
+    two_color({"a": {"b"}, "b": {"a"},
+               "c": {"d", "e"}, "d": {"c", "e"}, "e": {"c", "d"}})
+    #   -> None     (the graph as a whole is not bipartite)
+
+Standard library only. Do not change the package name or the public
+function/exception names.

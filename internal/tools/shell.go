@@ -256,13 +256,12 @@ func (t *ShellAdvancedTool) executeCommand(ctx context.Context, command, workDir
 	outputBuf := NewOutputBuffer(t.tempFileMgr)
 	defer outputBuf.Close()
 
-	// Execute command with process group for proper cleanup
-	cmd := exec.Command("sh", "-c", command)
-	cmd.Dir = workDir
+	// Execute command with process group for proper cleanup.
+	// Optionally wrap in an OS sandbox (ExecPrefix) and/or override the child
+	// environment (InjectEnv) — used by the thinkbench harness for uv + bwrap.
+	cmd := t.buildCommand(command, workDir)
 	cmd.Stdout = outputBuf
 	cmd.Stderr = outputBuf
-	// Create a new process group so we can kill all child processes on timeout
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start command: %w", err)
@@ -327,6 +326,36 @@ func (t *ShellAdvancedTool) executeCommand(ctx context.Context, command, workDir
 		"stdout":    formattedOutput,
 		"exit_code": exitCode,
 	}, nil
+}
+
+// buildCommand constructs the *exec.Cmd for a shell command, applying the
+// optional ExecPrefix wrapper (OS sandbox) and InjectEnv environment override
+// configured for the thinkbench harness. With no prefix/env configured this is
+// equivalent to exec.Command("sh", "-c", command) with the parent environment.
+func (t *ShellAdvancedTool) buildCommand(command, workDir string) *exec.Cmd {
+	prefix := t.cfg.Tools.Shell.ExecPrefix
+
+	var cmd *exec.Cmd
+	if len(prefix) > 0 {
+		// Substitute {workdir} in any prefix arg (e.g. bwrap --chdir {workdir}).
+		args := make([]string, 0, len(prefix)+3)
+		for _, a := range prefix {
+			args = append(args, strings.ReplaceAll(a, "{workdir}", workDir))
+		}
+		args = append(args, "sh", "-c", command)
+		cmd = exec.Command(args[0], args[1:]...)
+	} else {
+		cmd = exec.Command("sh", "-c", command)
+	}
+	cmd.Dir = workDir
+
+	if injected := t.cfg.Tools.Shell.InjectEnv; len(injected) > 0 {
+		cmd.Env = append(os.Environ(), injected...)
+	}
+
+	// Create a new process group so we can kill all child processes on timeout
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	return cmd
 }
 
 // killProcessGroup kills the entire process group of the command

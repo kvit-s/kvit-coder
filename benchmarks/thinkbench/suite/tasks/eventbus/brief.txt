@@ -1,0 +1,98 @@
+You have inherited a small Python library named `eventbus`: an in-memory
+publish/subscribe message bus. The package is already written, imports cleanly,
+and its core operations work: `subscribe(topic, fn)` registers a callback for an
+EXACT topic, and `publish(topic, data)` invokes every callback subscribed to
+that exact topic, passing `(topic, data)`.
+
+Topics are dot-delimited strings of one or more non-empty segments, e.g.
+`"order"`, `"order.created"`, `"sensor.kitchen.temp"`.
+
+It ships with a FIRST attempt at wildcard subscriptions that does not actually
+work: a subscription whose topic contains a `*` or `#` is stored, but matching
+still compares topics for plain string equality, so wildcards never fire.
+
+## Task
+
+Make wildcard subscriptions work. A subscription topic may contain wildcard
+segments; a published topic is always concrete (a publisher never publishes to a
+wildcard).
+
+## Semantics (read carefully — this is the whole task)
+
+- `*` is a SINGLE-segment wildcard: it matches exactly one segment in that
+  position. `"a.*"` matches `"a.b"` but NOT `"a.b.c"` (too many segments) and
+  NOT `"a"` (too few). `"*"` matches any single-segment topic like `"a"`, but
+  not `"a.b"`. A `*` may appear in any position: `"*.created"` matches
+  `"order.created"` and `"user.created"`, not `"order.created.late"`.
+
+- `#` is a MULTI-segment wildcard: it matches ONE OR MORE trailing segments, and
+  is only meaningful as the LAST segment of a subscription. `"a.#"` matches
+  `"a.b"` and `"a.b.c"` and `"a.b.c.d"`, but NOT `"a"` (it requires at least one
+  segment after the prefix). `"#"` on its own matches any topic of one or more
+  segments (i.e. everything).
+
+- `*` and `#` are wildcards ONLY in subscription topics. In a PUBLISHED topic
+  they are ordinary literal text: publishing to `"a.*"` delivers only to a
+  subscriber whose subscription topic is literally `"a.*"` (or a wildcard that
+  matches the literal segment `*`, e.g. `"a.*"`'s single-`*` matches the literal
+  segment `"*"`), never via wildcard expansion.
+
+- DELIVERY ORDER is deterministic: when a publish matches several subscriptions,
+  the callbacks fire in the ORDER THE SUBSCRIPTIONS WERE REGISTERED (globally,
+  across all topics/patterns), regardless of whether each match was exact or via
+  a wildcard.
+
+- FIRE ONCE PER SUBSCRIPTION: each `subscribe(...)` call is one subscription and
+  fires AT MOST ONCE per matching publish, even if its pattern could be seen to
+  match in more than one way. If the SAME callable is subscribed twice (two
+  `subscribe` calls), that is two subscriptions and it is invoked twice.
+
+- Exact-topic subscriptions must keep working exactly as before.
+
+- `publish(topic, data)` returns the number of callbacks it invoked (an int).
+  `subscribe(topic, fn)` returns an opaque subscription handle.
+
+## Example
+
+    bus = EventBus()
+    seen = []
+
+    bus.subscribe("order.created", lambda t, d: seen.append(("exact", t, d)))
+    bus.subscribe("order.*",       lambda t, d: seen.append(("star", t, d)))
+    bus.subscribe("order.#",       lambda t, d: seen.append(("hash", t, d)))
+
+    n = bus.publish("order.created", 7)
+    # all three match "order.created"; they fire in subscription order:
+    assert seen == [
+        ("exact", "order.created", 7),
+        ("star",  "order.created", 7),
+        ("hash",  "order.created", 7),
+    ]
+    assert n == 3
+
+    seen.clear()
+    bus.publish("order.created.late", 1)
+    # "order.*" does NOT match (two segments after "order"); only "order.#" does:
+    assert seen == [("hash", "order.created.late", 1)]
+
+A subscriber whose pattern could match "twice" still fires once:
+
+    bus = EventBus()
+    hits = []
+    bus.subscribe("#", lambda t, d: hits.append(t))   # matches everything, once
+    bus.publish("a.b.c", None)
+    assert hits == ["a.b.c"]   # one call, not one-per-segment
+
+## Contract
+
+- Package name: `eventbus`. The grader imports `eventbus.public` (falling back
+  to `eventbus`); keep both import paths working.
+- Public class `EventBus` with methods:
+  - `subscribe(topic: str, fn) -> handle` — register `fn` for `topic` (which may
+    contain `*` / `#` wildcard segments). Returns an opaque handle.
+  - `publish(topic: str, data) -> int` — invoke every matching subscription's
+    callback as `fn(topic, data)`, in global subscription order, each at most
+    once; return the number of callbacks invoked.
+- A `*` segment matches exactly one segment; a trailing `#` matches one or more
+  trailing segments; both are wildcards only in subscription topics.
+- Standard library only. No threading requirement, no persistence.

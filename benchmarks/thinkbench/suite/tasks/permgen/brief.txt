@@ -1,0 +1,80 @@
+BUG REPORT — permgen: the test suite is failing
+
+You have an existing Python package `permgen`, a tiny utility for the
+lexicographic permutations of a list of DISTINCT items. It ships with a unittest
+suite in `permgen/test_permgen.py`, and right now several of those tests FAIL.
+Fix the code so that ALL the tests pass. Do not rewrite the package from scratch
+and do not change its public API.
+
+## Symptom
+
+The package addresses permutations by RANK: list every permutation of `items` in
+lexicographic order, numbered from 0. `nth_permutation(items, n)` is supposed to
+return the rank-`n` permutation, and `permutation_rank(perm, items)` is supposed
+to be its exact inverse. The identity (rank 0) works, but almost everything else
+is wrong:
+
+    from permgen.public import nth_permutation, permutation_rank
+
+    # rank 0 is fine — the items in their given order:
+    nth_permutation(["a", "b", "c", "d"], 0)
+    #   EXPECTED ['a', 'b', 'c', 'd']
+    #   ACTUAL   ['a', 'b', 'c', 'd']   (correct)
+
+    # but other ranks decode the wrong permutation:
+    nth_permutation([1, 2, 3], 4)
+    #   EXPECTED [3, 1, 2]
+    #   ACTUAL   [1, 3, 2]              (decodes the wrong digits)
+
+    # and rank is not the inverse of nth_permutation:
+    permutation_rank(["b", "a", "c", "d"], ["a", "b", "c", "d"])
+    #   EXPECTED 6
+    #   ACTUAL   11                     (counts against the wrong remaining set)
+
+These defects interact: a round-trip `permutation_rank(nth_permutation(items,
+n), items)` should give back `n` for every `n`, but right now it does not — you
+have to fix all three to make the two functions exact inverses again.
+
+## Reproduce
+
+Run the visible tests from the directory that contains the `permgen` package:
+
+    python -m unittest permgen.test_permgen
+
+## Contract (must hold after your fix)
+
+* Package name stays `permgen`; import path `permgen` / `permgen.public`.
+* Keep the public API exactly: `nth_permutation(items, n) -> list`,
+  `permutation_rank(perm, items) -> int`, and the `PermError` exception. Do not
+  rename them.
+* `items` is a sequence of DISTINCT items, taken in the given order as the
+  lexicographic alphabet (so `items` itself is the smallest permutation, rank 0).
+* `nth_permutation(items, n)`:
+    - `n` is a 0-indexed rank with `0 <= n < len(items)!`; an `n` outside that
+      range (or a non-int `n`) raises `PermError`. `nth_permutation([], 0)`
+      returns `[]`.
+    - Returns a NEW list (the input `items` is not mutated).
+    - `nth_permutation(items, 0)` is always `list(items)` (the identity).
+    - Permutations are enumerated in LEXICOGRAPHIC order by the position of each
+      item in `items`. The decoding is FACTORADIC: the digit for the step with
+      `i` items still available has place value `(i-1)!` and is an index into the
+      list of REMAINING (not-yet-used) items.
+* `permutation_rank(perm, items)`:
+    - `perm` must be a permutation of `items` (a `perm` whose length differs from
+      `items`, or that contains an item not in `items`, raises `PermError`).
+    - Returns the 0-indexed rank, so `permutation_rank(list(items), items) == 0`.
+    - It is the EXACT INVERSE of `nth_permutation`: for every valid `n`,
+      `permutation_rank(nth_permutation(items, n), items) == n`, and for every
+      permutation `perm`, `nth_permutation(items, permutation_rank(perm, items))
+      == list(perm)`.
+
+Example (the two are exact inverses):
+
+    items = ["a", "b", "c", "d"]
+    nth_permutation(items, 5)            # -> ['a', 'd', 'c', 'b']
+    permutation_rank(['a', 'd', 'c', 'b'], items)   # -> 5
+    nth_permutation(items, 23)           # -> ['d', 'c', 'b', 'a']  (the last one)
+    permutation_rank(['d', 'c', 'b', 'a'], items)   # -> 23
+
+Standard library only (`math`). Do not change the package name or the public
+function/exception names.

@@ -1,0 +1,89 @@
+You are handed an existing, WORKING Python 3.11+ package named `csvgroupby`. It is
+already in your working directory. Add ONE new capability described below WITHOUT
+regressing what already works. Use only the Python standard library.
+
+## What it does today
+
+`csvgroupby.public.query(rows, sql)` runs a small SQL-subset query against `rows`
+(a list of dicts, one per CSV record — every value is a string as read from the
+file) and returns a list of row dicts.
+
+It already supports:
+
+    SELECT <cols> FROM <table> [WHERE <column> <op> <value>]
+
+  - `<cols>` is `*` or a comma-separated list of column names.
+  - `<op>` is one of: `>=`  `<=`  `>`  `<`  `=`  `!=`
+  - WHERE compares with NUMERIC INFERENCE: a cell or literal that looks like a
+    number is compared numerically, otherwise as a string. So
+    `WHERE age >= 18` keeps rows whose `age` cell is the number 18 or greater,
+    even though the cell is stored as a string.
+  - The `<table>` name parses but is ignored (`rows` is the data source).
+
+Example (already works):
+
+    rows = [
+        {"city": "NYC", "age": "30"},
+        {"city": "LA",  "age": "17"},
+        {"city": "NYC", "age": "22"},
+    ]
+    query(rows, "SELECT city FROM t WHERE age >= 18")
+    # -> [{"city": "NYC"}, {"city": "NYC"}]
+
+## The capability to ADD: GROUP BY <col> with COUNT(*)
+
+Add support for a trailing `GROUP BY <column>` clause together with a `COUNT(*)`
+aggregate in the select list:
+
+    SELECT <col>, COUNT(*) FROM <table> [WHERE ...] GROUP BY <col>
+
+Semantics:
+
+  - GROUP BY produces ONE output row per DISTINCT value of the grouped column,
+    in first-seen order.
+  - `COUNT(*)` in the select list is the number of rows in that group, and it
+    appears in each output row under the key `COUNT(*)`.
+  - GROUP BY composes with WHERE: filter first, then group over the surviving
+    rows (so a group's count reflects only rows that passed WHERE).
+
+Examples:
+
+    rows = [
+        {"city": "NYC", "age": "30"},
+        {"city": "LA",  "age": "17"},
+        {"city": "NYC", "age": "22"},
+        {"city": "LA",  "age": "40"},
+        {"city": "NYC", "age": "12"},
+    ]
+
+    query(rows, "SELECT city, COUNT(*) FROM t GROUP BY city")
+    # -> [
+    #      {"city": "NYC", "COUNT(*)": 3},
+    #      {"city": "LA",  "COUNT(*)": 2},
+    #    ]
+
+    query(rows, "SELECT city, COUNT(*) FROM t WHERE age >= 18 GROUP BY city")
+    # -> [
+    #      {"city": "NYC", "COUNT(*)": 2},   # ages 30, 22
+    #      {"city": "LA",  "COUNT(*)": 1},   # age 40
+    #    ]
+
+## Contract
+
+  - Package name stays `csvgroupby`; keep the public API
+    `query(rows, sql) -> list[dict]` exposed from `csvgroupby.public`
+    (and re-exported from `csvgroupby`).
+  - DO NOT change the existing behavior or return shape: the result is always a
+    list of row dicts; plain `SELECT <cols> ... [WHERE ...]` (no GROUP BY) keeps
+    returning exactly the same projected/filtered rows it does today, and WHERE
+    keeps its numeric-inference comparison.
+  - The new aggregate value MUST appear under the key `COUNT(*)` (the literal
+    string `COUNT(*)`).
+  - Each GROUP BY output row identifies its group by the grouped column's value
+    (e.g. `{"city": "NYC", "COUNT(*)": 3}`); one row per distinct group value,
+    in first-seen order; count = number of WHERE-surviving rows in the group.
+  - Standard library only; keep it a self-contained package.
+
+Do not change the package name or the `query` signature. Add `GROUP BY <col>`
+with `COUNT(*)` so the examples above work, and keep the existing SELECT/WHERE
+behavior intact.

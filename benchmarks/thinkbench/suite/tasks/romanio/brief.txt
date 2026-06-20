@@ -1,0 +1,77 @@
+BUG REPORT — romanio: the test suite is failing
+
+You have an existing Python package `romanio`, a tiny Roman-numeral converter.
+It ships with a unittest suite in `romanio/test_romanio.py`, and right now
+several of those tests FAIL. Fix the code so that ALL the tests pass. Do not
+rewrite the package from scratch and do not change its public API.
+
+## Symptom
+
+`to_roman(n)` renders an integer as a Roman numeral and `from_roman(s)` parses
+one back. Simple additive numerals already work, but the subtractive cases and
+the range check are wrong:
+
+    from romanio.public import to_roman, from_roman
+
+    # to_roman spells the subtractive values additively:
+    to_roman(4)      # EXPECTED "IV"      ACTUAL "IIII"
+    to_roman(9)      # EXPECTED "IX"      ACTUAL "VIIII"
+    to_roman(40)     # EXPECTED "XL"      ACTUAL "XXXX"
+    to_roman(900)    # EXPECTED "CM"      ACTUAL "DCCCC"
+    to_roman(1994)   # EXPECTED "MCMXCIV" ACTUAL "MDCCCCLXXXXIIII"
+
+    # from_roman just sums symbols, ignoring subtractive pairs:
+    from_roman("IV")      # EXPECTED 4    ACTUAL 6   (I + V)
+    from_roman("IX")      # EXPECTED 9    ACTUAL 11
+    from_roman("MCMXCIV") # EXPECTED 1994 ACTUAL ...wrong
+
+    # to_roman accepts out-of-range values instead of refusing them:
+    to_roman(0)      # EXPECTED RomanError   ACTUAL ""
+    to_roman(4000)   # EXPECTED RomanError   ACTUAL "MMMM"
+
+These defects interact: the round trip `from_roman(to_roman(n)) == n` only
+holds for subtractive values (4, 9, 40, ..., 1994) once BOTH directions agree
+on subtractive notation, and the range guard is what keeps `to_roman` honest at
+the 1 and 3999 boundaries.
+
+## Reproduce
+
+Run the visible tests from the directory that contains the `romanio` package:
+
+    python -m unittest romanio.test_romanio
+
+## Contract (must hold after your fix)
+
+* Package name stays `romanio`; import path `romanio` / `romanio.public`.
+* Keep the public API exactly: `to_roman(n: int) -> str`,
+  `from_roman(s: str) -> int`, and the `RomanError` exception. Do not rename
+  them.
+* `to_roman(n)` accepts an int with `1 <= n <= 3999`. Anything outside that
+  range (including 0 and negatives) raises `RomanError`. A non-int raises
+  `RomanError`.
+* `from_roman(s)` accepts a numeral string (case-insensitive, surrounding
+  whitespace ignored) and returns its integer value. An empty string, or a
+  string containing a symbol that is not one of `M D C L X V I`, raises
+  `RomanError`.
+* SUBTRACTIVE notation is REQUIRED in both directions. The six subtractive
+  pairs are:
+
+      4   -> IV        40  -> XL        400 -> CD
+      9   -> IX        90  -> XC        900 -> CM
+
+  So `to_roman` must emit `IV` (not `IIII`), `IX` (not `VIIII`), `XL`, `XC`,
+  `CD`, `CM`; and `from_roman` must read a smaller symbol placed before a
+  larger one as a subtraction (`IV` = 5 - 1 = 4, `CM` = 1000 - 100 = 900).
+* Everything else is additive, written largest-symbol-first (e.g. 2026 ->
+  `MMXXVI`, 38 -> `XXXVIII`).
+* ROUND TRIP: `from_roman(to_roman(n)) == n` for every `n` in `1..3999`.
+
+Example:
+
+    to_roman(1994)             # -> "MCMXCIV"
+    from_roman("MCMXCIV")      # -> 1994
+    to_roman(2949)             # -> "MMCMXLIX"
+    from_roman("MMCMXLIX")     # -> 2949
+
+Standard library only. Do not change the package name or the public
+function/exception names.

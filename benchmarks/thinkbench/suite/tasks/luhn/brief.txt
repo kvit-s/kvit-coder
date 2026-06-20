@@ -1,0 +1,106 @@
+You have inherited a small Python library named `luhn`: a validator and
+check-digit generator for the Luhn (mod-10) checksum -- the scheme that guards
+credit-card numbers, IMEIs, and similar identifiers. The package is already
+written, imports cleanly, and the happy path works -- it validates the textbook
+example number and rejects an obviously wrong one.
+
+## Bug report
+
+Under real input the library quietly accepts bad numbers and rejects good ones,
+and the symptoms are length- and content-dependent, so a couple of hand-picked
+examples look fine:
+
+  1. Validation depends on the LENGTH of the number in a way it shouldn't. Some
+     genuinely valid card numbers are rejected, while some numbers with a single
+     mistyped digit are accepted -- and which ones flip seems to track whether
+     the number has an odd or an even count of digits. It is as if the "every
+     second digit" doubling is being measured from the wrong end, so the wrong
+     digits get doubled whenever the length's parity changes.
+
+  2. Numbers that should validate are rejected whenever doubling a digit pushes
+     it to 10 or more. A digit like 8, once doubled to 16, is contributing the
+     wrong amount to the checksum -- the two decimal digits of the doubled value
+     are not being folded back together the way Luhn requires.
+
+  3. `check_digit` returns the wrong digit exactly when the correct answer is 0.
+     A partial number whose proper check digit is 0 instead gets a 10 (or some
+     other nonsense), and appending it produces a number that does not validate.
+     Every other check digit looks right, so the bug hides until a 0 comes up.
+
+  4. Input that contains spaces or other separators -- the way humans actually
+     write card numbers, in groups -- is mishandled, and so is empty / non-digit
+     input. Grouped numbers that should validate are rejected, and junk that
+     should be cleanly rejected instead slips through or raises.
+
+Find and fix the defects so the library honours the contract below exactly.
+Keep the public API and behaviour otherwise unchanged.
+
+## Contract
+
+- Package name: `luhn`. The grader imports `luhn.public` (falling back to
+  `luhn`); keep both import paths working.
+- Public API, UNCHANGED (do not rename anything or change signatures):
+      is_valid(number: str) -> bool
+      check_digit(partial: str) -> int
+
+- The Luhn checksum, defined precisely:
+    * Take the string of digits. Walk it from the RIGHTMOST digit leftward.
+    * DOUBLE every second digit counting from the right: the rightmost digit is
+      NOT doubled, the next one to its left IS doubled, the next is not, and so
+      on. (Equivalently: 0-indexing positions from the right starting at 0, the
+      ODD-indexed positions -- 1, 3, 5, ... -- are doubled.)
+    * Whenever doubling yields a value greater than 9, fold its digits: replace
+      it with the sum of its two decimal digits, which is the same as
+      subtracting 9 (e.g. 8 -> 16 -> 1+6 = 7; 6 -> 12 -> 1+2 = 3; 9 -> 18 -> 9).
+    * Sum all the resulting values (doubled-and-folded where applicable, plain
+      otherwise).
+    * The number is VALID iff that total is a multiple of 10 (total % 10 == 0).
+
+- `is_valid(number)`:
+    * Returns True iff the cleaned digit string passes the Luhn checksum above.
+    * Separators are tolerated and ignored: ASCII spaces are stripped before
+      validating, so "4539 1488 0343 6467" is treated exactly like
+      "4539148803436467".
+    * Anything that, after stripping spaces, is EMPTY or contains a non-digit
+      character returns False (never raises). An empty string is not a valid
+      number. Note "0" (a single zero) is, by the checksum, valid.
+
+- `check_digit(partial)`:
+    * `partial` is the number SO FAR, without its final check digit. Return the
+      single digit (an int in 0..9) that, when APPENDED to the right of
+      `partial`, makes the whole thing pass `is_valid`.
+    * Concretely: that appended digit sits at right-position 0 (it is not
+      doubled). Compute the Luhn total of `partial` as if it had a 0 appended
+      (so `partial`'s own digits all shift one place left, changing which get
+      doubled), then the check digit is the amount needed to round that total up
+      to the next multiple of 10. When the total is already a multiple of 10 the
+      check digit is 0 (NOT 10).
+    * Spaces in `partial` are stripped just as in `is_valid`.
+
+## I/O example
+
+    >>> from luhn import is_valid, check_digit
+    >>> is_valid("4539148803436467")     # a valid Visa test number
+    True
+    >>> is_valid("4539 1488 0343 6467")  # same number, spaced groups
+    True
+    >>> is_valid("4539148803436466")     # last digit wrong
+    False
+    >>> is_valid("79927398713")          # classic 11-digit Luhn example (odd length)
+    True
+    >>> is_valid("0")                    # single zero: total 0, a multiple of 10
+    True
+    >>> is_valid("")                     # empty is not a number
+    False
+    >>> is_valid("12 34a")               # non-digit after stripping spaces
+    False
+    >>> check_digit("7992739871")        # appending 3 -> 79927398713 validates
+    3
+    >>> check_digit("123456781234567")   # this partial's check digit is 0
+    0
+    >>> is_valid("1234567812345670")     # ...and 0 appended validates
+    True
+
+- Standard library only.
+</content>
+</invoke>

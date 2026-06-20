@@ -270,6 +270,40 @@ Needle retrieval in large context windows (1-5 hop reasoning, no tools required)
 ./kvit-coder --bench-haystack mymodel --bench-haystack-id 1H1,2H1
 ```
 
+### Thinkbench Benchmarks
+
+[Thinkbench](benchmarks/thinkbench/suite/README.md) (by Thinkwright, Apache-2.0) is a suite of 72 autonomous coding-agent tasks across five types — `implement`, `bug-fix`, `feature-add`, `repair-to-green` (60 graded), and `ambiguous-spec` (12 observed). Each graded task runs the agent in a fresh, hard-sandboxed workspace from a single `brief.txt`; after the agent stops a held-out `grade.py` is dropped in and produces a continuous `passed/total` score.
+
+```bash
+# Run all graded thinkbench tasks (uses config-mymodel.yaml), 3 trials each
+./kvit-coder --bench-thinkbench mymodel
+
+# Specific tasks / types / trial count
+./kvit-coder --bench-thinkbench mymodel --bench-thinkbench-id base62,backoff
+./kvit-coder --bench-thinkbench mymodel --bench-thinkbench-types bug-fix,feature-add
+./kvit-coder --bench-thinkbench mymodel -n 1
+```
+
+Outputs `results.json`, `RESULTS.md`, and a resumable CSV under `benchmarks/thinkbench/results/` (`overall_graded` / `by_type` / `by_task` / `observed` rollups, with both **mean score** and **full-pass rate**).
+
+**Requirements & sandboxing:**
+
+- **`uv`** must be on PATH. A shared environment is auto-provisioned at `benchmarks/thinkbench/.uv` (pinned via `thinkbench.uv_python`) and used as the default `python3`/`pip` for both the agent's `run_command` and the grader.
+- Each run is confined to a per-run workspace for **reads as well as writes**: `path_safety_mode=block` covers the structured file tools, and an OS sandbox (auto-detected **bubblewrap** → **firejail**) confines arbitrary shell. A preflight smoke test proves a read outside the workspace is denied before any task runs. Held-out graders and reference solutions live under `suite/` and are never copied into a workspace pre-grade.
+
+Config block (in `config-<suffix>.yaml`):
+
+```yaml
+thinkbench:
+  suite_dir: "benchmarks/thinkbench/suite"   # optional; auto-discovered
+  timeout_per_run: 600                        # seconds; implement tasks are slow
+  uv_python: "3.11"
+  sandbox: "auto"   # auto | bwrap | firejail | none | require
+  types: ["implement", "bug-fix", "feature-add", "repair-to-green"]
+  trials: 3          # default trials per task; overridden by -n
+  include_observed: false   # also run the 12 ungraded ambiguous-spec tasks (persist-only)
+```
+
 ### Adding Custom Benchmarks
 
 Define in `benchmarks/benchmarks.yaml`:

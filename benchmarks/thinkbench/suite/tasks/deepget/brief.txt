@@ -1,0 +1,96 @@
+You have inherited a small Python library named `deepget`: two helpers for
+reaching into nested data by a dotted-string path. `get(obj, path, default)`
+reads a value out of arbitrarily nested dicts and lists; `set_(obj, path, value)`
+writes one, creating any missing structure on the way. The package is already
+written, imports cleanly, and the happy path works -- plain nested dicts read
+and write fine, and indexing into a list with a numeric segment works for the
+common case.
+
+It is used to pull fields out of decoded JSON config and API payloads, where a
+path like `servers.0.host` means "the `host` of the first element of the
+`servers` list".
+
+## Bug report
+
+The helpers misbehave on the trickier shapes, and the failures are easy to miss
+because the obvious cases look fine:
+
+  1. A field that is genuinely PRESENT but set to `null`/`None` reads back as if
+     it were missing -- `get` hands back the `default` instead of the real,
+     stored `None`. Code that distinguishes "absent" from "explicitly null" (a
+     cleared optional, say) can't tell the two apart.
+
+  2. A numeric-looking segment is ALWAYS treated as a list index, even when the
+     current container is a dict whose keys happen to be digit strings (think a
+     JSON object like `{"2024": {...}}` keyed by year, or sparse maps keyed by
+     id). Those entries become completely unreachable, and the lookup blows up
+     or silently returns the default.
+
+  3. `set_` only ever creates plain dicts for the missing intermediate steps, so
+     a path that needs a LIST in the middle (e.g. `items.0.name` starting from
+     an empty object) builds the wrong shape -- a dict keyed by the string "0"
+     instead of a one-element list. Later `get`s along the intended path then
+     fail.
+
+  4. Out-of-range and negative list indices are mishandled on read: a path that
+     runs off the end of a list raises instead of falling back to `default`, and
+     a negative index quietly wraps around to grab an element from the END of the
+     list rather than failing. Both should simply be treated as "not found".
+
+Find and fix the defects so the helpers honour the contract below exactly. Keep
+the public API and behaviour otherwise unchanged.
+
+## Contract
+
+- Package name: `deepget`. The grader imports `deepget.public` (falling back to
+  `deepget`); keep both import paths working.
+- Public API, UNCHANGED (do not rename anything or change signatures):
+      get(obj, path: str, default=None) -> value or default
+      set_(obj, path: str, value) -> the (possibly new) root object
+- A `path` is a `.`-separated string of segments, walked left to right, each
+  segment selecting into the CURRENT container:
+    * dict: the segment is a key. Try the raw STRING key first; only if that is
+      absent and the segment is all digits, try the INTEGER key too. (So both
+      `{"0": x}` and `{0: x}` are reachable via the segment `"0"`, string first.)
+    * list: the segment must be a non-negative integer index that is in range
+      (`0 <= i < len`). A non-numeric segment, a negative index, or an
+      out-of-range index does NOT resolve.
+    * anything else (e.g. descending into an int or string): does NOT resolve.
+  "All digits" means `seg.isdigit()` -- no sign, no decimal point.
+- `get(obj, path, default=None)`:
+    * Returns the resolved value when every segment resolves. A resolved value
+      of `None` is returned AS-IS -- a present `None` is a real value, NOT a
+      miss.
+    * Returns `default` if and only if some segment fails to resolve (missing
+      key, bad/negative/out-of-range index, or descending into a non-container).
+    * Never raises for an unresolvable path; it returns `default`.
+    * An empty path (`""`) resolves to `obj` itself.
+- `set_(obj, path, value)`:
+    * Walks `obj` and stores `value` at the final segment, creating any missing
+      intermediate container as it goes. The type of a freshly created
+      intermediate depends on the NEXT segment: a numeric next segment creates a
+      LIST, otherwise a `dict`.
+    * Assigning into a list at an index past its end PADS the list with `None`
+      up to that index, then assigns (so `set_([], "2", v)` yields `[None, None, v]`).
+    * Returns the root object. For an empty path it returns `obj` unchanged.
+    * Mutates in place where possible; it must not replace an existing
+      list/dict intermediate that is already the right kind of container.
+
+## I/O example
+
+    >>> obj = {"a": {"b": [{"c": 1}, {"c": 2}]}}
+    >>> get(obj, "a.b.1.c")
+    2
+    >>> get(obj, "a.b.9.c", default="?")     # index off the end -> default
+    '?'
+    >>> get(obj, "a.b.-1.c", default="?")    # negative does NOT wrap -> default
+    '?'
+    >>> get({"x": None}, "x", default="?")   # present None -> the None, not default
+    >>> get({"2024": {"q": 4}}, "2024.q")    # digit-string DICT key, not a list index
+    4
+    >>> set_({}, "items.0.name", "hi")       # numeric next seg -> a LIST is created
+    {'items': [{'name': 'hi'}]}
+    >>> set_([], "2", "z")                    # pad past the end with None
+    [None, None, 'z']
+
+- Standard library only.

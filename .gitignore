@@ -28,6 +28,11 @@ vendor/
 benchmarks/.kvit-coder-benchmark/
 benchmarks/results/
 
+# Thinkbench runtime artifacts (suite/ is committed; these are generated)
+benchmarks/thinkbench/runs/
+benchmarks/thinkbench/.uv/
+benchmarks/thinkbench/results/
+
 # Local configs
 config-local.yaml
 

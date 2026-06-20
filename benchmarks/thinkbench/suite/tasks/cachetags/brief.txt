@@ -1,0 +1,89 @@
+You have inherited a small Python library named `cachetags`: an in-memory cache.
+The package is already written, imports cleanly, and its core operations work:
+`set(key, value, now)`, `get(key, now, default=None)`, and `delete(key)`.
+
+Time is INJECTED, never read from a real clock: every read and write takes
+`now` (a number — the caller's current time) as an explicit argument. The base
+cache does not actually use `now` yet (entries never expire), but it is already
+part of the signature. This keeps the cache fully deterministic and testable.
+
+## Task
+
+Add two features on top of the existing cache, WITHOUT breaking plain
+`get` / `set`:
+
+(a) **Per-entry TTL.** `set(key, value, now, ttl=...)` makes the entry expire
+    `ttl` time-units after it was set. A `get` at or after the expiry instant is
+    a MISS.
+
+(b) **Tag-based invalidation.** `set(key, value, now, tags=[...])` attaches tags
+    to the entry. `invalidate_tag(tag, now)` drops every entry carrying that
+    tag.
+
+## Semantics (read carefully — this is the whole task)
+
+- TTL is RELATIVE to the set time and resolved against the injected `now`: an
+  entry set with `ttl=T` at time `t0` expires at `t0 + T`. The boundary is
+  HALF-OPEN — the entry is a HIT for every `now` in the interval `[t0, t0+T)`
+  and a MISS at and after `t0 + T`. So `ttl=10` set at `now=0` is a hit at
+  `now=9` and a miss at `now=10`.
+
+- `ttl=None` (the default) means the entry NEVER expires — plain `set` with no
+  `ttl` keeps its old behavior.
+
+- A `ttl` of 0 (or negative) means the entry is already expired the instant it
+  is set: it is never served.
+
+- `invalidate_tag(tag, now)` removes every entry that currently carries `tag`
+  and returns the COUNT of entries it dropped.
+
+- SUBTLE — an EXPIRED entry must also lose its tag membership. Once an entry's
+  TTL has elapsed it is gone in every sense: it must NOT be returned by `get`,
+  and `invalidate_tag` on one of its (former) tags must NOT count it (it is a
+  no-op for that entry — there is nothing live to invalidate). An expired entry
+  must never resurface.
+
+- SUBTLE — re-`set`ting an existing key REPLACES its tags wholesale. The key
+  loses its OLD tags and carries only the tags given on the latest `set` (or no
+  tags, if `tags` is omitted). A later `invalidate_tag` with an OLD tag must not
+  touch the re-set entry.
+
+- Plain `get` / `set` / `delete` with no `ttl` and no `tags` must behave exactly
+  as they do today.
+
+## Example
+
+    c = Cache()
+
+    c.set("a", 1, now=0, ttl=10, tags=["red"])
+    c.get("a", now=9)        # -> 1     (still within TTL)
+    c.get("a", now=10)       # -> None  (TTL elapsed: a miss)
+
+    c.set("b", 2, now=0, tags=["red", "blue"])
+    c.invalidate_tag("red", now=0)   # -> 1  (drops "b")
+    c.get("b", now=0)        # -> None
+
+    # expired entry loses its tag membership:
+    c.set("c", 3, now=0, ttl=5, tags=["green"])
+    c.invalidate_tag("green", now=10)  # -> 0  ("c" already expired; nothing to drop)
+    c.get("c", now=10)       # -> None
+
+    # re-set replaces tags:
+    c.set("d", 4, now=0, tags=["old"])
+    c.set("d", 5, now=0, tags=["new"])   # "d" no longer carries "old"
+    c.invalidate_tag("old", now=0)   # -> 0  (does not touch "d")
+    c.get("d", now=0)        # -> 5
+
+## Contract
+
+- Package name: `cachetags`. The grader imports `cachetags.public` (falling back
+  to `cachetags`); keep both import paths working.
+- Public class `Cache` with methods:
+    * `set(key, value, now, ttl=None, tags=None)` -> None
+    * `get(key, now, default=None)` -> value or default
+    * `delete(key)` -> bool (True iff the key was present)
+    * `invalidate_tag(tag, now)` -> int (number of live entries dropped)
+- `now`, `ttl`, and tag values are plain numbers / hashables; tags is any
+  iterable of hashables. Time is whatever numeric type the caller passes as
+  `now` — do not read a real clock.
+- Standard library only. No persistence, no threading requirement.

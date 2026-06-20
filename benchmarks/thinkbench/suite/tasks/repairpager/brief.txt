@@ -1,0 +1,45 @@
+BUG REPORT — repairpager: the test suite is failing
+
+You have an existing Python package `repairpager`, a small pagination helper
+that slices a list of items into pages. It ships with a visible test file,
+`repairpager/test_repairpager.py`, and that test suite is currently FAILING.
+Fix the code so all the tests pass. Do not rewrite the package from scratch and
+do not change the public API or the return shape.
+
+## How to run the tests
+
+    python -m pytest repairpager/test_repairpager.py
+    # or, if pytest is not available:
+    python repairpager/test_repairpager.py
+
+## Symptom
+
+`paginate(items, page_size, page)` is returning wrong results: pages contain the
+wrong items, the reported page count drops a trailing partial page, and the last
+page incorrectly claims another page follows it. The visible tests pin down the
+intended behaviour — make them green.
+
+## Contract (must hold after your fix)
+
+* Package name stays `repairpager`; import path `repairpager` / `repairpager.public`.
+* Keep the public API exactly as it is:
+  `paginate(items, page_size, page=1) -> dict`.
+* Keep the return shape — a dict with these keys:
+  - `items`        : list of the items on this page, in original order (may be empty)
+  - `total_items`  : total number of input items
+  - `total_pages`  : number of pages needed to cover ALL items (round UP so a
+                     trailing partial page still counts; an empty input is one page)
+  - `page`         : the 1-based page actually returned (clamped into range)
+  - `has_next`     : True iff a page after this one exists
+  - `has_prev`     : True iff a page before this one exists
+* Page numbering is 1-based: `page=1` returns the FIRST `page_size` items
+  (items index 0 .. page_size-1), `page=2` the next chunk, and so on.
+* Slicing must be correct: page `p` returns items in the half-open index range
+  `[(p-1)*page_size, p*page_size)`.
+* `total_pages` must use a ceiling division: 5 items in chunks of 2 is 3 pages,
+  not 2. An exact multiple (e.g. 6 items, size 3) is exactly that many pages.
+* `has_next` is False on the last page; `has_prev` is False on the first page.
+* `page_size` must be a positive integer; reject otherwise (the existing
+  `ValueError` behaviour is fine — do not weaken it).
+
+Do not change the package name or the public function name. Standard library only.

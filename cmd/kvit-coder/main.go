@@ -56,6 +56,12 @@ func main() {
 	benchHaystack := flag.String("bench-haystack", "", "run haystack (needle retrieval) benchmarks (optional suffix)")
 	benchHaystackID := flag.String("bench-haystack-id", "", "run specific haystack benchmark IDs (comma-separated)")
 
+	// Thinkbench benchmark flags (autonomous coding agent tasks, held-out grader)
+	benchThinkbench := flag.String("bench-thinkbench", "", "run thinkbench (coding agent) benchmarks (optional suffix)")
+	benchThinkbenchID := flag.String("bench-thinkbench-id", "", "run specific thinkbench task slugs (comma-separated)")
+	benchThinkbenchTypes := flag.String("bench-thinkbench-types", "", "filter thinkbench tasks by type (comma-separated)")
+	thinkbenchSuite := flag.String("thinkbench-suite", "", "override thinkbench suite directory")
+
 	// Session flags
 	sessionName := flag.String("s", "", "session name: continue existing session or create new one with this name")
 	sessionList := flag.Bool("sessions", false, "list all sessions and exit")
@@ -172,11 +178,20 @@ func main() {
 		haystackSuffix = ""
 	}
 
-	// Use config-{suffix}.yaml if suffix is provided (from either benchmark mode)
+	// Also handle --bench-thinkbench suffix
+	thinkbenchEnabled := *benchThinkbench != ""
+	thinkbenchSuffix := *benchThinkbench
+	if thinkbenchSuffix == "." || thinkbenchSuffix == "true" {
+		thinkbenchSuffix = ""
+	}
+
+	// Use config-{suffix}.yaml if suffix is provided (from any benchmark mode)
 	if benchmarkSuffix != "" && *configPath == "config.yaml" {
 		actualConfigPath = fmt.Sprintf("config-%s.yaml", benchmarkSuffix)
 	} else if haystackSuffix != "" && *configPath == "config.yaml" {
 		actualConfigPath = fmt.Sprintf("config-%s.yaml", haystackSuffix)
+	} else if thinkbenchSuffix != "" && *configPath == "config.yaml" {
+		actualConfigPath = fmt.Sprintf("config-%s.yaml", thinkbenchSuffix)
 	}
 
 	// Load config
@@ -225,6 +240,24 @@ func main() {
 		// Create workspace directory (needed before checkpoint manager initializes)
 		if err := os.MkdirAll(cfg.Workspace.Root, 0755); err != nil {
 			log.Fatalf("Failed to create benchmark workspace: %v", err)
+		}
+	}
+
+	// Override workspace for thinkbench mode - hard sandbox, set BEFORE tools init.
+	// The run workspace lives under benchmarks/thinkbench/runs/ (gitignored), kept
+	// physically separate from the suite (held-out graders/references).
+	if thinkbenchEnabled {
+		wsName := "workspace"
+		if thinkbenchSuffix != "" {
+			wsName = "workspace-" + thinkbenchSuffix
+		}
+		cfg.Workspace.Root = filepath.Join(originalWorkspaceRoot, "benchmarks", "thinkbench", "runs", wsName)
+		cfg.Workspace.PathSafetyMode = "block"
+		cfg.Workspace.AllowOutsideWorkspace = false
+		cfg.Workspace.AllowedPaths = nil
+		cfg.Workspace.AllowedReadPaths = nil
+		if err := os.MkdirAll(cfg.Workspace.Root, 0755); err != nil {
+			log.Fatalf("Failed to create thinkbench workspace: %v", err)
 		}
 	}
 
@@ -381,6 +414,45 @@ func main() {
 
 		if err := benchmark.RunHaystack(context.Background(), flags, cfg, version, originalWorkspaceRoot); err != nil {
 			log.Fatalf("Haystack benchmark failed: %v", err)
+		}
+		return
+	}
+
+	// Run thinkbench (coding agent) benchmark mode if requested
+	if thinkbenchEnabled {
+		// Resolve trials: explicit -n wins, else config thinkbench.trials, else 3.
+		nSet := false
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "n" {
+				nSet = true
+			}
+		})
+		trials := *benchmarkRuns
+		if !nSet {
+			if cfg.Thinkbench.Trials > 0 {
+				trials = cfg.Thinkbench.Trials
+			} else {
+				trials = 3
+			}
+		}
+
+		writer.StartupInfo("Thinkbench Benchmark Mode (Coding Agent)")
+		writer.StartupInfo(fmt.Sprintf("Model: %s @ %s", cfg.LLM.Model, cfg.LLM.BaseURL))
+		fmt.Println()
+
+		flags := benchmark.ThinkbenchCLIFlags{
+			Enabled:     true,
+			Runs:        trials,
+			BenchmarkID: *benchThinkbenchID,
+			Types:       *benchThinkbenchTypes,
+			SuiteDir:    *thinkbenchSuite,
+			OutputFile:  *benchmarkOutput,
+			NoResume:    *benchmarkNoResume,
+			Suffix:      thinkbenchSuffix,
+		}
+
+		if err := benchmark.RunThinkbench(context.Background(), flags, runner, cfg, systemPrompt, version, originalWorkspaceRoot); err != nil {
+			log.Fatalf("Thinkbench benchmark failed: %v", err)
 		}
 		return
 	}

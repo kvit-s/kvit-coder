@@ -1,0 +1,85 @@
+BUG REPORT — jsonquery: the test suite is failing
+
+You have an existing Python package `jsonquery`, a tiny JSONPath-lite selector.
+It ships with a unittest suite in `jsonquery/test_jsonquery.py`, and right now
+several of those tests FAIL. Fix the code so that ALL the tests pass. Do not
+rewrite the package from scratch and do not change its public API.
+
+## Symptom
+
+`select(obj, path)` walks a path expression over a nested dict/list structure
+and is supposed to return a flat list of every value the path selects, in
+document order. Simple key chains like `.a.b` already work, but the wildcard,
+the recursive descent, and the missing-step behavior all come out wrong:
+
+    from jsonquery.public import select
+
+    doc = {
+        "users": [
+            {"name": "ada",   "id": 1, "roles": [{"id": 10}, {"id": 11}]},
+            {"name": "linus", "id": 2, "roles": [{"id": 20}]},
+        ],
+        "owner": {"name": "grace", "id": 3},
+    }
+
+    # [*] is supposed to fan out to each element, flat:
+    select(doc, ".users[*].name")
+    #   EXPECTED ["ada", "linus"]
+    #   ACTUAL   raises / wrong — [*] keeps the list nested instead of fanning out
+
+    # ..key is recursive descent over EVERYTHING, top-down, lists included:
+    select(doc, "..id")
+    #   EXPECTED [1, 10, 11, 2, 20, 3]
+    #   ACTUAL   [10, 11, 1, 20, 2, 3]-ish — wrong order, and ids inside list
+    #            elements get missed entirely
+
+    # a missing key must RAISE, not quietly vanish:
+    select(doc, ".owner.missing")
+    #   EXPECTED raises SelectError
+    #   ACTUAL   returns []   (the mismatch is silently swallowed)
+
+These defects interact: a path like `.users[*].missing` fans out with `[*]`
+and THEN hits a missing key on each branch, and `.users[*]..id` fans out and
+THEN recurses — so getting the combined cases right needs all three fixed.
+
+## Reproduce
+
+Run the visible tests from the directory that contains the `jsonquery` package:
+
+    python -m unittest jsonquery.test_jsonquery
+
+## Contract (must hold after your fix)
+
+* Package name stays `jsonquery`; import path `jsonquery` / `jsonquery.public`.
+* Keep the public API exactly: `select(obj, path: str) -> list` and the
+  `SelectError` exception. Do not rename them.
+* A `path` is a sequence of steps written together. The steps are:
+    - `.key`    — descend into the mapping value at `key`. Keying a non-mapping,
+      or a `key` that is absent, raises `SelectError`.
+    - `[index]` — index into a list with a non-negative integer. Indexing a
+      non-list, or an out-of-range index, raises `SelectError`.
+    - `[*]`     — fan out to EVERY element of a list, in order, FLAT: it adds
+      each element to the result frontier (it does NOT keep the list nested).
+      `[*]` on a non-list raises `SelectError`.
+    - `..key`   — recursive descent: collect the value under `key` EVERYWHERE at
+      or below the current node, in PRE-ORDER (a node is recorded before its
+      own children are scanned), and the scan descends through BOTH mapping
+      values AND list elements. `..key` never raises for "not found" — an empty
+      result is legal.
+  A leading `.` / `..` is optional sugar: `users[0]` and `.users[0]` are the
+  same; a leading bare `key` means `.key`.
+* `select` ALWAYS returns a `list` (never a scalar), even for a single match
+  (`.owner.name` -> `["grace"]`) and even when empty (`..nope` -> `[]`).
+* Order is document order: list elements left to right, mapping values in
+  insertion order, and for `..key` a node's own match comes before the matches
+  found by recursing into that node.
+
+Example (the full interaction):
+
+    select(doc, ".users[*]..id")
+    #   -> [1, 10, 11, 2, 20]
+    # fan out the two users, then for each collect every id at/under it in
+    # pre-order (the user's own id, then its roles' ids).
+
+Standard library only. Do not change the package name or the public
+function/exception names.

@@ -1,0 +1,105 @@
+You have inherited a small Python library named `tierlimit`: a fixed-window rate
+limiter. The package is already written, imports cleanly, and works: it admits
+at most `limit` requests in each fixed wall-clock window of `window` seconds,
+against ONE global counter shared by every call.
+
+`now` is supplied by the caller as an absolute, non-decreasing float (seconds),
+so behaviour is deterministic — there is no real clock and no sleeping. The
+window containing `now` is the half-open interval `[w0, w0 + window)` where
+`w0 = floor(now / window) * window`; when a new window begins the count starts
+over at zero.
+
+## Task
+
+Add PER-KEY rate limiting and TIERS on top of the existing global limiter,
+without breaking the global path.
+
+- Per-key limiting: a new method `allow_key(key, now)` limits each caller `key`
+  against its OWN independent fixed window and count. Different keys never share
+  a budget, and their windows advance independently (a key's window comes purely
+  from the `now` values it is called with).
+
+- Tiers: a tier is a NAME that maps to a per-window limit. `set_tier(key, tier)`
+  assigns a key to a tier. The limiter is constructed with a `tiers` mapping and
+  a `default_tier`; any key never assigned a tier uses the default tier.
+
+## Semantics (read carefully — this is the whole task)
+
+- Each key's window and count are INDEPENDENT. One key crossing a window
+  boundary, or hitting its limit, must not disturb any other key. A brand-new
+  key starts with an empty count in whatever window its first `now` falls in.
+
+- `allow_key(key, now)` admits the request iff the count already spent in the
+  key's CURRENT window is strictly less than the key's current tier limit; on
+  admit it increments that count and returns True, otherwise it returns False
+  and counts nothing.
+
+- Changing a key's tier MID-WINDOW does NOT reset the key's count or start a
+  fresh window. The key keeps the requests it has already spent in the current
+  window; only the EFFECTIVE LIMIT used for the comparison changes, applied
+  against that SAME window's existing count, taking effect from the next
+  `allow_key`:
+    * Lowering a key's tier mid-window can immediately push it over: a key that
+      already spent 3 requests under a limit-5 tier is over a limit-2 tier, so
+      its next `allow_key` in that window is denied — even though it never
+      "used" the lower tier. The change is NOT retroactive: it does not revoke
+      or refund requests already decided.
+    * Raising a key's tier mid-window immediately grants more room in the SAME
+      window (the existing count is measured against the higher limit).
+  When the key next crosses into a fresh window, the count resets to zero and
+  the new tier applies cleanly from there.
+
+- `set_tier(key, tier)` with an unknown tier name raises `ValueError`.
+
+- The GLOBAL path is unchanged: `allow(now)` still admits at most `limit`
+  requests per window against a single global counter, and shares nothing with
+  the per-key state (a global call must not consume any key's budget, and vice
+  versa).
+
+## Example
+
+    r = RateLimiter(limit=5, window=10.0,
+                    tiers={"free": 2, "pro": 5}, default_tier="free")
+
+    r.allow_key("alice", 0.0)   # alice on default tier "free" (limit 2) -> True (1/2)
+    r.allow_key("alice", 1.0)   # -> True (2/2)
+    r.allow_key("alice", 2.0)   # 3rd in window [0,10) -> False (over free's 2)
+
+    r.allow_key("bob", 2.0)     # bob is independent, fresh -> True
+
+    r.set_tier("alice", "pro")  # mid-window upgrade; alice's count (2) is kept
+    r.allow_key("alice", 3.0)   # now under pro's 5, same window -> True (3/5)
+
+    r.allow_key("alice", 10.0)  # new window [10,20): count resets -> True (1/5)
+
+A mid-window DOWNGRADE pushes a key over against its existing count:
+
+    r.allow_key("carol", 0.0)   # default free (2): True (1/2)
+    r.set_tier("carol", "pro")  # pro = 5
+    r.allow_key("carol", 1.0)   # True (2/5)
+    r.allow_key("carol", 2.0)   # True (3/5)
+    r.set_tier("carol", "free") # downgrade to free (2); count is already 3
+    r.allow_key("carol", 3.0)   # 3 >= 2 -> False, still in window [0,10)
+
+## Contract
+
+- Package name: `tierlimit`. The grader imports `tierlimit.public` (falling back
+  to `tierlimit`); keep both import paths working.
+- Public class `RateLimiter`, constructed as
+  `RateLimiter(limit, window, tiers=None, default_tier="default")`:
+    * `limit` (positive int) and `window` (positive float) keep their meaning for
+      the global path. When `tiers` is None, a single tier named `"default"` is
+      created mapping to `limit`, and `default_tier` defaults to `"default"` —
+      so `RateLimiter(limit, window)` still constructs and runs the global path
+      exactly as before (regression).
+    * `tiers` maps tier name -> per-window limit (positive ints).
+    * `default_tier` names the tier used for keys with no explicit tier; it must
+      be a key of `tiers` (else raise `ValueError` at construction).
+- Methods:
+    * `allow(now: float) -> bool` — UNCHANGED global path.
+    * `allow_key(key: str, now: float) -> bool` — per-key path described above.
+    * `set_tier(key: str, tier: str) -> None` — assign a key's tier; unknown
+      tier name raises `ValueError`.
+- The grader ALWAYS passes explicit `now` floats (non-decreasing per key); there
+  is no real clock and no sleeping.
+- Standard library only. No persistence, no threading requirement.

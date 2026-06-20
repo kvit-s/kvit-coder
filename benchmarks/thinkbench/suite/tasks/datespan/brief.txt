@@ -1,0 +1,88 @@
+BUG REPORT — datespan: the test suite is failing
+
+You have an existing Python package `datespan`, a tiny business-day date
+calculator (Monday–Friday; there is NO holiday calendar — only weekends are
+skipped). It ships with a unittest suite in `datespan/test_datespan.py`, and
+right now several of those tests FAIL. Fix the code so that ALL the tests pass.
+Do not rewrite the package from scratch and do not change its public API.
+
+## Symptom
+
+`add_business_days(start, n)` and `business_days_between(a, b)` get simple
+within-week cases right, but several weekend / negative / reversed cases come
+out wrong. (Weekday shown in comments: Jun 15 2026 = Mon, Jun 19 = Fri, Jun 20 =
+Sat, Jun 21 = Sun, Jun 22 = next Mon.)
+
+    from datetime import date
+    from datespan.public import add_business_days, business_days_between
+
+    # negative n steps the wrong way over a weekend:
+    add_business_days(date(2026, 6, 15), -1)   # Mon, go back 1 business day
+    #   EXPECTED 2026-06-12 (the previous Fri)
+    #   ACTUAL   2026-06-15 (bounced forward off the weekend)
+
+    # a weekend start is not normalized onto a business day:
+    add_business_days(date(2026, 6, 20), 0)    # Sat, 0 business days
+    #   EXPECTED 2026-06-22 (snap forward to Mon)
+    #   ACTUAL   2026-06-20 (Saturday returned unchanged)
+
+    # the reversed count drops its sign:
+    business_days_between(date(2026, 6, 22), date(2026, 6, 15))  # Mon -> earlier Mon
+    #   EXPECTED -5
+    #   ACTUAL    5  (magnitude right, sign missing)
+
+These defects interact: counting backward from a weekend start across a weekend
+exercises all three at once.
+
+## Reproduce
+
+Run the visible tests from the directory that contains the `datespan` package:
+
+    python -m unittest datespan.test_datespan
+
+## Contract (must hold after your fix)
+
+* Package name stays `datespan`; import path `datespan` / `datespan.public`.
+* Keep the public API exactly: `add_business_days(start: date, n: int) -> date`
+  and `business_days_between(a: date, b: date) -> int`. Do not rename them.
+* Business days are Monday through Friday. Saturday and Sunday are NEVER
+  business days. There is no holiday list.
+
+* `add_business_days(start, n)`:
+    - `start` is FIRST normalized onto a business day: a Saturday or Sunday
+      `start` is moved FORWARD to the following Monday. That normalized date is
+      the anchor for everything below, including `n == 0` and `n < 0`.
+    - `n == 0` returns the normalized anchor itself.
+    - `n > 0` advances the anchor by `n` business days, skipping weekends.
+    - `n < 0` moves BACKWARD by `abs(n)` business days, skipping weekends — so
+      stepping back across a weekend lands on the previous Friday, never on a
+      Saturday/Sunday.
+
+      Examples:
+        add_business_days(date(2026, 6, 15), 5)  -> date(2026, 6, 22)  # Mon -> next Mon
+        add_business_days(date(2026, 6, 19), 1)  -> date(2026, 6, 22)  # Fri -> Mon
+        add_business_days(date(2026, 6, 15), -1) -> date(2026, 6, 12)  # Mon -> prev Fri
+        add_business_days(date(2026, 6, 20), 1)  -> date(2026, 6, 23)  # Sat->Mon, then +1 = Tue
+
+* `business_days_between(a, b)`:
+    - Returns the number of business days in the HALF-OPEN span `(a, b]` —
+      EXCLUSIVE of `a`, INCLUSIVE of `b`. Equivalently: how many business-day
+      steps it takes to walk from `a` to `b`.
+    - `a == b` returns `0`.
+    - If `a` is AFTER `b` the result is NEGATIVE: it is the negation of the
+      count from `b` to `a`. So `business_days_between(a, b) ==
+      -business_days_between(b, a)`.
+    - Weekends never count (a Friday-to-Saturday span is `0`).
+
+      Examples:
+        business_days_between(date(2026, 6, 15), date(2026, 6, 16)) -> 1   # Mon -> Tue
+        business_days_between(date(2026, 6, 15), date(2026, 6, 22)) -> 5   # Mon -> next Mon
+        business_days_between(date(2026, 6, 19), date(2026, 6, 20)) -> 0   # Fri -> Sat
+        business_days_between(date(2026, 6, 22), date(2026, 6, 15)) -> -5  # reversed
+
+These behaviors interact — the first business day before a weekend-anchored
+start, or the reversed count of a weekend-crossing span, depends on getting all
+of normalization, direction, and endpoint/sign right at once.
+
+Standard library only (`datetime`). Do not change the package name or the
+public function names.

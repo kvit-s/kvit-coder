@@ -1,0 +1,94 @@
+BUG REPORT — cronmatch: the test suite is failing
+
+You have an existing Python package `cronmatch`, a tiny matcher that decides
+whether a given datetime is "due" under a 5-field cron expression. It ships with
+a unittest suite in `cronmatch/test_cronmatch.py`, and right now several of those
+tests FAIL. Fix the code so that ALL the tests pass. Do not rewrite the package
+from scratch and do not change its public API.
+
+## Symptom
+
+`matches(cron_expr, dt)` parses a 5-field cron expression and returns True iff
+`dt` satisfies every field. Plain `* * * * *`, exact values, simple ranges and
+comma lists already work, but several STEP and day-of-week cases come out wrong:
+
+    from datetime import datetime
+    from cronmatch.public import matches
+
+    # `*/n` is off by the field's minimum (wrong for month / day-of-month):
+    matches("0 0 1 */3 *", datetime(2026, 1, 1, 0, 0))
+    #   EXPECTED True   (months are 1,4,7,10 — January is in the set)
+    #   ACTUAL   False  (buggy set is 0,3,6,9,12 — counts from 0, misses Jan)
+
+    # a stepped RANGE `a-b/n` ignores the step:
+    matches("10-30/10 * * * *", datetime(2026, 6, 18, 0, 15))
+    #   EXPECTED False  (minutes are 10,20,30 — 15 is not in the set)
+    #   ACTUAL   True   (buggy treats it as the whole range 10..30)
+
+    # when BOTH day-of-month and day-of-week are restricted, they should OR:
+    matches("0 0 13 * 5", datetime(2026, 6, 19, 0, 0))   # Fri the 19th
+    #   EXPECTED True   (it is a Friday, so the day-of-week clause fires)
+    #   ACTUAL   False  (buggy AND-s the two clauses, demands the 13th too)
+
+These defects interact: an expression that uses a stepped range or a stepped
+month AND constrains both day-of-month and day-of-week exercises more than one at
+once.
+
+## Reproduce
+
+Run the visible tests from the directory that contains the `cronmatch` package:
+
+    python -m unittest cronmatch.test_cronmatch
+
+## Contract (must hold after your fix)
+
+* Package name stays `cronmatch`; import path `cronmatch` / `cronmatch.public`.
+* Keep the public API exactly: `matches(cron_expr: str, dt: datetime) -> bool`
+  and the `CronError` exception. Do not rename them.
+* `cron_expr` is a string of EXACTLY 5 whitespace-separated fields, in order:
+
+    minute  hour  day-of-month  month  day-of-week
+
+  Any other field count raises `CronError`. A field that cannot be parsed (e.g.
+  a non-integer token) also raises `CronError`.
+* Field value ranges (inclusive):
+    - minute        0–59
+    - hour          0–23
+    - day-of-month  1–31
+    - month         1–12
+    - day-of-week   0–6, where 0 = Sunday, 1 = Monday, ... 6 = Saturday.
+* Each field is one or more comma-separated terms; a datetime matches the field
+  if ANY term matches. A term is one of:
+    - `*`        — every value in the field's range.
+    - `v`        — the single integer `v`.
+    - `a-b`      — every value from `a` to `b` inclusive.
+    - `*/n`      — every nth value across the field's full range, STARTING AT THE
+                   FIELD'S MINIMUM. So minute `*/15` = {0,15,30,45}; month `*/3` =
+                   {1,4,7,10} (NOT {0,3,6,9,12}); day-of-month `*/10` =
+                   {1,11,21,31} (NOT {0,10,20,30}).
+    - `a-b/n`    — every nth value from `a` to `b` inclusive. So `10-30/10` =
+                   {10,20,30}; hour `8-18/2` = {8,10,12,14,16,18}.
+* A datetime matches the WHOLE expression iff its minute, hour and month each
+  match their field AND the day-of-month / day-of-week pair matches per the rule
+  below.
+* DAY-OF-MONTH / DAY-OF-WEEK semantics (standard cron): if BOTH the
+  day-of-month field and the day-of-week field are restricted (i.e. neither is a
+  bare `*`), the day matches when the day-of-month clause matches OR the
+  day-of-week clause matches — either one firing is enough. If only one of the
+  two is restricted, only that one constrains the day. If both are `*`, every day
+  matches.
+
+Example:
+
+    # day-of-month 13 OR day-of-week Friday(5):
+    matches("0 0 13 * 5", datetime(2026, 6, 13, 0, 0))   # Sat the 13th  -> True (dom)
+    matches("0 0 13 * 5", datetime(2026, 6, 19, 0, 0))   # Fri the 19th  -> True (dow)
+    matches("0 0 13 * 5", datetime(2026, 2, 13, 0, 0))   # Fri the 13th  -> True (both)
+    matches("0 0 13 * 5", datetime(2026, 6, 18, 0, 0))   # Thu the 18th  -> False
+
+    # stepped range + stepped month + dom/dow OR all at once:
+    matches("0 0 10-20/5 * 5", datetime(2026, 6, 15, 0, 0))  # 15 in {10,15,20} -> True
+    matches("0 0 1 */3 5",     datetime(2026, 7, 3, 0, 0))   # Jul in {1,4,7,10}, Fri -> True
+
+Standard library only (`datetime`). Do not change the package name or the public
+function/exception names.

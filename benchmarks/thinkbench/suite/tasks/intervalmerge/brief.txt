@@ -1,0 +1,91 @@
+You have inherited a small Python library named `intervalmerge`: half-open
+interval algebra. An interval is a pair `(start, end)` meaning the half-open
+range `start <= x < end`. The package is already written, imports cleanly, and
+the happy path works -- two clearly-overlapping, already-sorted intervals merge,
+and a single hole in the middle of an interval splits it in two. It is used to
+compute coverage windows: `merge` collapses a pile of ranges into canonical
+form, and `subtract` removes blocked-out ranges from available ones.
+
+## Bug report
+
+Under real data the results are subtly wrong at the edges; coarse tests on
+clean, sorted, clearly-overlapping inputs look fine and hide it:
+
+  1. Two intervals that merely TOUCH come back as two intervals instead of one.
+     Because the ranges are half-open, `[1, 2)` and `[2, 3)` are contiguous --
+     together they cover exactly `[1, 3)` with no gap and no overlap -- and they
+     are supposed to merge into `[1, 3)`. They don't; the seam is left open.
+
+  2. If the input is not already sorted by start, `merge` produces garbage --
+     it drops or duplicates ranges -- as if it assumed the caller pre-sorted.
+     `subtract` inherits this, mangling any unsorted `a`.
+
+  3. Zero-width ranges leak through. A `[x, x)` interval covers NO points and
+     should simply vanish, but `merge` keeps it, and `subtract` manufactures
+     them: removing a chunk that is flush with an interval's edge leaves a
+     bogus `[edge, edge)` stub, and fully covering an interval yields a
+     `[x, x)` instead of nothing at all.
+
+  4. When two of the ranges being subtracted OVERLAP each other, `subtract`
+     corrupts the output -- it can even emit a reversed `(hi, lo)` interval --
+     because it lines `b` up by start but never coalesces the overlaps before
+     carving them out.
+
+Find and fix the defects so `merge` and `subtract` honour the contract below
+exactly. Keep the public API and behaviour otherwise unchanged.
+
+## Contract
+
+- Package name: `intervalmerge`. The grader imports `intervalmerge.public`
+  (falling back to `intervalmerge`); keep both import paths working.
+- Public API, UNCHANGED (do not rename anything or change signatures):
+      merge(intervals) -> list[tuple]
+      subtract(a, b)   -> list[tuple]
+  where `intervals`, `a`, `b` are iterables of `(start, end)` pairs and each
+  returned list is a list of `(start, end)` tuples.
+- An interval `(start, end)` is the half-open range `start <= x < end`. A range
+  with `start == end` is ZERO-WIDTH: it covers no points and must never appear
+  in any output (neither passed through nor produced).
+- Both functions return a NORMALISED list: sorted ascending by `start`,
+  pairwise DISJOINT, and zero-width-free -- the unique minimal canonical form
+  of the point set. Neither function may mutate its input arguments.
+- `merge(intervals)`:
+    * Returns the minimal set of disjoint intervals covering exactly the same
+      points as the union of the inputs.
+    * OVERLAPPING intervals merge. TOUCHING intervals merge too: since the
+      ranges are half-open, `end == start` of the next means they are
+      contiguous (no gap), so `[1, 2)` and `[2, 3)` become `[1, 3)`. A real gap
+      (`[1, 2)` and `[3, 4)`) is preserved as two intervals.
+    * Input may be in ANY order and may contain overlaps, duplicates, and
+      zero-width ranges; the output is always canonical.
+- `subtract(a, b)`:
+    * Returns the canonical intervals covering every point in (the union of)
+      `a` that is NOT in (the union of) `b`.
+    * Where a `b` range lies strictly inside an `a` range, that `a` range is
+      SPLIT into its left and right remainders. A `b` range flush with an edge
+      trims that side with no leftover stub. A `b` range covering an `a` range
+      entirely removes it (contributing nothing).
+    * `a` and `b` may each be unsorted and may contain overlapping or
+      zero-width ranges; both are normalised before the subtraction.
+
+## I/O example
+
+    >>> from intervalmerge import merge, subtract
+    >>> merge([(2, 4), (1, 3)])         # unsorted + overlapping
+    [(1, 4)]
+    >>> merge([(1, 2), (2, 3)])         # touching half-open -> contiguous
+    [(1, 3)]
+    >>> merge([(1, 1), (2, 4)])         # zero-width [1,1) dropped
+    [(2, 4)]
+    >>> merge([(1, 2), (3, 4)])         # real gap preserved
+    [(1, 2), (3, 4)]
+    >>> subtract([(0, 10)], [(3, 5)])   # punch a hole -> split in two
+    [(0, 3), (5, 10)]
+    >>> subtract([(0, 10)], [(0, 3)])   # flush with the left edge -> no [0,0)
+    [(3, 10)]
+    >>> subtract([(0, 10)], [(0, 10)])  # fully covered -> nothing
+    []
+    >>> subtract([(0, 10)], [(3, 6), (5, 8)])  # overlapping holes coalesced
+    [(0, 3), (8, 10)]
+
+- Standard library only.

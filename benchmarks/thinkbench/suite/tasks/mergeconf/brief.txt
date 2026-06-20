@@ -1,0 +1,7 @@
+We keep re-solving the same problem across our services: a config that comes from a few different places, and nobody can ever say what the final, effective value actually is. I'd like a small tool, `mergeconf`, that takes configuration from several sources and merges them into one effective configuration you can hand to the rest of the app.
+
+The sources are the usual suspects you'd expect in a deployed service — there's a baseline we ship with, something operators drop in per environment, and the last-minute overrides people pass at runtime. mergeconf should pull those together and produce the single resolved view, plus enough of a trail that when someone asks "why is this value what it is?" we can actually answer them instead of guessing.
+
+It should behave sensibly with nested config, not just a flat bag of keys, and it shouldn't fall over the first time two sources disagree or hand it something shaped differently than expected. Keep it reasonably ergonomic — I want to import `mergeconf` and call it from our own code, and also be able to run it directly to inspect a merge without writing a script.
+
+Don't gold-plate it. I care more that the merge is predictable and that someone reading the result can trust it than about covering every exotic case. Use your judgment on the details; I'd rather see the choices you'd actually defend than a pile of options. Some tests around the merge behavior would give me confidence it does what you think it does.

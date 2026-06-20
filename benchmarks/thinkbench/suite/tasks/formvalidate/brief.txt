@@ -1,0 +1,23 @@
+We keep hand-rolling the same checks every time we accept data from a form or an
+API request, and it always ends up as a tangle of `if` statements that nobody
+wants to touch. I'd like a small Python library, `formvalidate`, that we can point
+at user-submitted data and get back a clear answer: is this okay, and if not,
+what's wrong with it?
+
+The everyday case is the stuff you'd expect off a signup or a checkout form — a
+required email, a name that can't be blank, an age that has to be a number in some
+range, a couple of fields that are only required depending on what else was filled
+in. What I care about most is that when something is invalid, whoever's on the
+other end gets back something they can actually act on — clear enough to show a
+user or log and move on — rather than a single cryptic exception that throws away
+every problem but the first.
+
+It should be pleasant to describe what valid data looks like, and it shouldn't
+fall apart when the input is messier or more deeply structured than a flat handful
+of keys. I want to import `formvalidate` and call it from our own code.
+
+Beyond that, the shape is yours. Lean on the standard library, keep it small, and
+make the choices you'd actually defend rather than piling on knobs. Some tests
+around the interesting validation cases would give me confidence it does what you
+think it does, and a short README with an example or two so I can see how it's
+meant to be used.

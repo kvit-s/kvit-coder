@@ -1,0 +1,102 @@
+You have inherited a small Python library named `querygroup`: a tiny, chainable
+query engine over a list of dicts ("rows"). The package is already written,
+imports cleanly, and its core operations work:
+
+- `Query(rows)` wraps a list of row dicts (immutable view; never mutated).
+- `where(predicate)` returns a new Query keeping only rows where
+  `predicate(row)` is truthy.
+- `order_by(key, reverse=False)` returns a new Query sorted by `key` (a column
+  name or a function `row -> value`); stable sort.
+- `rows()` materialises the current rows as a list of dicts.
+
+Every operation returns a NEW Query, so chains compose.
+
+## Task
+
+Add grouped aggregation: a `group_by(keys, aggregates=...)` method that collapses
+rows into ONE output row per distinct key-tuple, with aggregates computed over
+chosen fields. It must compose correctly when chained AFTER a `where` (group the
+filtered rows, not the originals).
+
+## Semantics (read carefully — this is the whole task)
+
+- `keys` is either a single column name (a string) or a sequence of column
+  names. The group key for a row is the tuple of that row's values at those
+  columns (a missing column counts as `None`). A single string key still groups
+  correctly (it is treated as a one-element key list).
+
+- Each output row carries the group's key columns (with their shared values),
+  plus one column per requested aggregate.
+
+- `aggregates` is a sequence of `(func, field, alias)` triples:
+    * `func` is one of `count`, `sum`, `avg`, `min`, `max`.
+    * `field` is the column the aggregate runs over.
+    * `alias` is the output column name, or `None` to use `"<func>_<field>"`
+      (e.g. `("sum", "pay", None)` -> column `"sum_pay"`).
+
+- GROUP ORDERING is FIRST-APPEARANCE: groups are emitted in the order their
+  key-tuple is FIRST encountered while scanning the current rows in order. Do
+  NOT sort the groups.
+
+- `count` counts the number of ROWS in the group.
+
+- `sum` / `avg` / `min` / `max` consider only the NON-`None` values of `field`
+  in the group (a row whose `field` is `None`, or missing, is skipped for that
+  aggregate — but it still counts toward `count`).
+
+- `avg` is the exact mean of the non-`None` values (no rounding). Crucially it
+  divides by the number of NON-`None` values, NOT by the row count.
+
+- EMPTY / all-`None` handling, per group and per field:
+    * `sum`  of no non-`None` values is `0`.
+    * `avg`  of no non-`None` values is `None` (not 0, and not a crash).
+    * `min` / `max` of no non-`None` values are `None`.
+
+- `group_by` returns a new `Query` (so its result can be `where`/`order_by`/
+  `rows()`-ed like any other Query). Grouping an empty Query yields an empty
+  Query (no groups, no error).
+
+## Example
+
+    q = Query([
+        {"dept": "eng", "pay": 10},
+        {"dept": "ops", "pay": 20},
+        {"dept": "eng", "pay": 30},
+        {"dept": "eng", "pay": None},
+    ])
+
+    out = q.group_by("dept", [
+        ("count", "pay", None),
+        ("sum",   "pay", None),
+        ("avg",   "pay", None),
+        ("max",   "pay", None),
+    ]).rows()
+
+    # First-appearance order: "eng" before "ops".
+    # eng has 3 rows; non-None pays are [10, 30] -> sum 40, avg 20.0, max 30.
+    assert out == [
+        {"dept": "eng", "count_pay": 3, "sum_pay": 40, "avg_pay": 20.0, "max_pay": 30},
+        {"dept": "ops", "count_pay": 1, "sum_pay": 20, "avg_pay": 20.0, "max_pay": 20},
+    ]
+
+Composing after a filter, and a group whose field is entirely None:
+
+    q.where(lambda r: r["dept"] == "eng").group_by(
+        "dept", [("avg", "pay", None), ("sum", "pay", None)]
+    ).rows()
+    # -> [{"dept": "eng", "avg_pay": 20.0, "sum_pay": 40}]
+
+    Query([{"d": "x", "n": None}]).group_by(
+        "d", [("avg", "n", None), ("min", "n", None), ("sum", "n", None)]
+    ).rows()
+    # -> [{"d": "x", "avg_n": None, "min_n": None, "sum_n": 0}]
+
+## Contract
+
+- Package name: `querygroup`. The grader imports `querygroup.public` (falling
+  back to `querygroup`); keep both import paths working.
+- Public class `Query` with the existing methods unchanged, plus
+  `group_by(keys, aggregates=None)` as specified above.
+- `where` / `order_by` / `rows` must keep behaving exactly as before
+  (regression).
+- Standard library only.

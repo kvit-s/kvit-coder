@@ -1,0 +1,87 @@
+BUG REPORT — unitconv: the test suite is failing
+
+You have an existing Python package `unitconv`, a tiny unit converter. It ships
+with a unittest suite in `unitconv/test_unitconv.py`, and right now several of
+those tests FAIL. Fix the code so that ALL the tests pass. Do not rewrite the
+package from scratch and do not change its public API.
+
+## Symptom
+
+`convert(value, from_unit, to_unit)` converts a number between units and returns
+a float. Simple same-dimension conversions (mm <-> m <-> km, s <-> min <-> h)
+already work, but compound SPEED units and cross-dimension guards come out wrong:
+
+    from unitconv.public import convert
+
+    # compound numerator scale is dropped:
+    convert(2, "km/s", "m/s")
+    #   EXPECTED 2000.0          (2 km/s = 2000 m/s)
+    #   ACTUAL   2.0             ("km" treated as if it were "m")
+
+    # compound denominator composed with the wrong operator:
+    convert(3600, "m/h", "m/s")
+    #   EXPECTED 1.0             (per HOUR -> divide by 3600 s)
+    #   ACTUAL   46656000.0      (multiplied by 3600 instead of divided)
+
+    # a real speed conversion exercises both at once:
+    convert(36, "km/h", "m/s")
+    #   EXPECTED 10.0            (36000 m / 3600 s)
+    #   ACTUAL   wrong number
+
+    # incompatible dimensions return a number instead of raising:
+    convert(1, "m", "s")
+    #   EXPECTED UnitError       (a length is not a time)
+    #   ACTUAL   1.0             (no guard — runs the arithmetic anyway)
+
+These defects interact: a `km/h -> m/s` conversion exercises the numerator-scale
+bug AND the denominator-operator bug together, and a cross-dimension call like
+`m -> km/h` must be rejected rather than silently computed.
+
+## Reproduce
+
+Run the visible tests from the directory that contains the `unitconv` package:
+
+    python -m unittest unitconv.test_unitconv
+
+## Contract (must hold after your fix)
+
+* Package name stays `unitconv`; import path `unitconv` / `unitconv.public`.
+* Keep the public API exactly: `convert(value, from_unit: str, to_unit: str) ->
+  float` and the `UnitError` exception. Do not rename them.
+* `convert` returns a `float`. `value` is an `int` or `float`.
+* SIMPLE units convert to a canonical base by a single factor; a COMPOUND speed
+  unit is written `"<length>/<time>"` and its factor to the base (metres per
+  second) is the LENGTH factor DIVIDED BY the TIME factor — the numerator
+  MULTIPLIES, the denominator DIVIDES:
+
+      dimension  unit    factor to base (base shown in [])
+      ---------  ------  ---------------------------------
+      length     mm      0.001            [metre]
+      length     m       1
+      length     km      1000
+      time       s       1                [second]
+      time       min     60
+      time       h       3600
+      speed      m/s     (m factor) / (s factor)  = 1/1     [metre/second]
+      speed      km/h    (km factor) / (h factor) = 1000/3600
+
+* CONVERSION: take `value` to the canonical base via `from_unit`'s factor, then
+  to `to_unit` by dividing by `to_unit`'s factor: `value * from_factor /
+  to_factor`.
+* COMPOUND PARSING: `"<length>/<time>"` splits on the single `/`. The part
+  before the slash must be a length unit (the numerator), the part after must be
+  a time unit (the denominator). Its dimension is `"speed"`.
+* INCOMPATIBLE DIMENSIONS: `convert` only converts WITHIN one dimension.
+  Converting across dimensions — a length to a time, a time to a speed, a length
+  to a speed, etc. — raises `UnitError`. It must NOT return a number.
+* UNKNOWN UNITS: an unrecognised unit string (either side) raises `UnitError`.
+
+Example:
+
+    convert(36, "km/h", "m/s")   # -> 10.0
+    convert(10, "m/s", "km/h")   # -> 36.0
+    convert(120, "m/min", "m/s") # -> 2.0
+    convert(1, "m", "s")         # -> raises UnitError (length vs time)
+
+Standard library only. Do not change the package name or the public
+function/exception names.

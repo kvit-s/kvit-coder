@@ -1,0 +1,65 @@
+You have inherited a small Python library named `routerwild`: a pure, in-process
+URL-style path router. The package is already written, imports cleanly, and
+everything it currently does works. Nothing here touches the network — `Router`
+is a plain data structure you build with `add(path, handler)` and query with
+`match(path)`.
+
+A path is a `/`-separated string. Today each segment is one of:
+
+  - a STATIC segment that matches itself literally (`users`, `v1`); or
+  - a PARAM segment written `{name}` that matches exactly one non-empty segment
+    and captures it under `name`.
+
+`match(path)` returns `(handler, params)` for the best match, or `(None, {})`
+when nothing matches. Static segments already take precedence over param
+segments at the same position, so a literal route beats a parameterised one.
+
+Examples of what already works:
+
+    r = Router()
+    r.add("/users/{id}", "show_user")
+    r.add("/users/me", "current_user")
+
+    r.match("/users/42")        # -> ("show_user", {"id": "42"})
+    r.match("/users/me")        # -> ("current_user", {})     (static beats param)
+    r.match("/users/42/extra")  # -> (None, {})               (param is one segment)
+    r.match("/nope")            # -> (None, {})
+
+## Feature request
+
+Add WILDCARD (catch-all) segments written `{name:*}` that capture the entire
+REMAINING path, INCLUDING slashes, under `name`. A wildcard is only meaningful
+as the LAST segment of a route.
+
+    r = Router()
+    r.add("/files/{path:*}", "serve")
+
+    r.match("/files/a/b/c")     # -> ("serve", {"path": "a/b/c"})
+    r.match("/files/readme")    # -> ("serve", {"path": "readme"})
+
+Wildcards sit at the LOWEST precedence: static > param > wildcard. A more
+specific route (static or param) at the same prefix must still win over a
+catch-all:
+
+    r = Router()
+    r.add("/files/{path:*}", "wild")
+    r.add("/files/readme",   "exact")
+
+    r.match("/files/readme")    # -> ("exact", {})              (static beats wildcard)
+    r.match("/files/a/b")       # -> ("wild", {"path": "a/b"})  (catch-all otherwise)
+
+The existing static and param behaviour, the precedence among them, and the
+`(handler, params)` / `(None, {})` return shape must all keep working unchanged.
+
+## Contract
+
+- Package name: `routerwild`. The grader imports `routerwild.public` (falling
+  back to `routerwild`); keep both import paths working.
+- Keep the PUBLIC API: `Router()`, `Router.add(path, handler)`, and
+  `Router.match(path) -> (handler, params)` (a hit) or `(None, {})` (a miss).
+  Do not rename anything or change these signatures.
+- Keep STATIC and `{param}` matching working exactly as before, including
+  static > param precedence and the `(handler, params)` / `(None, {})` returns.
+- ADD `{name:*}` wildcard segments that capture the rest of the path (slashes
+  included) under `name`, at the LOWEST precedence: static > param > wildcard.
+- Standard library only.

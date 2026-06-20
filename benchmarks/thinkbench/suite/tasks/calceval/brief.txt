@@ -1,0 +1,76 @@
+BUG REPORT — calceval: the test suite is failing
+
+You have an existing Python package `calceval`, a tiny infix arithmetic
+evaluator. It ships with a unittest suite in `calceval/test_calceval.py`, and
+right now several of those tests FAIL. Fix the code so that ALL the tests pass.
+Do not rewrite the package from scratch and do not change its public API. Do NOT
+use `eval` / `exec`; keep the hand-written parser.
+
+## Symptom
+
+`evaluate(expr)` parses an infix arithmetic expression and returns its value as a
+float. Simple precedence already works, but several associativity / binding cases
+come out wrong:
+
+    from calceval.public import evaluate
+
+    # subtraction parses right-associative instead of left:
+    evaluate("10-2-3")
+    #   EXPECTED 5.0     ((10-2)-3)
+    #   ACTUAL   11.0    (10-(2-3))
+
+    # division has the same right-associative defect:
+    evaluate("100/10/2")
+    #   EXPECTED 5.0     ((100/10)/2)
+    #   ACTUAL   20.0    (100/(10/2))
+
+    # '^' parses left-associative instead of right:
+    evaluate("2^3^2")
+    #   EXPECTED 512.0   (2^(3^2))
+    #   ACTUAL   64.0    ((2^3)^2)
+
+    # unary minus binds too tightly — tighter than '^' instead of looser:
+    evaluate("-2^2")
+    #   EXPECTED -4.0    (-(2^2))
+    #   ACTUAL   4.0     ((-2)^2)
+
+These defects interact: `-2^2^2` exercises the unary binding AND the exponent
+associativity at once, and expressions like `10-2-3^1^2*2` touch all of them.
+
+## Reproduce
+
+Run the visible tests from the directory that contains the `calceval` package:
+
+    python -m unittest calceval.test_calceval
+
+## Contract (must hold after your fix)
+
+* Package name stays `calceval`; import path `calceval` / `calceval.public`.
+* Keep the public API exactly: `evaluate(expr: str) -> float` and the `CalcError`
+  exception. Do not rename them. The result is ALWAYS a `float`.
+* Supported tokens: integer and decimal numbers (`3`, `3.5`, `.5`, `10.`), the
+  binary operators `+ - * / ^`, parentheses `( )`, and a prefix (unary) `-`
+  (a prefix `+` is tolerated as a no-op). Whitespace is insignificant.
+* PRECEDENCE, from loosest-binding to tightest-binding:
+    1. `+` and `-`  (binary)  — LEFT-associative
+    2. `*` and `/`            — LEFT-associative
+    3. unary `-`  (prefix negation) — binds LOOSER than `^`
+    4. `^`  (exponent)        — RIGHT-associative, the tightest binding
+  Parentheses override all of the above.
+* ASSOCIATIVITY in detail:
+    - `a-b-c` is `(a-b)-c` and `a/b/c` is `(a/b)/c` (LEFT). So `10-2-3 == 5` and
+      `100/10/2 == 5`, never `11` / `20`.
+    - `a^b^c` is `a^(b^c)` (RIGHT). So `2^3^2 == 512`, never `64`.
+* UNARY-vs-EXPONENT binding: prefix `-` binds LOOSER than `^`, so `-2^2` is
+  `-(2^2) == -4`, and `-2^4 == -16`. To negate the base you must parenthesize:
+  `(-2)^2 == 4`. A `^` right operand may itself be unary, so `2^-1 == 0.5`.
+* MALFORMED input raises `CalcError`: an empty or all-whitespace string, an
+  unbalanced parenthesis, a dangling/stray operator (`"2+"`, `"*3"`), an unknown
+  character, or division by zero. Do NOT raise a bare `ValueError`/`ZeroDivisionError`
+  — wrap them as `CalcError` (which may subclass `ValueError`).
+* Do NOT use `eval` / `exec`. Standard library only.
+
+Example:
+
+    evaluate("-2^2^2")    #  -> -16.0    (-(2^(2^2)) == -(2^4))
+    evaluate("10-2-3^1^2*2")  #  -> 2.0  ((10-2) - ((3^(1^2))*2) == 8 - 6)

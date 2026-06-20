@@ -1,0 +1,89 @@
+You have inherited a small Python library named `lrucache`: a fixed-capacity
+least-recently-used (LRU) cache. The package is already written, imports
+cleanly, and the happy path works -- you can `put` keys, read them back with
+`get`, overwrite a value, and fill the cache up to its capacity. It is used as
+an in-memory cache in front of a slow store: hot keys should stay resident and
+the coldest key should be the one dropped when room is needed.
+
+## Bug report
+
+Under real traffic the cache misbehaves once it is full and entries start
+getting evicted. The symptoms are hard to pin down because small, fill-and-read
+tests that never push past capacity look completely fine:
+
+  1. A key that is read CONSTANTLY still gets thrown out. A value the callers
+     touch on nearly every request -- clearly the hottest, most-recently-used
+     entry -- disappears from the cache anyway while colder keys survive. Reading
+     a key is supposed to mark it as freshly used.
+
+  2. When the cache makes room it drops the WRONG entry. Instead of evicting the
+     stalest key, it throws away one of the freshest -- often the very key that
+     was just inserted -- so brand-new writes vanish immediately while ancient
+     keys linger.
+
+  3. OVERWRITING an existing key doesn't seem to "count as a use". After you
+     re-`put` a key with a new value (the value does update correctly), that key
+     is still treated as stale and gets evicted as if it had not been touched.
+
+  4. The cache holds MORE than it should: with capacity N you can find N+1 keys
+     resident at once, and a cache built with capacity 0 -- which should store
+     nothing at all -- happily hands a value back.
+
+Find and fix the defects so the cache honours the contract below exactly. Keep
+the public API and behaviour otherwise unchanged.
+
+## Contract
+
+- Package name: `lrucache`. The grader imports `lrucache.public` (falling back
+  to `lrucache`); keep both import paths working.
+- Public API, UNCHANGED (do not rename anything or change signatures):
+      LRUCache(capacity)                       # capacity is a non-negative int
+      LRUCache.get(key) -> value | LRUCache.MISSING
+      LRUCache.put(key, value) -> None
+      LRUCache.MISSING                          # sentinel returned by get on a miss
+- The cache holds at most `capacity` entries. It must NEVER hold more than
+  `capacity` at any moment. A `capacity` of 0 means the cache stores nothing:
+  every `get` is a miss.
+- Recency model -- entries are ordered from least-recently-used (LRU) to
+  most-recently-used (MRU). A key becomes the MRU end on every SUCCESSFUL use:
+    * `get(key)` on a HIT returns the stored value AND moves that key to the MRU
+      end. A `get` on a MISS returns the `MISSING` sentinel and changes nothing
+      (it must not reorder, insert, or evict anything).
+    * `put(key, value)` for a key already present updates the stored value AND
+      moves that key to the MRU end. It is an update, not a new entry, so it
+      never evicts anyone and never changes the number of entries.
+    * `put(key, value)` for a NEW key inserts it at the MRU end. If the cache is
+      already full (`capacity` entries), the current LRU entry is evicted FIRST
+      to make room, so the count stays at `capacity`.
+- Eviction always removes the single LEAST-recently-used entry -- the one whose
+  key has gone the longest without a successful `get` or `put`. Never the MRU,
+  never a freshly-touched key.
+- `get` must not raise on a missing key; it returns `LRUCache.MISSING`.
+
+## I/O example
+
+    >>> c = LRUCache(capacity=2)
+    >>> c.put("a", 1)
+    >>> c.put("b", 2)
+    >>> c.get("a")                  # hit: "a" is now most-recently-used
+    1
+    >>> c.put("c", 3)               # full -> evict the LRU, which is "b"
+    >>> c.get("b") is c.MISSING     # "b" was the stalest, so it is gone
+    True
+    >>> c.get("a")                  # "a" survived because the get refreshed it
+    1
+    >>> c.get("c")
+    3
+    >>> c.put("a", 11)              # overwrite: updates value AND refreshes "a"
+    >>> c.put("d", 4)              # full -> evict the LRU, which is now "c"
+    >>> c.get("c") is c.MISSING
+    True
+    >>> c.get("a")                  # the re-put kept "a" fresh
+    11
+
+    >>> z = LRUCache(capacity=0)    # a zero-capacity cache stores nothing
+    >>> z.put("x", 1)
+    >>> z.get("x") is z.MISSING
+    True
+
+- Standard library only.

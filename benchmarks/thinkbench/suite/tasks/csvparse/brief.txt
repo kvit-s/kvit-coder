@@ -1,0 +1,49 @@
+You are handed an existing Python 3.11+ package named `csvparse`. It is already in
+your working directory. Fix the bug described below. Use only the Python standard
+library. Keep it a self-contained package — do not pull in the `csv` module or any
+third-party library; the point is a correct hand-rolled parser.
+
+## Bug report
+
+`csvparse.public.parse_csv(text)` reads CSV text (a header row followed by data
+rows) and returns a list of dicts, one per row, mapping each header column to its
+value. Plain rows parse fine. But rows that contain a QUOTED field with a comma
+inside it are parsed into the WRONG NUMBER OF COLUMNS — the comma inside the quotes
+is wrongly treated as a field separator, so the row is split into extra columns and
+every column after that field is shifted/misaligned.
+
+Repro:
+
+    text = (
+        "name,role,city\n"
+        'Ada,"Smith, Jr.",London\n'
+        "Bob,Engineer,Paris\n"
+    )
+    rows = parse_csv(text)
+
+Expected:
+    rows[0] == {"name": "Ada", "role": "Smith, Jr.", "city": "London"}
+    rows[1] == {"name": "Bob", "role": "Engineer", "city": "Paris"}
+
+Actual (buggy): the first row comes back with `role` == "Smith" and `city` == "Jr."
+(the trailing "London" is dropped/misplaced) because the field was split on the
+comma inside the quotes. The plain second row is unaffected.
+
+## Contract
+
+  - Package name stays `csvparse`; keep the public API `parse_csv(text) -> list[dict]`
+    exposed from `csvparse.public` (and re-exported from `csvparse`).
+  - The first non-empty record is the header row; each later record is one dict
+    mapping header name -> field value, in header order.
+  - Parse RFC-4180-style quoted fields correctly:
+      * A field may be wrapped in double quotes; the surrounding quotes are stripped.
+      * A comma inside a quoted field is part of the value, NOT a separator.
+      * A doubled quote (`""`) inside a quoted field is an escaped literal `"`
+        (e.g. the field `"She said ""hi"""` has the value: She said "hi").
+  - Plain unquoted rows must keep working exactly as before.
+  - Unquoted fields keep their plain text; an unquoted field never has quotes
+    stripped from its interior.
+
+Do not change the package name or the `parse_csv` signature. Fix the parser so the
+repro above (and other quoted-comma / doubled-quote cases) parses into the correct
+number of columns with correct header mapping.

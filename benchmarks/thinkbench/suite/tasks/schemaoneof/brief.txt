@@ -1,0 +1,78 @@
+You have inherited a small Python library named `schemaoneof`: a validator for a
+subset of JSON Schema. The package is already written, imports cleanly, and
+works for the keywords it supports.
+
+The single public entry point is:
+
+    def validate(instance, schema) -> list[dict]: ...
+
+It walks `instance` against `schema` and returns a LIST OF ERROR DICTS. An EMPTY
+list means the instance is valid; a non-empty list means it failed one or more
+constraints. (The exact error-dict shape is up to you — the shipped code uses
+`{"path": ..., "keyword": ..., "message": ...}` — but "empty vs non-empty" is
+the load-bearing signal.)
+
+## What works today
+
+The validator currently supports these keywords:
+
+  - `type`        — "object" / "array" / "string" / "number" / "integer" /
+                    "boolean" / "null". (Note: booleans are NOT numbers/integers,
+                    and "number" accepts ints; "integer" rejects floats.)
+  - `enum`        — instance must deep-equal one of the listed values.
+  - `required`    — listed property names must be present on an object.
+  - `properties`  — each present property is validated against its subschema.
+
+Examples of current behavior:
+
+    validate(5, {"type": "integer"})                 -> []          (valid)
+    validate("x", {"type": "integer"})               -> [ ...1 err ]
+    validate({"a": 1}, {"required": ["a", "b"]})      -> [ ...1 err ] (b missing)
+    validate("green", {"enum": ["red", "green"]})     -> []          (valid)
+
+## The capability to ADD
+
+The validator is MISSING two JSON-Schema combinators. Add both:
+
+### `oneOf`
+
+`oneOf` is a list of subschemas. The instance must match EXACTLY ONE of them.
+
+  - Zero subschemas match  -> ERROR (non-empty list).
+  - Exactly one matches    -> VALID (no error from oneOf).
+  - Two or more match      -> ERROR (non-empty list).
+
+A subschema "matches" when validating the instance against it yields no errors.
+
+Examples (desired behavior once added):
+
+    validate(5,  {"oneOf": [{"type": "integer"}, {"type": "string"}]})  -> []
+        # matches integer only -> exactly one -> valid
+
+    validate(True, {"oneOf": [{"type": "integer"}, {"type": "string"}]}) -> [err]
+        # matches neither (bool is not integer/string) -> zero -> error
+
+    validate(5,  {"oneOf": [{"type": "integer"}, {"type": "number"}]})  -> [err]
+        # 5 matches BOTH integer and number -> two -> error
+
+### `not`
+
+`not` is a single subschema. The instance must NOT match it. If the instance
+DOES match the subschema, that is an ERROR.
+
+Examples (desired behavior once added):
+
+    validate(5,   {"not": {"type": "string"}})   -> []      (5 is not a string -> ok)
+    validate("x", {"not": {"type": "string"}})   -> [err]   ("x" IS a string -> error)
+
+## Contract
+
+  - Package name: `schemaoneof`. The grader imports `schemaoneof.public`
+    (falling back to `schemaoneof`); keep both import paths working.
+  - Keep the existing keyword behavior UNCHANGED: `type`, `required`,
+    `properties`, and `enum` must still validate exactly as they do now, and
+    `validate` must still return a LIST (empty == valid).
+  - ADD `oneOf` (exactly-one-of) and `not` (must-not-match) as described above.
+    They compose with the other keywords on the same schema (all present
+    keywords are checked).
+  - Standard library only. Do not rename `validate` or change its meaning.

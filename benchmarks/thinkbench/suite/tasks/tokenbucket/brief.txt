@@ -1,0 +1,86 @@
+You have inherited a small Python library named `tokenbucket`: a continuous
+token-bucket rate limiter. The package is already written, imports cleanly, and
+the happy path works -- a fresh bucket starts full, hands out tokens until it is
+empty, denies once empty, and refills as time passes. It is used to throttle an
+API: every request calls `allow(now, cost)` and is let through only when it
+returns True.
+
+## Bug report
+
+Under real traffic the limiter misbehaves at the edges, and the symptoms are
+hard to pin down because coarse, whole-second testing looks fine:
+
+  1. After a quiet period (no traffic for a while) the bucket lets through a
+     huge BURST -- far more requests than `capacity` -- as if it had saved up
+     unlimited credit while idle. It is supposed to hold at most `capacity`
+     tokens no matter how long it sat idle.
+
+  2. Under a steady stream of rapid, closely-spaced requests the effective
+     throughput is WAY below `refill_per_sec` -- the bucket behaves as if it
+     barely refills at all, starving callers, even though over the same wall
+     time it should have accrued the full proportional amount. The refill seems
+     to "forget" the time between very frequent calls.
+
+  3. A request that is DENIED still seems to cost the caller something: a burst
+     of large-`cost` requests that are all rejected leaves the bucket emptier
+     than it was before, so legitimate small requests that should have fit are
+     then refused too.
+
+  4. A rare backwards jump in the supplied clock (an upstream time source
+     glitch) wedges the limiter -- afterwards it under-grants for a while.
+
+Find and fix the defects so the limiter honours the contract below exactly.
+Keep the public API and behaviour otherwise unchanged.
+
+## Contract
+
+- Package name: `tokenbucket`. The grader imports `tokenbucket.public` (falling
+  back to `tokenbucket`); keep both import paths working.
+- Public API, UNCHANGED (do not rename anything or change signatures):
+      TokenBucket(capacity, refill_per_sec)
+      TokenBucket.allow(now: float, cost: int = 1) -> bool
+      TokenBucket.tokens            # read-only current token count (a float)
+- The bucket starts FULL: it holds exactly `capacity` tokens before the first
+  call.
+- `allow(now, cost)` does, in order:
+    a. REFILL for the time elapsed since the previous call, then
+    b. try to CONSUME `cost` tokens.
+- Refill (continuous, fractional, capped AFTER):
+    * Let `elapsed = now - last`, where `last` is the `now` of the previous
+      call (on the very first call there is nothing to refill).
+    * Add `elapsed * refill_per_sec` tokens -- the EXACT real-valued amount, with
+      NO rounding or truncation. The bucket holds a fractional token count.
+    * THEN clamp the total to at most `capacity`. (Refill first, cap second:
+      tokens can momentarily compute above capacity during refill but must be
+      clamped down to exactly `capacity`, never left above it.)
+    * `elapsed` is clamped to be non-negative: if `now < last` (clock went
+      backwards), refill nothing and do NOT move `last` backwards. The next
+      forward call refills from the real, latest `last`.
+- Consume:
+    * If the bucket holds at least `cost` tokens (`tokens >= cost`, so a request
+      for exactly the available amount is allowed), subtract `cost` and return
+      True.
+    * Otherwise return False and consume NOTHING -- the token count is left
+      exactly as it was. A denial never drains the bucket.
+- `cost` is a positive integer (default 1); `cost > 1` consumes that many tokens
+  atomically (all-or-nothing).
+
+## I/O example
+
+    >>> b = TokenBucket(capacity=10, refill_per_sec=2.0)
+    >>> b.allow(now=0.0, cost=10)     # spend the full bucket at t=0
+    True
+    >>> b.allow(now=0.0)              # empty now
+    False
+    >>> b.tokens
+    0.0
+    >>> b.allow(now=1.5, cost=3)      # 1.5s * 2/s = +3.0 tokens, exactly enough
+    True
+    >>> b.allow(now=1.5)              # drained again
+    False
+    >>> b.allow(now=10000.0, cost=1)  # long idle: refill caps AT capacity (10)
+    True
+    >>> b.tokens                      # 10 - 1, never above capacity
+    9.0
+
+- Standard library only.

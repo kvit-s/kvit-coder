@@ -1,0 +1,25 @@
+I've got a growing pile of text documents — notes, docs, transcripts, that kind of
+thing — and I want a small Python library, `docsearch`, that lets me search across
+the whole collection and get back the documents that actually match what I'm looking
+for.
+
+The basic shape is: I give it a bunch of documents, then I ask it questions and it
+hands me back the ones that are relevant, best matches first. Right now I mostly grep
+through everything, which finds the literal string but has no sense of which hits
+matter more, and falls apart the moment I half-remember the wording. I'd like something
+that does better than that — where a search for a couple of words surfaces the
+documents that are really about them, not just the ones that happen to contain the
+characters somewhere.
+
+What I care about most is that the ranking feels sensible — when I read the top few
+results I should believe they're the best ones — and that it stays quick and pleasant
+to use on a collection that keeps growing, since I'll be adding documents as I go. It
+should be importable as `docsearch` and callable from my own code; if there's an
+obvious way to poke at it from the command line too, that's a nice bonus, but use your
+judgment.
+
+I'm leaving the actual design to you. Lean on the standard library where it's
+reasonable. Some tests around the searching and ranking would help me trust it, and a
+short README with an example or two so I can see how you meant it to be used. I'd
+rather have something clean and well-considered than something that tries to do
+everything.

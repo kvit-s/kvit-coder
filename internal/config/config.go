@@ -48,6 +48,54 @@ type Config struct {
 	Safety SafetyConfig `yaml:"safety"`
 
 	Diagnostics DiagnosticsConfig `yaml:"diagnostics"`
+
+	Thinkbench ThinkbenchConfig `yaml:"thinkbench"`
+}
+
+// ThinkbenchConfig configures the thinkbench benchmark family (autonomous coding
+// agent tasks graded by a held-out python grader). See thinkbench-plan.md.
+type ThinkbenchConfig struct {
+	// SuiteDir overrides the auto-discovered suite directory
+	// (default: benchmarks/thinkbench/suite, discovered from the repo root).
+	SuiteDir string `yaml:"suite_dir"`
+	// TimeoutPerRun is the per-task agent-loop timeout in seconds (default: 600).
+	TimeoutPerRun int `yaml:"timeout_per_run"`
+	// UVPython pins the python version for the uv env (default: "3.11").
+	UVPython string `yaml:"uv_python"`
+	// Sandbox selects the OS sandbox for agent run_command:
+	// "auto" (default; bwrap→firejail→none), "bwrap", "firejail", "none", or
+	// "require" (auto, but hard-fail if no sandbox tool is available).
+	Sandbox string `yaml:"sandbox"`
+	// Types restricts which task types run (default: all graded types, excluding observed).
+	Types []string `yaml:"types"`
+	// Trials is the default trials-per-task (overridden by -n on the command line).
+	Trials int `yaml:"trials"`
+	// IncludeObserved runs the ungraded ambiguous-spec tasks too (persist-only).
+	IncludeObserved bool `yaml:"include_observed"`
+}
+
+// GetTimeoutPerRun returns the per-run timeout in seconds, defaulting to 600.
+func (t *ThinkbenchConfig) GetTimeoutPerRun() int {
+	if t.TimeoutPerRun <= 0 {
+		return 600
+	}
+	return t.TimeoutPerRun
+}
+
+// GetUVPython returns the pinned python version, defaulting to "3.11".
+func (t *ThinkbenchConfig) GetUVPython() string {
+	if t.UVPython == "" {
+		return "3.11"
+	}
+	return t.UVPython
+}
+
+// GetSandbox returns the sandbox mode, defaulting to "auto".
+func (t *ThinkbenchConfig) GetSandbox() string {
+	if t.Sandbox == "" {
+		return "auto"
+	}
+	return t.Sandbox
 }
 
 // DiagnosticsConfig configures anomaly interrogation/logging (Improvement 2).
@@ -229,6 +277,16 @@ type ShellToolConfig struct {
 	Enabled            bool     `yaml:"enabled"`
 	AllowedCommands    []string `yaml:"allowed_commands"`    // allowlist (empty = allow all)
 	DisallowedCommands []string `yaml:"disallowed_commands"` // blocklist (checked after allowlist)
+
+	// InjectEnv, when non-empty, replaces the child process environment for shell
+	// commands with os.Environ() plus these "KEY=VALUE" entries. Used by the
+	// thinkbench harness to point python3/pip at the uv environment without naming
+	// an outside path in the command string. Empty = inherit parent env (default).
+	InjectEnv []string `yaml:"-"`
+	// ExecPrefix, when non-empty, is prepended (as an argv) before "sh -c <command>"
+	// when running shell commands. Used by the thinkbench harness to wrap agent
+	// commands in an OS sandbox (e.g. bwrap). Empty = run "sh -c" directly (default).
+	ExecPrefix []string `yaml:"-"`
 }
 
 // PlanToolsConfig configures all plan.* tools as a group

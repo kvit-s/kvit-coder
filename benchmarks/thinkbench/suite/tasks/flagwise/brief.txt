@@ -1,0 +1,131 @@
+Start from an empty repository and implement a Python 3.11+ project named `flagwise`.
+
+Build a deterministic feature flag evaluator. Use only the Python standard library.
+
+Expose:
+
+```python
+def evaluate_flag(config: dict, flag_key: str, context: dict) -> dict: ...
+def evaluate_all(config: dict, context: dict) -> dict: ...
+```
+
+Flag config:
+
+```json
+{
+  "flags": {
+    "new_checkout": {
+      "enabled": true,
+      "default": false,
+      "rules": [
+        {
+          "if": {"country": {"equals": "US"}},
+          "serve": true
+        },
+        {
+          "if": {"plan": {"in": ["pro", "enterprise"]}},
+          "rollout": 25
+        }
+      ]
+    }
+  }
+}
+```
+
+Support conditions:
+
+```text
+equals
+not_equals
+in
+not_in
+exists
+greater_than
+less_than
+and
+or
+not
+```
+
+Rollouts must be deterministic by hashing `flag_key` and `context["user_id"]`. A rollout of `25` means approximately 25 percent of users receive `true`.
+
+The result must include:
+
+```json
+{
+  "key": "new_checkout",
+  "value": true,
+  "reason": "rule_match",
+  "matched_rule_index": 0
+}
+```
+
+Include a CLI:
+
+```bash
+python -m flagwise eval --config flags.json --flag new_checkout --context user.json
+python -m flagwise eval-all --config flags.json --context user.json
+```
+
+Include tests for rule ordering, disabled flags, defaults, deterministic rollout, nested boolean logic, missing context fields, and stable hashing.
+
+## Contract
+
+This section pins the shapes the held-out oracle checks. It does not add new
+behavior beyond the spec above; it only fixes the wire/return format so a
+conformant implementation is gradable. Anything not pinned here is free.
+
+Import path and module:
+- The package is importable as `flagwise`, and the public API lives at
+  `flagwise.public`:
+    - `evaluate_flag(config: dict, flag_key: str, context: dict) -> dict`
+    - `evaluate_all(config: dict, context: dict) -> dict`
+- The CLI is invocable as `python -m flagwise` with subcommands `eval` and
+  `eval-all` (flags exactly as shown in the spec). All CLI output is JSON on
+  stdout (a single JSON document).
+
+`evaluate_flag` return shape (the result dict), pinned:
+- `key`   -> str, equal to the `flag_key` that was evaluated.
+- `value` -> the served value. For a boolean flag this is `true`/`false`; in
+  general it is whatever the matched rule's `serve` / the flag `default`
+  resolves to. Rollouts serve `true` (hit) or fall through (miss).
+- `reason` -> a short string explaining the decision. The set of reason
+  STRINGS is not pinned beyond these distinctions, which ARE required to be
+  distinguishable from one another (any stable spelling is accepted, the
+  oracle derives the mapping):
+    - a rule matched and served            (the example uses "rule_match")
+    - a rule's rollout bucket was hit and served true
+    - the flag is disabled (`enabled: false`) -> serves the flag default
+    - no rule matched -> serves the flag default
+    - the flag_key is not present in the config
+- `matched_rule_index` -> int index (0-based) into the flag's `rules` list of
+  the rule that decided the value, when a rule decided it; otherwise `None`
+  (JSON `null`). For disabled flags, unmatched defaults, and unknown flags it
+  is `null`.
+
+`evaluate_all` return shape, pinned:
+- Returns a dict keyed by every flag key present in `config["flags"]`. Each
+  value is the same per-flag result dict that `evaluate_flag` returns for that
+  key (same `key`/`value`/`reason`/`matched_rule_index` contract).
+
+Determinism contract:
+- `evaluate_flag(config, flag_key, context)` is a pure function of its inputs:
+  the same `(config, flag_key, context)` MUST yield an equal result dict on
+  every call (no clocks, no RNG, no global state).
+- Rollout bucketing MUST be a deterministic function of `flag_key` and
+  `context["user_id"]` only (a hash of those two values). For a fixed flag and
+  user the rollout decision is stable across calls and across processes. Over
+  many distinct `user_id`s a rollout of N serves `true` to approximately N% of
+  users (uniform bucketing; the oracle checks a tolerant band, not an exact
+  count).
+
+Condition contract (the `if` block of a rule):
+- A condition is a mapping. A leaf condition maps a context FIELD name to an
+  operator mapping, e.g. `{"country": {"equals": "US"}}` or
+  `{"age": {"greater_than": 18}}`. Operators: `equals`, `not_equals`, `in`,
+  `not_in`, `exists` (truthy/falsey presence test), `greater_than`,
+  `less_than`.
+- Boolean combinators `and` / `or` take a LIST of sub-conditions; `not` takes a
+  single sub-condition (or a one-element list). These may nest arbitrarily.
+- A missing context field makes a leaf condition that needs it evaluate to
+  False (never raises); `exists` returns whether the field is present.

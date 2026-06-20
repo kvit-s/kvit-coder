@@ -1,0 +1,22 @@
+We're getting hammered by a handful of clients and need some basic rate limiting we
+can put in front of our API before it tips over again. I'd like a small Python
+library, `ratelimit`, that lets us decide whether a given request is allowed right
+now or should be turned away, so we can stop one noisy caller from eating all the
+capacity.
+
+The shape of it is simple enough: something asks "can this go through?", usually on
+behalf of a particular caller — an API key, a user id, an IP, whatever we happen to
+have — and `ratelimit` tells us yes or no based on how much they've already done
+recently. Different callers shouldn't interfere with each other. We'll mostly be
+checking from our own request-handling code, so it should be comfortable to import
+`ratelimit` and call into it, and it'd be handy to be able to exercise it directly
+to watch a limit kick in without standing up the whole service.
+
+What I care about most is that it behaves predictably under bursts — that the limit
+it promises is the limit you actually get, and that it doesn't get confused when a
+lot of checks land close together. I'd also like to be able to look at a decision and
+understand why it came out the way it did, rather than just a bare yes/no.
+
+Use your judgment on the rest; I'd rather see the approach you'd actually defend than
+a pile of knobs. Lean on the standard library where you can, and include some tests
+around the limiting behavior so I can trust it does what you think it does.

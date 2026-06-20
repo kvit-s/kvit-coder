@@ -1,0 +1,24 @@
+We run a lot of multi-step business processes and right now each one is hand-coded
+as a tangle of if-statements, and nobody can tell at a glance what state something
+is in or where it can go next. I'd like a small Python library, `workflow`, for
+describing a process as a set of stages and the transitions between them, and then
+driving an individual thing through those stages over its lifetime.
+
+Think of an order: it starts somewhere, moves through stages like received, paid,
+packed, shipped, and lands in a terminal state — but real processes aren't a
+straight line. Some stages can go more than one way depending on what happened
+(payment cleared vs. declined), and some paths need to be ruled out entirely. What
+I want is to define the shape of the process once, and then for any given order be
+able to ask where it is, advance it, and have the library refuse the moves that
+don't make sense rather than quietly letting it skip a stage.
+
+I care most about it being clear to define a process and trustworthy to drive — an
+order should never end up somewhere the process doesn't allow, and when a move is
+rejected I want to understand why. It should be importable as `workflow`, and there
+should be an obvious way to actually run something through, whether from code or to
+inspect a process directly; use your judgment there.
+
+Beyond that the design is yours. Keep it small and lean on the standard library.
+Some tests around the interesting transition cases, and a couple of examples in a
+README, would give me confidence it does what you think it does. I'd rather see the
+choices you'd actually defend than a pile of knobs.

@@ -1,0 +1,95 @@
+Start from an empty repository and implement a Python 3.11+ project named `orderplane`.
+
+Build a self-contained order processing simulator with SQLite persistence, a public API layer, a warehouse summary layer, an admin summary layer, and analytics export. Use only the Python standard library.
+
+Expose from `orderplane.public`:
+
+```python
+def init_db(db_path: str) -> None: ...
+def load_catalog(db_path: str, catalog_path: str) -> None: ...
+def place_order(db_path: str, order: dict) -> dict: ...
+def cancel_order(db_path: str, order_id: str, reason: str) -> dict: ...
+def fulfill_order(db_path: str, order_id: str, shipped_at: str) -> dict: ...
+def customer_order_view(db_path: str, order_id: str) -> dict: ...
+def admin_order_view(db_path: str, order_id: str) -> dict: ...
+def warehouse_picklist(db_path: str, date: str) -> list[dict]: ...
+def export_revenue(db_path: str, month: str) -> list[dict]: ...
+```
+
+`load_catalog` reads a catalog JSON file; `place_order` receives an order dict. These shapes (prices are integer cents):
+
+```json
+// catalog.json
+{
+  "tax_rate": 0.10,
+  "shipping": {
+    "taxed":   {"fee": 1000, "taxable": true},
+    "untaxed": {"fee": 1000, "taxable": false},
+    "free":    {"fee": 0,    "taxable": false}
+  },
+  "discount_codes": {
+    "PCT10":  {"type": "percent", "value": 10},
+    "AMT500": {"type": "amount",  "value": 500}
+  },
+  "products": [
+    {"sku": "AAA", "name": "Alpha", "price": 1000, "inventory": 10}
+  ]
+}
+```
+
+```json
+// order dict (discount_code and shipping_method optional; shipping_method keys into catalog.shipping)
+{"client_order_id": "c1", "items": [{"sku": "AAA", "qty": 2}], "discount_code": "PCT10", "shipping_method": "taxed"}
+```
+
+The logic (how discounts, tax, shipping, inventory, idempotency, and cancellation behave) is up to you to derive from the rules below.
+
+The system must support:
+
+```text
+products
+inventory
+orders
+discount codes
+sales tax
+shipping fees
+order cancellation
+partial fulfillment
+idempotent order submission by client_order_id
+```
+
+Rules:
+
+```text
+Inventory reservation happens when an order is placed.
+Discounts apply before tax.
+Shipping fees are taxable only when the catalog says they are.
+Canceled unfulfilled items release inventory.
+Fulfilled items cannot be canceled retroactively.
+Revenue export must use finalized fulfilled order data, not recalculated cart data.
+Customer view, admin view, warehouse picklist, and revenue export must agree on canonical order state.
+```
+
+Implement a CLI:
+
+```bash
+python -m orderplane init-db --db orders.db
+python -m orderplane load-catalog --db orders.db --catalog catalog.json
+python -m orderplane place-order --db orders.db --order order.json
+python -m orderplane cancel --db orders.db --order order_1 --reason customer_request
+python -m orderplane fulfill --db orders.db --order order_1 --at 2026-01-02T12:00:00Z
+python -m orderplane customer-view --db orders.db --order order_1
+python -m orderplane admin-view --db orders.db --order order_1
+python -m orderplane picklist --db orders.db --date 2026-01-02
+python -m orderplane export-revenue --db orders.db --month 2026-01
+```
+
+All CLI output must be JSON.
+
+Include tests runnable with:
+
+```bash
+python -m unittest discover
+```
+
+Tests must cover inventory reservation, idempotent order placement, discounts, tax, taxable and non-taxable shipping, cancellation, partial fulfillment, revenue export, and agreement across customer/admin/warehouse/analytics surfaces.

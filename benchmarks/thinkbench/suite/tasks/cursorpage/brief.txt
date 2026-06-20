@@ -1,0 +1,76 @@
+You have inherited a small Python library named `cursorpage`: a paginator over
+a list of records sorted by a key. The package is already written, imports
+cleanly, and OFFSET pagination works:
+
+    Paginator(records, key="score")   # records: dicts with int "id" + a sort key
+    p.page(n, size)                   # the n-th page (0-based) of `size` records
+
+Records are kept in a fully-deterministic order: by `key` ascending, with ties
+broken by `"id"` ascending (so the order is stable even when several records
+share a sort-key value).
+
+## Task
+
+Add CURSOR (keyset) pagination alongside the existing offset paging:
+
+    p.page_after(cursor, size) -> {"items": [...], "next_cursor": <token-or-None>}
+
+A cursor is an OPAQUE token that encodes the position of the last record handed
+out so far. Walking the data by feeding each call's `next_cursor` into the next
+call must visit every record EXACTLY ONCE — no duplicates, no gaps — and then
+stop. Do NOT change or break offset `page(n, size)`.
+
+## Semantics (read carefully — this is the whole task)
+
+- The cursor encodes the (sort-key value, id) of the LAST record returned.
+  Resumption is "strictly AFTER that position" in the sorted order. Because the
+  order is (key, then id), this is what makes TIES work: two records with the
+  same sort key are still separated by id, so a cursor landing in the middle of
+  a run of tied keys resumes at exactly the next record — never re-emitting the
+  ones already seen, never skipping the ones not yet seen.
+
+- The token is opaque: callers must not have to parse or construct it. Encode it
+  however you like (it must round-trip the (key, id) boundary).
+
+- A `None` cursor — or any invalid / malformed / unrecognized token — starts
+  from the BEGINNING (the first record). An invalid cursor must NOT raise.
+
+- `next_cursor` is `None` EXACTLY when the page just returned is the last one
+  (i.e. there are no more records after it). When more records remain,
+  `next_cursor` is a token that resumes strictly after the last item of this
+  page. An empty result (nothing after the cursor) therefore has
+  `next_cursor=None`.
+
+- `size` must be positive (raise `ValueError` otherwise), matching `page`.
+
+## Example
+
+    rows = [{"id": 3, "score": 5}, {"id": 1, "score": 5}, {"id": 2, "score": 9}]
+    p = Paginator(rows, key="score")
+    # sorted order is by (score, id): id 1 (s5), id 3 (s5), id 2 (s9)
+
+    out = p.page_after(None, 2)
+    [r["id"] for r in out["items"]]      # [1, 3]   -- note the tie on score 5
+    out["next_cursor"] is None           # False    -- more remain
+
+    out2 = p.page_after(out["next_cursor"], 2)
+    [r["id"] for r in out2["items"]]     # [2]
+    out2["next_cursor"] is None          # True     -- last page
+
+Walking from None with next_cursor must yield ids [1, 3, 2] — every record once.
+
+A cursor whose key value lands in the MIDDLE of a tie must not re-emit or skip:
+resuming after (score=5, id=1) yields id 3 next (the other score-5 record),
+then id 2 — never id 1 again, and never jumping past id 3.
+
+## Contract
+
+- Package name: `cursorpage`. The grader imports `cursorpage.public` (falling
+  back to `cursorpage`); keep both import paths working.
+- Public class `Paginator(records, key="id")` with:
+    * `page(n, size) -> list` — UNCHANGED offset pagination.
+    * `page_after(cursor, size) -> {"items": list, "next_cursor": str|None}` —
+      cursor pagination as specified above. `cursor` may be `None`.
+- The cursor returned in `next_cursor` is opaque (any string encoding); feeding
+  it back into `page_after` resumes strictly after the last returned record.
+- Standard library only. No persistence, no threading requirement.

@@ -1,0 +1,64 @@
+You are handed an existing, WORKING Python 3.11+ package named `searchprefix`. It is
+already in your working directory. Your job is to ADD ONE capability described below
+WITHOUT breaking any of the existing behavior. Use only the Python standard library.
+
+## What the package does today
+
+`searchprefix.public.SearchIndex` is a small in-memory search index:
+
+    from searchprefix.public import SearchIndex
+
+    idx = SearchIndex()
+    idx.add_document("d1", "Payment received and processed")
+    idx.add_document("d2", "Refund payable next week")
+    idx.add_document("d3", "Shipping label printed")
+
+  - `add_document(doc_id, text)` tokenizes `text` into lowercase alphanumeric terms
+    and records, per document, how many times each term appears.
+  - `search(query) -> list[doc_id]` tokenizes the query the same way and returns the
+    ids of documents that contain EVERY query term, using case-insensitive EXACT-term
+    matching. Results are ranked by total term frequency (the summed count of the
+    query terms within the document), highest first; ties break by ascending doc id,
+    so the order is deterministic.
+
+So today `search("payment")` returns `["d1"]` (exact term `payment`), and
+`search("pay")` returns `[]` — because `pay` is not an exact term in any document
+(the documents have `payment` and `payable`, not `pay`).
+
+## The feature to ADD: prefix queries
+
+Add support for PREFIX query tokens. A query token that ends with `*` matches any
+document term that STARTS WITH the text before the `*`. Plain tokens (no `*`) keep
+their current exact-match behavior.
+
+Examples (against the three documents above):
+
+  - `search("pay*")` matches d1 (term `payment`) and d2 (term `payable`) — both
+    start with `pay`. It does NOT match d3. Ranking still follows term frequency.
+  - `search("ship*")` matches d3 (`shipping`).
+  - A prefix only matches at the START of a term: `search("ment*")` does NOT match
+    `payment` (mid-word is not a prefix).
+  - A plain token is unchanged: `search("payment")` still matches only d1, and
+    `search("pay")` (no `*`) still matches nothing.
+
+A query may mix plain and prefix tokens; as today, a document must match EVERY token
+(each plain token by exact term, each prefix token by some term sharing the prefix).
+A prefix token's contribution to the frequency score is the summed count of every
+document term that starts with the prefix.
+
+## Contract
+
+  - Package name stays `searchprefix`; keep the class `SearchIndex` with the public
+    API `add_document(doc_id, text)` and `search(query) -> list[doc_id]`, exposed
+    from `searchprefix.public` (and re-exported from `searchprefix`).
+  - Do NOT change the existing exact-term behavior, the ranking (term frequency
+    descending, ascending-doc-id tie-break), or the determinism. Every query that
+    worked before must still return the same result.
+  - ADD prefix matching: a query token ending in `*` matches any document term
+    beginning with the prefix before the `*`. The `*` is the prefix marker, not part
+    of the matched text. A bare `*` (empty prefix) contributes nothing / is ignored.
+  - Mid-word (non-prefix) substrings must NOT match.
+
+Do not change the package name, the class name, or the method signatures. Add prefix
+support so the examples above hold while every existing exact-search and ranking
+behavior is preserved.

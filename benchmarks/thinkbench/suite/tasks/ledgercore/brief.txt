@@ -1,0 +1,63 @@
+Start from an empty repository and implement a Python 3.11+ project named `ledgercore`.
+
+Build an event-sourced ledger with SQLite persistence. Use only the Python standard library.
+
+Expose these functions from `ledgercore.public`:
+
+```python
+def init_db(db_path: str) -> None: ...
+def append_event(db_path: str, event: dict) -> dict: ...
+def get_account_balance(db_path: str, account_id: str) -> dict: ...
+def get_account_statement(db_path: str, account_id: str) -> list[dict]: ...
+def replay_account(db_path: str, account_id: str) -> dict: ...
+def export_trial_balance(db_path: str) -> dict: ...
+```
+
+Supported event types:
+
+```text
+account_opened
+deposit_posted
+withdrawal_posted
+transfer_posted
+fee_charged
+adjustment_posted
+```
+
+Events must be idempotent by `event_id`. Withdrawals and transfers must reject insufficient funds unless the account has overdraft enabled. Transfers must be atomic: either both sides post or neither does.
+
+Every event must have:
+
+```json
+{
+  "event_id": "evt_001",
+  "type": "deposit_posted",
+  "account_id": "acct_cash",
+  "occurred_at": "2026-01-01T12:00:00Z",
+  "amount_cents": 10000
+}
+```
+
+Statements must be ordered by `occurred_at`, then insertion order. Replay must reconstruct the same balance as the stored projection. The system must reject duplicate event IDs with conflicting payloads but allow exact duplicate replays.
+
+Include a CLI:
+
+```bash
+python -m ledgercore init-db --db ledger.db
+python -m ledgercore append --db ledger.db --event event.json
+python -m ledgercore balance --db ledger.db --account acct_cash
+python -m ledgercore statement --db ledger.db --account acct_cash
+python -m ledgercore trial-balance --db ledger.db
+```
+
+Include tests for idempotency, overdraft rejection, atomic transfers, replay consistency, event ordering, and trial balance correctness.
+
+## Contract
+
+- Expose the functions from `ledgercore.public` (a `python -m ledgercore` CLI is also required). Money is integer cents.
+- `transfer_posted` events name the source account under `account_id` and the destination under `to_account_id`, moving `amount_cents` from source to destination.
+- Overdraft is enabled per account via an `overdraft` boolean on its `account_opened` event (default false). `adjustment_posted` carries a signed `amount_cents`.
+- `get_account_balance(db, acct)` returns a dict with the balance under `balance_cents`.
+- `replay_account` returns a dict whose balance (under `balance_cents`) equals the stored projection.
+- `export_trial_balance(db)` returns a dict with per-account balances and a `"total_cents"` grand total (the sum of all account balances).
+- Rejections (insufficient funds without overdraft; a duplicate `event_id` with a conflicting payload) are signaled by raising an exception; an exact-duplicate `event_id` replay is a no-op, not an error.

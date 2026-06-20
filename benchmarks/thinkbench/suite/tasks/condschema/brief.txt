@@ -1,0 +1,118 @@
+You have inherited a small Python library named `condschema`: a data validator.
+The package is already written, imports cleanly, and works for the cases it
+supports. Its single public entry point is:
+
+    def validate(data, schema) -> list[error]: ...
+
+It walks `data` against `schema` and returns a LIST OF ERROR DICTS. An EMPTY
+list means the data is valid; a non-empty list means it failed one or more
+rules.
+
+## What works today
+
+The validator handles a FLAT schema: a mapping of `field name -> field spec`.
+Each spec may declare:
+
+  - `type`     — one of "string" / "number" / "integer" / "bool" / "object" /
+                 "list". (Note: a bool is NOT a number/integer, and a float is
+                 NOT an integer; "number" accepts ints and floats.)
+  - `required` — if True, the field must be present.
+
+Each error is a dict::
+
+    {"path": "<dotted path>", "code": "<rule that failed>", "message": "..."}
+
+`path` is a dotted location into the data; a top-level field's path is just its
+name. `code` is one of "required" (a required field is absent) or "type" (a
+present field has the wrong type). The shipped validator reports ALL errors it
+finds, in a STABLE order: schema-declared field order.
+
+Examples of current behavior::
+
+    validate({"name": "Ada"}, {"name": {"type": "string", "required": True}})
+        -> []                                            # valid
+    validate({}, {"name": {"type": "string", "required": True}})
+        -> [{"path": "name", "code": "required", ...}]   # missing
+    validate({"age": "x"}, {"age": {"type": "integer"}})
+        -> [{"path": "age", "code": "type", ...}]        # wrong type
+
+## The capability to ADD
+
+Extend the validator with NESTED schemas and CONDITIONAL requirements. Flat
+validation must keep working exactly as before.
+
+### 1. Nested objects
+
+A field spec of `type` "object" may carry a `fields` key: a nested schema
+(same shape — field name -> spec). When the field is present AND is a dict,
+validate it RECURSIVELY against `fields`. Errors from inside carry a DOTTED
+path built from the enclosing field name and the inner path::
+
+    schema = {"address": {"type": "object", "fields": {
+                  "zip": {"type": "string", "required": True}}}}
+    validate({"address": {}}, schema)
+        -> [{"path": "address.zip", "code": "required", ...}]
+
+If the field is present but is NOT a dict, report a single "type" error at the
+field's own path and do NOT recurse into it.
+
+### 2. Lists of items
+
+A field spec of `type` "list" may carry an `items` key: a single field spec
+applied to EVERY element of the list. When the field is present AND is a list,
+validate each element against `items`. An element's path is the field name,
+then the element's INDEX, then any inner path::
+
+    schema = {"items": {"type": "list", "items": {
+                  "type": "object", "fields": {
+                      "sku": {"type": "string", "required": True}}}}}
+    validate({"items": [{"sku": "A1"}, {}, {"sku": 5}]}, schema)
+        -> [{"path": "items.1.sku", "code": "required", ...},
+            {"path": "items.2.sku", "code": "type", ...}]
+
+Elements are validated in index order. If the field is present but is NOT a
+list, report a single "type" error at the field's own path and do NOT recurse.
+
+### 3. Conditional requirements
+
+A field spec may carry `requiredIf`: a `[sibling_field, value]` pair. The field
+is required ONLY when, in the SAME object, the named sibling field is present
+AND its value EQUALS `value`. Otherwise the field is optional.
+
+    schema = {"country": {"type": "string"},
+              "state":   {"type": "string", "requiredIf": ["country", "US"]}}
+    validate({"country": "US"}, schema)
+        -> [{"path": "state", "code": "required", ...}]   # state needed
+    validate({"country": "CA"}, schema)
+        -> []                                             # state optional
+    validate({}, schema)
+        -> []                                             # sibling absent -> optional
+
+Subtleties (these are the whole task):
+
+  - `requiredIf` is satisfied only by an EXACT match of the sibling's value.
+    Do NOT conflate booleans with numbers: a sibling holding `True` does not
+    equal `1`, and `1` does not equal `True`.
+  - The sibling is looked up in the SAME object that owns the conditional
+    field (the nested object for a nested spec), never globally.
+  - A field that is required (by `required: True` OR by a satisfied
+    `requiredIf`) and is ABSENT yields exactly ONE "required" error and no
+    "type" error.
+  - A field that is PRESENT is type-checked regardless of how its requirement
+    was decided (plain or conditional). Presence and type are separate rules.
+  - Report ALL errors, never first-only. The order is a stable pre-order walk:
+    fields in schema-declared order; within a list, elements by ascending
+    index; recurse into a field's nested errors before moving to the next
+    sibling field.
+
+## Contract
+
+- Package name: `condschema`. The grader imports `condschema.public` (falling
+  back to `condschema`); keep both import paths working.
+- Public function `validate(data, schema) -> list[dict]`. Empty list == valid.
+  Each error dict has at least the keys `path` (dotted string) and `code`
+  (one of "required" / "type").
+- A field present in `data` but absent from `schema` is unconstrained (ignored).
+- A `required`/`requiredIf` field that is absent is reported once as "required"
+  and is not type-checked.
+- Standard library only. No third-party validation libraries.

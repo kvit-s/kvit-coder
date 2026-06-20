@@ -1,0 +1,22 @@
+We send notifications to people from all over our codebase, and right now every
+service does it slightly differently and badly. I'd like to pull that together into
+a small Python package, `notifyhub`, that takes a message meant for some person and
+actually gets it delivered to them.
+
+The thing I keep wanting is to hand it a recipient and a message and have it sorted —
+the same call should be able to reach someone however we reach them, whether that's
+an email, a text, a ping to some webhook, or just a line in a log while we're
+developing. I don't want callers to care which one it is or to rewrite anything when
+we add another way to reach people later. And when a send doesn't go through, I want
+that to be something we can see and reason about, not a thing that quietly vanishes.
+
+We're not wiring up real email or SMS providers in this pass, so do whatever makes
+sense to stand that part in for now. Beyond that I'm leaving the shape to you — how a
+message gets pointed at the right channel, what happens on a failure, how much a
+message can carry — those are your calls. I'd rather see the design you'd defend than
+a switchboard of options.
+
+It should import as `notifyhub` and there should be an obvious way to actually fire a
+notification, from code or otherwise; use your judgment. Keep it lean, lean on the
+standard library, and give me some tests around the parts that matter so I can trust
+it does what you think it does.

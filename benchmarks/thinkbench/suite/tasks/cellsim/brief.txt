@@ -1,0 +1,124 @@
+Start from an empty repository and implement a Python 3.11+ project named `cellsim`.
+
+Build a small spreadsheet calculation engine. Use only the Python standard library.
+
+Expose these functions from `cellsim.public`:
+
+```python
+def load_sheet(path: str) -> dict: ...
+def evaluate_sheet(sheet: dict) -> dict: ...
+def get_cell_value(sheet: dict, cell: str) -> object: ...
+def explain_cell(sheet: dict, cell: str) -> dict: ...
+```
+
+A sheet is JSON:
+
+```json
+{
+  "cells": {
+    "A1": 10,
+    "A2": 20,
+    "A3": "=A1+A2",
+    "B1": "=SUM(A1:A3)",
+    "B2": "=IF(B1>40,\"high\",\"low\")"
+  }
+}
+```
+
+Support: cell references; integer and decimal numbers; strings; + - * /; parentheses; SUM(range); MIN(range); MAX(range); AVG(range); IF(condition, true_value, false_value); comparison operators = != < <= > >=.
+
+Detect and report circular references. Missing cells should evaluate as `0` only inside numeric formulas, but should be reported as missing when directly requested. Ranges must work for rectangular regions such as `A1:C3`. Formula evaluation must be deterministic and must not use Python `eval`.
+
+Include a CLI:
+
+```bash
+python -m cellsim eval sheet.json
+python -m cellsim cell sheet.json B2
+python -m cellsim explain sheet.json B2
+```
+
+Include tests for arithmetic precedence, ranges, strings, nested formulas, cycle detection, missing cells, and error propagation.
+
+## Contract
+
+This section PINS the exact shapes the grading oracle relies on. It does not add
+new behavior beyond the spec above; it only removes ambiguity so that a correct
+implementation is not unfairly failed for choosing a different key name or type.
+
+### Import path and CLI
+
+- The public API is importable as `cellsim.public` (i.e. a package `cellsim`
+  containing `public.py`). The four functions above are module-level callables.
+- A CLI is runnable as `python -m cellsim` (i.e. the package has a `__main__.py`).
+  All CLI output is a single JSON document printed to stdout.
+
+### Value types
+
+- A cell value is one of: an `int`, a `float`, a `str`, or a `bool`.
+- Integer-valued numbers SHOULD be returned as `int` (e.g. `10`, `30`), and
+  decimal numbers as `float` (e.g. `2.5`). `10 / 4` is `2.5`. The oracle compares
+  numbers by numeric value with a small tolerance, so `30` and `30.0` are both
+  accepted where a number is expected; bools are NOT accepted where a number is.
+- Comparison operators (`=`, `!=`, `<`, `<=`, `>`, `>=`) and `IF` conditions
+  produce/consume a boolean. `IF(cond, a, b)` returns `a` when `cond` is truthy,
+  else `b`.
+
+### `load_sheet(path) -> dict`
+
+- Returns the parsed sheet dict. It has a `"cells"` key mapping cell names
+  (e.g. `"A1"`) to raw values (number, string literal, or a `"="`-prefixed
+  formula string). `load_sheet` does NOT evaluate; it only parses JSON.
+
+### `evaluate_sheet(sheet) -> dict`
+
+- Returns a dict with a `"cells"` key: a mapping from every cell name present in
+  the input to its evaluated value (using the Value types above).
+- A cell that cannot be evaluated because it participates in a circular
+  reference is reported via a top-level `"errors"` key: a mapping from cell name
+  to an error descriptor. An error descriptor is a dict that contains a `"type"`
+  key whose value is the string `"circular"` for cycles. (Other error types may
+  use other `"type"` strings.) A cell in `"errors"` need not also appear with a
+  numeric value in `"cells"`.
+- When the sheet has no errors, `"errors"` is either absent or an empty mapping.
+- Evaluation is deterministic: repeated calls on the same sheet return equal
+  results.
+
+### `get_cell_value(sheet, cell) -> object`
+
+- Returns the evaluated value of `cell` (a Value type) when the cell exists.
+- When `cell` is NOT present in the sheet, this is a direct request for a missing
+  cell and MUST be reported as missing — NOT silently coerced to `0`. "Reported
+  as missing" means EITHER raising `KeyError` OR returning `None`. (The `0`
+  coercion for missing cells applies ONLY when a missing cell is referenced from
+  inside another cell's numeric formula, never to a direct `get_cell_value`.)
+- When `cell` participates in a circular reference, this raises an exception OR
+  returns an error descriptor dict carrying `"type": "circular"`.
+
+### `explain_cell(sheet, cell) -> dict`
+
+- Returns a dict describing how `cell` was computed. It MUST contain:
+  - `"cell"`: the cell name (str), echoing the requested cell.
+  - `"value"`: the evaluated value (a Value type), OR `None` / omitted when the
+    cell is missing or errored.
+  - `"references"`: a list (possibly empty) of the cell names this cell directly
+    depends on. For a literal (non-formula) cell this is `[]`. For `=A1+A2` it is
+    `["A1","A2"]` (order not significant; the oracle compares as a set). A range
+    like `A1:A3` contributes its expanded member cells `["A1","A2","A3"]`.
+- For a cell in a circular reference, `explain_cell` either includes
+  `"type": "circular"` somewhere in the returned dict, or sets `"value"` to
+  `None`; it MUST NOT raise.
+
+### CLI
+
+- `python -m cellsim eval sheet.json` prints the JSON of `evaluate_sheet`
+  (a JSON object; the oracle only requires that stdout parses as JSON).
+- `python -m cellsim cell sheet.json B2` prints a JSON document for the single
+  cell value.
+- `python -m cellsim explain sheet.json B2` prints the JSON of `explain_cell`.
+
+### Ranges and operators
+
+- `SUM`, `MIN`, `MAX`, `AVG` take a single range argument like `A1:C3` and
+  operate over the rectangular block of cells (columns A..C, rows 1..3).
+- Inside numeric formulas, a referenced cell that is absent contributes `0`.
+- Strings are written with double quotes inside formulas: `"high"`.

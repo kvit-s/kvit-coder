@@ -1,0 +1,78 @@
+Start from an empty repository and implement a Python 3.11+ project named `patchwise`.
+
+Build a line-based diff and patch tool. Use only the Python standard library.
+
+Expose:
+
+```python
+def unified_diff(old: str, new: str, fromfile: str = "old", tofile: str = "new") -> str: ...
+def apply_patch(old: str, patch: str) -> str: ...
+```
+
+Generate unified diffs with context lines. Apply unified diffs to old content. Detect failed patches and report structured errors.
+
+Support files with and without trailing newlines.
+
+Include a CLI:
+
+```bash
+python -m patchwise diff old.txt new.txt
+python -m patchwise apply old.txt patch.diff --out new.txt
+```
+
+Do not shell out to system `diff` or `patch`.
+
+Include tests for additions, deletions, replacements, multiple hunks, context mismatch, trailing newline behavior, empty files, and round-trip diff/apply.
+
+## Contract
+
+This section pins the behavioral contract the held-out oracle grades. It binds
+import paths and observable behavior only; it does NOT pin internal file layout,
+helper names, or the exact diff TEXT a correct implementation emits.
+
+Import path / entry points:
+- Public API lives at the import path `patchwise.public`.
+- The CLI is invoked as `python -m patchwise` (i.e. a `patchwise.__main__`).
+
+`unified_diff(old, new, fromfile="old", tofile="new") -> str`:
+- Returns a unified-diff string (the standard `--- / +++ / @@ ... @@` format with
+  context lines). The string MUST be parseable by `apply_patch`.
+- When `old == new`, the returned diff applied to `old` MUST yield `old`
+  unchanged (an empty diff is acceptable).
+
+`apply_patch(old, patch) -> str`:
+- On SUCCESS returns the patched string (the new content).
+- The ROUND-TRIP invariant is the contract: for any `old`, `new`,
+  `apply_patch(old, unified_diff(old, new)) == new` exactly (byte-for-byte,
+  including trailing-newline behavior).
+- FAILED PATCH (context mismatch — the patch's context/removed lines do not match
+  `old`): the implementation MUST signal the failure via a STRUCTURED error.
+  PINNED MECHANISM: `apply_patch` RAISES a CUSTOM (non-builtin) exception on a failed
+  patch, exported from `patchwise.public` (accessible as `patchwise.public.<Name>` —
+  any name, e.g. `PatchError` or `DiffError`). A failed patch MUST NOT silently return
+  wrong/garbage content and MUST NOT raise a bare `KeyError`/`IndexError`/`TypeError`
+  leaking internals.
+
+Trailing newline:
+- Files with and without a trailing newline are both supported, and the
+  round-trip invariant holds for both (i.e. a file lacking a final newline
+  round-trips back to lacking one; a file with one round-trips back with one).
+
+Empty files:
+- `old` and/or `new` may be the empty string `""`; round-trip still holds.
+
+CLI (`python -m patchwise`):
+- `python -m patchwise diff <old> <new>` reads the two files and writes a unified
+  diff to STDOUT.
+- `python -m patchwise apply <old> <patch> --out <new>` reads `<old>` and the
+  patch file `<patch>`, applies the patch, and writes the result to the file
+  named by `--out`.
+- The diff produced by `diff` MUST be applyable by `apply` to reproduce the new
+  file (CLI round-trip).
+
+Fairness note (most important): a model's exact diff TEXT may legitimately differ
+from the reference's (different context-line counts, hunk headers, ordering of
+equal hunks, etc.). The oracle therefore verifies ROUND-TRIP BEHAVIOR
+(`apply(old, unified_diff(old, new)) == new`) and that a hand-written, standard
+unified diff applies correctly — it NEVER demands string-equality against any
+particular diff text.

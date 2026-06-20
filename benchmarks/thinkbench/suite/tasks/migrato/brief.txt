@@ -1,0 +1,117 @@
+Start from an empty repository and implement a Python 3.11+ project named `migrato`.
+
+Build a SQLite migration runner. Use only the Python standard library.
+
+Expose:
+
+```python
+def init_migration_table(db_path: str) -> None: ...
+def discover_migrations(migrations_dir: str) -> list[dict]: ...
+def apply_migrations(db_path: str, migrations_dir: str) -> dict: ...
+def migration_status(db_path: str, migrations_dir: str) -> list[dict]: ...
+```
+
+Migration files are named:
+
+```text
+001_create_users.sql
+002_add_email.sql
+003_backfill_status.sql
+```
+
+Each file may contain:
+
+```sql
+-- migrate:up
+CREATE TABLE users (...);
+
+-- migrate:down
+DROP TABLE users;
+```
+
+Apply migrations in numeric order. Record checksum, applied timestamp, and filename. If an applied migration file changes checksum later, report an error.
+
+Include a CLI:
+
+```bash
+python -m migrato status --db app.db --migrations migrations/
+python -m migrato up --db app.db --migrations migrations/
+```
+
+Include tests for ordered application, idempotency, checksum mismatch, malformed files, failed migration rollback, status reporting, and empty migration directories.
+
+## Contract
+
+This section pins the details the SPEC above leaves open. The held-out grader checks
+BEHAVIOR against this contract; anything not pinned here is left to the implementer and
+must not be graded.
+
+### Import path / package layout
+- The package is importable as `migrato`. The four functions are importable from
+  `migrato.public` (i.e. `from migrato.public import apply_migrations`).
+- The CLI is invokable as `python -m migrato ...` (the package has a `__main__`).
+- The package uses only the Python standard library (`sqlite3`, `hashlib`, `os`, etc.).
+
+### Migration files
+- A migration file lives in `migrations_dir` and is named `<NNN>_<slug>.sql` where the
+  leading run of digits is the numeric order key (e.g. `001`, `002`, `010`). Files are
+  applied in ascending NUMERIC order of that integer (so `2_x.sql` < `10_x.sql`), NOT
+  lexicographically. Files whose name does not begin with at least one digit are ignored
+  for ordering/application (treated as not a migration).
+- A file may contain `-- migrate:up` and `-- migrate:down` section markers. The SQL after
+  `-- migrate:up` (until `-- migrate:down` or EOF) is the "up" script that is executed when
+  the migration is applied. If NO `-- migrate:up` marker is present, the entire file body
+  is treated as the up script. The `-- migrate:down` section is recorded but not executed
+  by `apply_migrations`.
+
+### Checksum algorithm (PINNED)
+- The checksum of a migration is the lowercase hex `sha256` of the RAW file BYTES
+  (the whole file on disk, read in binary, not just the up-section, no normalization).
+  i.e. `hashlib.sha256(open(path,"rb").read()).hexdigest()`.
+
+### `init_migration_table(db_path)` -> None
+- Creates the bookkeeping table if it does not already exist. Idempotent: calling it on a
+  db that already has the table is a no-op and must not raise. `apply_migrations` and
+  `migration_status` must also work without a separate prior call to it (they ensure the
+  table themselves).
+
+### `discover_migrations(migrations_dir)` -> list[dict]
+- Returns one dict per migration file found in `migrations_dir`, in ascending numeric
+  order. Each dict MUST contain at least these keys (extra keys allowed):
+  - `"filename"`: the base filename, e.g. `"001_create_users.sql"` (basename, not a path).
+  - `"checksum"`: the sha256 hex string defined above.
+- An empty or missing-of-migrations directory yields `[]`.
+
+### `apply_migrations(db_path, migrations_dir)` -> dict  (PINNED return shape)
+- Applies every not-yet-applied migration, in ascending numeric order, inside the db at
+  `db_path`. Each newly applied migration's `up` SQL is executed and a bookkeeping row is
+  recorded with its filename, checksum, and an applied timestamp.
+- Idempotent: a migration already recorded as applied (matching filename + checksum) is
+  skipped, not re-run.
+- Returns a dict with AT LEAST these keys (extra keys allowed):
+  - `"applied"`: a `list` of the filenames (basenames, strings) applied DURING THIS call,
+    in the order applied. On a fully up-to-date db this is `[]`.
+  - `"error"`: `None` when the call succeeded with no checksum mismatch; otherwise a
+    truthy value (a non-empty string message OR a dict carrying the offending filename).
+- CHECKSUM-MISMATCH SEMANTICS (PINNED — error result, NOT an exception): if a migration
+  file that is ALREADY recorded as applied now has a different checksum on disk,
+  `apply_migrations` MUST NOT raise. It must return with `"error"` set to a truthy value
+  and MUST NOT apply any later (higher-numbered) migration in that call (the mismatched,
+  already-applied migration is not re-applied either). `"applied"` reflects only what was
+  actually applied before the stop.
+
+### `migration_status(db_path, migrations_dir)` -> list[dict]  (PINNED return shape)
+- Returns one dict per discovered migration, in ascending numeric order. Each dict MUST
+  contain AT LEAST these keys (extra keys allowed):
+  - `"filename"`: the base filename string (e.g. `"001_create_users.sql"`).
+  - `"applied"`: a `bool` — `True` iff that migration is recorded as applied in the db,
+    else `False`.
+- Calling `migration_status` against a db where the table does not yet exist returns every
+  migration with `"applied": False` and must not raise.
+
+### CLI (`python -m migrato`)
+- `python -m migrato status --db <path> --migrations <dir>` reports status and exits 0.
+- `python -m migrato up --db <path> --migrations <dir>` applies pending migrations and
+  exits 0 on success. Output format is left to the implementer (not graded).
+</content>
+</invoke>

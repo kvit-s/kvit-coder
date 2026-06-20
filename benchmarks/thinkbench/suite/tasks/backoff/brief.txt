@@ -1,0 +1,81 @@
+You have inherited a small Python library named `backoff`: an exponential-backoff
+delay schedule for retrying failed operations, with optional "full jitter". The
+package is already written, imports cleanly, and the rough shape looks right --
+delays grow with the attempt number and stop growing once they hit a ceiling.
+A retry loop asks `delay(attempt)` for how long to wait before each attempt, and
+`bounds(attempt)` for the `(low, high)` range to draw a randomised "jittered"
+sleep from.
+
+## Bug report
+
+The waits are wrong in ways that only show up once you look at the actual
+numbers rather than the general shape:
+
+  1. The very first attempt waits too long. Attempt 0 is supposed to wait
+     exactly `base` seconds, but it comes back already multiplied -- the whole
+     schedule is shifted one step early, so every attempt waits as if it were
+     the next one.
+
+  2. The ceiling does not actually cap anything. Under enough retries the delay
+     keeps doubling without bound and shoots far past `cap`, instead of
+     flattening out at `cap`. The clamp is being applied in the wrong place, so
+     for the usual case (`base` smaller than `cap`) it never bites.
+
+  3. Sub-second delays collapse to zero (or to a coarse whole number). With a
+     fractional `base` like 0.5s the early waits come back as `0` and the
+     schedule jumps in whole-second steps -- the fractional precision is being
+     thrown away somewhere in the math.
+
+  4. The jitter range is wrong. "Full jitter" is supposed to spread the wait
+     uniformly over the WHOLE interval from 0 up to the delay, i.e.
+     `(low, high) == (0.0, delay(attempt))`. Instead the low bound comes back as
+     half the delay, so the randomised sleep can never drop below `delay/2` and
+     the retries are far less spread out than intended.
+
+Find and fix the defects so the schedule honours the contract below exactly.
+Keep the public API and behaviour otherwise unchanged.
+
+## Contract
+
+- Package name: `backoff`. The grader imports `backoff.public` (falling back to
+  `backoff`); keep both import paths working.
+- Public API, UNCHANGED (do not rename anything or change signatures):
+      Backoff(base, factor, cap)
+      Backoff.delay(attempt: int) -> float
+      Backoff.bounds(attempt: int) -> tuple[float, float]
+- `attempt` is a zero-based, non-negative integer (0 is the first retry).
+- `delay(attempt)` returns the un-jittered wait, in seconds, as a FLOAT:
+      delay(attempt) == min(cap, base * factor ** attempt)
+    * Attempt 0 waits exactly `base` (the exponent is `attempt`, NOT
+      `attempt + 1`): `factor ** 0 == 1`.
+    * Compute the FULL exponential `base * factor ** attempt` first, and only
+      THEN clamp to `cap`. The cap is applied to the final product, never to
+      `base` before the exponent -- so a small `base` with a big exponent is
+      still clamped down to `cap`.
+    * Keep full floating-point precision: do NOT round, truncate, or
+      integer-divide. A `base` of 0.5 must yield 0.5, not 0. The return value is
+      always a float (even when it equals `cap` or `base`).
+- `bounds(attempt)` returns the inclusive full-jitter range `(low, high)`:
+      bounds(attempt) == (0.0, delay(attempt))
+    * `low` is always `0.0` (full jitter starts at zero, not at half the delay).
+    * `high` is the already-capped `delay(attempt)`, so the jitter window itself
+      is never wider than `cap`.
+    * Both bounds are floats.
+
+## I/O example
+
+    >>> b = Backoff(base=0.5, factor=2.0, cap=10.0)
+    >>> b.delay(0)        # base, attempt-0 exponent is 0 -> 0.5 * 1
+    0.5
+    >>> b.delay(1)        # 0.5 * 2
+    1.0
+    >>> b.delay(2)        # 0.5 * 4
+    2.0
+    >>> b.delay(5)        # 0.5 * 32 = 16.0 -> clamped to cap
+    10.0
+    >>> b.bounds(0)       # full jitter over [0, delay(0)]
+    (0.0, 0.5)
+    >>> b.bounds(5)       # high is the CAPPED delay, low is 0
+    (0.0, 10.0)
+
+- Standard library only.

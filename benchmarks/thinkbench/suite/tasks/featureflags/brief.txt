@@ -1,0 +1,23 @@
+We want a small Python library, `featureflags`, for turning bits of functionality
+on and off without having to redeploy. The idea is that our code can ask "is this
+feature on right now?" and get a yes or no back, so we can ship things dark, flip
+them on when we're ready, and roll them back just as fast if they misbehave.
+
+Mostly we just want a clean way to check whether a feature is enabled, but a flag
+shouldn't always have to be a flat on/off for everybody. We'd like to be able to
+turn something on for some people and not others — say, our own team first, then a
+slice of users, then everyone — and to have a flag behave differently depending on
+where it's running. How much of that you build in versus leave for later is up to
+you; I'd rather see a couple of those cases done well than a switchboard of options
+half-wired.
+
+It should be importable as `featureflags` and called straight from our own code.
+The flags themselves have to live somewhere we can change without touching the
+program, and I should be able to look at what's currently on without digging through
+internals. When the code asks about a flag nobody's defined, it should do something
+sane and predictable rather than blowing up a request.
+
+Keep it lean and lean on the standard library where you can. Some tests around the
+evaluation behavior would give me confidence it does what you think it does, and a
+short README showing how it's meant to be used. I'd rather have something clean and
+well-thought-through than something sprawling.

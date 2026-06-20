@@ -1,0 +1,19 @@
+We keep writing the same fiddly retry code over and over: a network call flakes,
+we wrap it in a loop, sleep a bit, try again, and every service does it slightly
+differently. I'd like a small Python library, `retryflow`, that gives us one decent
+way to retry an operation that might fail transiently — an HTTP request, a flaky
+database connection, that sort of thing — so we stop reinventing it.
+
+The thing I care about most is that retrying should be easy to reach for on an
+existing piece of code without contorting it, and that it stays predictable: when
+something keeps failing, the caller should end up with a clear outcome rather than a
+swallowed error or a surprise. Not every failure is worth retrying, so there should
+be a sensible way to say which ones are and aren't — retrying a "host unreachable" is
+fine, retrying a "you're not authorized" is just wasting time.
+
+Beyond that I'm leaving the design to you. Use your judgment on how the retrying
+behaves over successive attempts and when it decides to stop, and on the shape callers
+actually use to apply it. It should be importable as `retryflow` and there should be an
+obvious way to use it from our own code. Lean on the standard library where you can and
+keep it reasonably small. Some tests around the retry behavior would give me confidence
+it does what you think it does, and a short note on how it's meant to be used.

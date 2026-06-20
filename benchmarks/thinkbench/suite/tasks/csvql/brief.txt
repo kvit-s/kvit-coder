@@ -1,0 +1,121 @@
+Start from an empty repository and implement a Python 3.11+ project named `csvql`.
+
+Build a small query engine for CSV files. Use only the Python standard library.
+
+Expose:
+
+```python
+def query_csv(path: str, query: str) -> list[dict]: ...
+```
+
+Support queries like:
+
+```sql
+SELECT name, age FROM people WHERE age >= 18 ORDER BY age DESC LIMIT 10
+SELECT department, COUNT(*) FROM employees GROUP BY department ORDER BY COUNT(*) DESC
+```
+
+Required features:
+
+```text
+SELECT columns
+SELECT *
+WHERE with = != < <= > >=
+AND / OR
+ORDER BY one column
+LIMIT
+COUNT(*)
+SUM(column)
+AVG(column)
+GROUP BY one column
+```
+
+Infer numbers where possible; otherwise treat values as strings.
+
+Do not use SQL databases or third-party parsers. Implement parsing yourself.
+
+Include a CLI:
+
+```bash
+python -m csvql query people.csv "SELECT name FROM people WHERE age >= 18"
+```
+
+Include tests for filtering, numeric comparison, string comparison, grouping, aggregates, order by, limit, malformed queries, and CSV quoting.
+
+## Contract
+
+This section pins the loose parts of the spec so that an automated grader can check
+behavior rather than guess at an internal representation. An implementation is
+"correct" when it honors the spec above AND the conventions below.
+
+### Import path and CLI
+
+- The public function lives at `csvql.public`:
+
+  ```python
+  from csvql.public import query_csv
+  ```
+
+- The CLI is invoked as a module with a `query` subcommand:
+
+  ```bash
+  python -m csvql query <path.csv> "<SQL query>"
+  ```
+
+  The CLI prints the result rows to stdout. The output MUST be machine-readable
+  as JSON: either a JSON array of row objects, or one JSON object per line
+  (JSON Lines). A grader will accept either form.
+
+### Result shape
+
+- `query_csv(path, query)` returns a `list[dict]` — a list of row dicts.
+- Each row dict maps a SELECTed output column name (a `str`) to that row's value.
+- Row order reflects `ORDER BY` / `LIMIT` when present; otherwise it follows the
+  file's row order.
+
+### Value typing (numeric inference)
+
+- Values that look like numbers are inferred to numeric types: an integer-looking
+  field (e.g. `"18"`) becomes an `int`, a decimal-looking field (e.g. `"3.5"`)
+  becomes a `float`. Everything else stays a `str`.
+- Comparisons in `WHERE` and ordering in `ORDER BY` use these inferred types, so
+  `age >= 18` compares numerically and a name column compares lexicographically.
+- A grader tolerates int-vs-float representation of the same numeric value (e.g.
+  `18` and `18.0` are treated as equal), and for aggregate results tolerates an
+  integer-valued result expressed as either `int` or `float`.
+
+### Column naming
+
+- For a plain column projection (`SELECT name, age`), each output key is the
+  source column name exactly as written (`"name"`, `"age"`).
+- `SELECT *` projects every source column, keyed by its CSV header name.
+- For aggregates, the output key is the aggregate's source text, uppercased and
+  whitespace-free:
+  - `COUNT(*)` appears under the key `"COUNT(*)"`.
+  - `SUM(amount)` appears under the key `"SUM(amount)"`.
+  - `AVG(score)` appears under the key `"AVG(score)"`.
+  A grader matches the aggregate value tolerantly: it accepts the value under the
+  canonical key above, or under any key whose normalized text (uppercased,
+  spaces removed) equals the canonical key. This tolerates a `COUNT(*)` alias
+  such as `count` only if it normalizes to the same canonical text; otherwise the
+  canonical `COUNT(*)`/`SUM(col)`/`AVG(col)` key is expected.
+
+### GROUP BY rows
+
+- `SELECT department, COUNT(*) FROM employees GROUP BY department` returns one row
+  dict per distinct group. Each such row carries:
+  - the group-by column under its own name (`"department"`), and
+  - each aggregate under its aggregate key (`"COUNT(*)"`, etc.).
+- `COUNT(*)` counts the rows in the group. `SUM(col)` / `AVG(col)` aggregate the
+  numeric values of `col` within the group (non-numeric values are ignored for the
+  arithmetic, matching "infer numbers where possible").
+- Without a `GROUP BY`, a query whose projection is purely aggregates (e.g.
+  `SELECT COUNT(*) FROM people`) returns a single row dict covering all matching
+  rows.
+
+### Errors
+
+- A malformed or unsupported query (syntax error, unknown column in a way the
+  engine cannot resolve, unsupported construct) raises an exception rather than
+  returning a wrong-but-silent result. The exception type is unspecified; a grader
+  only checks that *some* exception is raised for clearly malformed input.

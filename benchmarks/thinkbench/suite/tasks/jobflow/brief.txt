@@ -1,0 +1,20 @@
+We need a small Python library called `jobflow` for defining jobs that depend on
+other jobs and then running them in the right order.
+
+The idea is that someone can describe a bunch of jobs — a job is basically just a
+unit of work, often wrapping a function or a command — and say which other jobs
+each one needs to have finished first. Then they hand the whole thing to jobflow
+and it figures out the order and runs everything. A "build this, then test it,
+then deploy it" kind of workflow, but general enough to be useful for data
+pipelines, scheduled chores, that sort of thing.
+
+I care most about it being pleasant to define jobs and their dependencies, and
+about it being dependable when something goes wrong — a run shouldn't just silently
+do the wrong thing. It should be importable as `jobflow` and there should be an
+obvious way to actually kick off a run, whether that's from code or the command
+line; use your judgment there.
+
+Beyond that I'm leaving the design to you. Keep it reasonably small and lean on the
+standard library where you can. Some real tests covering the interesting cases would
+be good, and a couple of examples in a README so I can see how it's meant to be used.
+I'd rather have something clean and well-thought-through than something sprawling.

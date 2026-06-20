@@ -1,0 +1,167 @@
+Start from an empty repository and implement a Python 3.11+ project named `ticketflow`.
+
+Build a support ticket assignment engine. Use only the Python standard library.
+
+Expose:
+
+```python
+def assign_tickets(config: dict, tickets: list[dict], agents: list[dict]) -> dict: ...
+def explain_assignment(ticket: dict, agent: dict, config: dict) -> dict: ...
+```
+
+Tickets include:
+
+```json
+{
+  "ticket_id": "t1",
+  "priority": "high",
+  "language": "en",
+  "product": "billing",
+  "created_at": "2026-01-01T12:00:00Z"
+}
+```
+
+Agents include:
+
+```json
+{
+  "agent_id": "a1",
+  "languages": ["en"],
+  "skills": ["billing"],
+  "capacity": 3,
+  "current_load": 1
+}
+```
+
+Assignment rules:
+
+```text
+agent must have matching language
+agent must have matching skill
+agent must have available capacity
+higher priority tickets assigned first
+older tickets break ties
+least-loaded qualified agent wins
+agent_id breaks ties deterministically
+```
+
+Return assigned tickets and unassigned reasons.
+
+Include a CLI:
+
+```bash
+python -m ticketflow assign --config config.json --tickets tickets.json --agents agents.json
+```
+
+Include tests for priorities, capacity, skill matching, language matching, deterministic tie-breaking, unassigned reasons, and explanation output.
+
+## Contract
+
+This section PINS the conventions the spec above leaves open. A conformant
+solution MUST satisfy them; the held-out grader checks BEHAVIOR against them.
+
+### Import path / CLI
+
+- The package is importable as `ticketflow`, and the two public functions are
+  importable from the module `ticketflow.public`:
+      from ticketflow.public import assign_tickets, explain_assignment
+- The CLI is invoked as a module: `python -m ticketflow assign --config C --tickets T --agents A`,
+  where C, T, A are paths to JSON files holding the `config` dict, the `tickets`
+  list, and the `agents` list respectively. CLI stdout MUST be a single JSON
+  object (the same shape `assign_tickets` returns). The CLI exits 0 on success.
+
+### Ticket / agent fields
+
+- A ticket has: `ticket_id` (str), `priority` (str), `language` (str),
+  `product` (str), `created_at` (ISO-8601 UTC timestamp string, e.g.
+  "2026-01-01T12:00:00Z").
+- An agent has: `agent_id` (str), `languages` (list of str), `skills` (list of
+  str), `capacity` (int, max concurrent tickets), `current_load` (int, tickets
+  already held). An agent has available capacity when `current_load < capacity`.
+- The ticket's required SKILL is its `product` value: an agent is skill-qualified
+  for a ticket when `ticket["product"] in agent["skills"]`.
+- An agent is language-qualified for a ticket when
+  `ticket["language"] in agent["languages"]`.
+- An agent is QUALIFIED for a ticket when it is language-qualified AND
+  skill-qualified AND has available capacity at the moment of assignment.
+
+### Priority ordering (PINNED)
+
+Priority is one of these string values, ordered most-urgent → least-urgent:
+
+      "urgent" > "high" > "medium" > "low"
+
+Higher-priority tickets are assigned before lower-priority ones. A priority value
+not in this list is treated as the LEAST urgent (ranked below "low"); ties among
+unknown priorities fall through to the remaining tie-breakers.
+
+### Assignment order & tie-break order (PINNED)
+
+Tickets are assigned greedily, one at a time, in this total order:
+
+  1. priority DESCENDING (urgent first, per the ordering above)
+  2. then `created_at` ASCENDING (older — earlier timestamp — first)
+  3. then `ticket_id` ASCENDING (lexicographic) as a final stable tie-break
+
+For the ticket currently being assigned, among all agents QUALIFIED for it at
+that moment, the winning agent is chosen by:
+
+  1. `current_load` ASCENDING (least-loaded qualified agent wins), where
+     `current_load` reflects assignments ALREADY made during this call (each
+     assignment increments the chosen agent's effective load by 1)
+  2. then `agent_id` ASCENDING (lexicographic) as a deterministic final tie-break
+
+Assignment is single-pass and greedy in the ticket order above: once a ticket is
+assigned to an agent, that consumes one unit of that agent's capacity for the
+rest of the call. The whole computation is deterministic and independent of the
+input ordering of the `tickets` and `agents` lists.
+
+### `assign_tickets` return shape (PINNED)
+
+`assign_tickets` returns a dict with EXACTLY these two top-level keys:
+
+      {
+        "assigned":   { <ticket_id>: <agent_id>, ... },
+        "unassigned": { <ticket_id>: <reason>,   ... }
+      }
+
+- `assigned` maps each assigned ticket's `ticket_id` (str) to the `agent_id`
+  (str) it was assigned to.
+- `unassigned` maps each unassigned ticket's `ticket_id` (str) to a `reason`
+  string explaining why no agent took it. The reason string MUST be one of
+  these PINNED values (lowercase, exact):
+    - "no_language_match"  — no agent speaks the ticket's language
+    - "no_skill_match"     — at least one agent speaks the language, but none has
+                             the ticket's product in their skills
+    - "no_capacity"        — at least one agent is language- AND skill-qualified,
+                             but every such agent is at capacity (current_load,
+                             including assignments made this call, == capacity)
+  When more than one reason could apply, report the FIRST that applies in the
+  order listed above (language, then skill, then capacity). Every ticket id
+  appears in exactly one of `assigned` / `unassigned`, never both, never neither.
+
+### `explain_assignment` return shape (PINNED)
+
+`explain_assignment(ticket, agent, config)` returns a dict describing whether the
+given agent could take the given ticket, with at least these keys:
+
+      {
+        "eligible":          <bool>,   # True iff language AND skill AND capacity all hold
+        "language_match":    <bool>,   # ticket language in agent languages
+        "skill_match":       <bool>,   # ticket product in agent skills
+        "capacity_available": <bool>,  # agent current_load < capacity
+      }
+
+`eligible` is the AND of the three boolean factors. `explain_assignment` is a
+pure predicate over the single (ticket, agent) pair given; it does not consider
+other agents or mutate load.
+
+# ASSUMES (conventions the spec under-pins; fixed here so the oracle never grades a guess):
+#  - The ticket's required skill is its `product` field (the spec shows `product`
+#    on tickets and `skills` on agents but never names the join key).
+#  - Priority value set + ordering is urgent>high>medium>low; unknown = least.
+#  - "available capacity" means current_load < capacity (strict), load counts
+#    assignments made earlier in the same call.
+#  - Return shape: {"assigned": {tid:aid}, "unassigned": {tid:reason}} with the
+#    three pinned reason strings; explain_assignment exposes the three boolean
+#    factors plus their AND as `eligible`.

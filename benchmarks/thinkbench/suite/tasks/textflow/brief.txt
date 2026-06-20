@@ -1,0 +1,79 @@
+BUG REPORT — textflow: the test suite is failing
+
+You have an existing Python package `textflow`, a tiny full-text-justification
+helper. It ships with a unittest suite in `textflow/test_textflow.py`, and right
+now several of those tests FAIL. Fix the code so that ALL the tests pass. Do not
+rewrite the package from scratch and do not change its public API.
+
+## Symptom
+
+`justify(words, width)` packs words greedily onto lines and pads each line out to
+exactly `width` characters. Lines whose words happen to fill the width with plain
+single spaces already come out right, but several padding / spacing cases are
+wrong:
+
+    from textflow.public import justify
+
+    # extra spaces are pushed to the RIGHT gaps instead of the left:
+    justify(["a", "b", "c", "next"], 8)
+    #   EXPECTED ['a   b  c', 'next    ']
+    #   ACTUAL   ['a  b   c', 'next    ']   (wider gap on the right, not left)
+
+    # a single-word line is NOT padded out to width:
+    justify(["longword", "tail"], 12)
+    #   EXPECTED ['longword    ', 'tail        ']
+    #   ACTUAL   ['longword', 'tail']             (neither line padded to width)
+
+    # the LAST line is left-justified-and-padded, not stretched / dropped:
+    justify(["alpha", "beta", "gamma"], 14)
+    #   EXPECTED ['alpha     beta', 'gamma         ']
+    #   ACTUAL   ['alpha     beta', 'gamma']      (last line not padded; a
+    #                                              multi-word last line would get
+    #                                              its single spaces stretched)
+
+These defects interact: a paragraph that contains an uneven interior line, a
+single-word interior line, AND a ragged final line exercises all three at once.
+
+## Reproduce
+
+Run the visible tests from the directory that contains the `textflow` package:
+
+    python -m unittest textflow.test_textflow
+
+## Contract (must hold after your fix)
+
+* Package name stays `textflow`; import path `textflow` / `textflow.public`.
+* Keep the public API exactly: `justify(words: list[str], width: int) ->
+  list[str]` and the `JustifyError` exception. Do not rename them.
+* `words` is a list of non-empty strings; `width` is a positive int. A word
+  longer than `width`, an empty word, a non-positive `width`, or a non-list /
+  non-int argument raises `JustifyError`. An empty `words` list returns `[]`.
+* PACKING: words are placed greedily, one space assumed between adjacent words.
+  A word joins the current line while `current_word_chars + gaps + len(word) <=
+  width` (where `gaps` is the number of words already on the line); otherwise it
+  starts a new line.
+* OUTPUT: one string per line, and EVERY returned line is EXACTLY `width`
+  characters wide.
+* FULL JUSTIFICATION (every line EXCEPT the last, with 2+ words): the leftover
+  space (`width` minus the total word characters) is spread across the gaps
+  between words as evenly as possible. When it does not divide evenly, the EXTRA
+  spaces go to the LEFT-most gaps, so earlier gaps are (by at most one space)
+  wider than later ones. With G gaps and S leftover spaces, the first `S mod G`
+  gaps get `S // G + 1` spaces and the rest get `S // G`.
+* SINGLE-WORD LINE: a line holding exactly one word has no gap to stretch, so it
+  is left-justified — the word followed by enough trailing spaces to reach
+  `width`.
+* LAST LINE: the final line is left-justified too — its words joined by SINGLE
+  spaces, then padded on the right with spaces out to `width`. Its internal
+  single spaces are NEVER stretched, even when it holds several words.
+
+Example:
+
+    justify(["practical", "no", "gap", "x", "the", "final", "row"], 10)
+    #   -> ['practical ',   # single interior word: left-justified + padded
+    #       'no  gap  x',   # interior, fully justified (even here)
+    #       'the  final',   # interior, fully justified
+    #       'row       ']   # last line: left-justified + padded
+
+Standard library only. Do not change the package name or the public
+function/exception names.

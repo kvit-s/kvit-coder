@@ -1,0 +1,86 @@
+You have inherited a small Python library named `kvtxn`: an in-memory key-value
+store. The package is already written, imports cleanly, and its core operations
+work: `get(key, default=None)`, `set(key, value)`, and `delete(key)`.
+
+It ships with a FIRST, single-level attempt at transactions
+(`begin` / `commit` / `rollback`) that snapshots the whole store on `begin` and
+restores it on `rollback`. That attempt keeps only ONE snapshot, so it does not
+nest: a second `begin` clobbers the first and the outer scope is lost.
+
+## Task
+
+Replace the flat attempt with proper NESTED transactions (savepoints). A
+transaction can be opened inside another transaction, and each level can be
+independently committed or rolled back.
+
+## Semantics (read carefully — this is the whole task)
+
+- `begin()` opens a new savepoint, nested inside whatever transaction is
+  currently open (if any). Transactions therefore form a stack.
+
+- `rollback()` undoes every change (`set`/`delete`) made since the MATCHING
+  `begin()` — i.e. since the most recent still-open savepoint — restoring each
+  affected key to exactly the value it held at that `begin()` (or to absent, if
+  it did not exist then). It closes that savepoint. It must NOT touch changes
+  that an ENCLOSING scope had already made before this savepoint opened.
+
+- `commit()` closes the CURRENT savepoint by FOLDING its changes into the
+  enclosing scope:
+    * If there is an enclosing (parent) transaction, the changes become part of
+      the parent. They are NOT yet durable: a later `rollback()` of the parent
+      must still undo them. In other words, committing an inner transaction does
+      not protect its changes from an outer rollback.
+    * If this is the top-level transaction (no parent), the changes become
+      durable in the store.
+
+- A nested `rollback()` must NOT discard changes that an outer scope already
+  committed/made; conversely a nested `commit()` must NOT make changes durable
+  while an outer transaction is still open.
+
+- `commit()` or `rollback()` with no transaction open is an error: raise
+  `TransactionError` (a subclass of `RuntimeError`). Importing the name
+  `TransactionError` from the package must work.
+
+- `get`/`set`/`delete` must keep working exactly as before when no transaction
+  is open (changes apply directly to the store).
+
+## Example
+
+    s = Store()
+    s.set("a", 1)
+
+    s.begin()              # outer txn
+    s.set("a", 2)
+    s.begin()              # inner txn, nested in outer
+    s.set("a", 3)
+    s.rollback()           # undo inner only
+    assert s.get("a") == 2 # back to the outer txn's value, NOT 1
+
+    s.begin()              # another inner txn
+    s.set("a", 99)
+    s.commit()             # fold inner into outer: a == 99 within the outer txn
+    assert s.get("a") == 99
+
+    s.rollback()           # undo the outer txn — including the folded inner change
+    assert s.get("a") == 1 # all the way back to before the outer begin
+
+A delete inside a transaction is undoable too:
+
+    s = Store()
+    s.set("x", 10)
+    s.begin()
+    s.delete("x")
+    assert s.get("x") is None
+    s.rollback()
+    assert s.get("x") == 10 # the delete is undone
+
+## Contract
+
+- Package name: `kvtxn`. The grader imports `kvtxn.public` (falling back to
+  `kvtxn`); keep both import paths working.
+- Public class `Store` with methods: `get(key, default=None)`,
+  `set(key, value)`, `delete(key) -> bool` (True iff the key was present),
+  `begin()`, `commit()`, `rollback()`.
+- `TransactionError(RuntimeError)` importable from the package, raised by
+  `commit`/`rollback` when no transaction is open.
+- Standard library only. No persistence, no threading requirement.

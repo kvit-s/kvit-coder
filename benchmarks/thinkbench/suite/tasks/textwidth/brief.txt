@@ -1,0 +1,80 @@
+You have inherited a small Python library named `textwidth`: a greedy word-wrap
+utility. The package is already written, imports cleanly, and the happy path
+works -- given a short sentence of ordinary single-spaced words and a generous
+width, it packs whole words onto lines and returns the wrapped lines. It is used
+to lay out plain-text output for a fixed-width terminal: every block of text is
+passed through `wrap(text, width)` before printing.
+
+## Bug report
+
+Under real input the wrapper misbehaves at the edges, and the symptoms are easy
+to miss because tidy, single-spaced sentences at a roomy width look fine:
+
+  1. Lines come out NARROWER than they should. A word that would exactly fill
+     the remaining room on a line gets bumped to the next line instead of
+     packed onto the current one, so the output is ragged and uses more lines
+     than necessary. Packing should fill each line right up to `width`.
+
+  2. A word LONGER than `width` (a URL, a long identifier) blows the layout: it
+     is emitted on a line all by itself and overflows past `width`, so the
+     "fixed-width" output is no longer fixed-width. Such a word should be
+     hard-broken across however many full-width lines it takes.
+
+  3. Messy whitespace corrupts the output. Input with runs of multiple spaces,
+     or tabs, or embedded newlines produces lines with stray blank words,
+     doubled spaces, or wrong wrapping -- as if every space were its own word
+     boundary. Any run of whitespace should collapse to a single boundary and
+     only the actual words should survive.
+
+  4. There is a spurious trailing empty line. Empty or all-whitespace input
+     returns a list containing one empty string instead of an empty list, and
+     text with trailing whitespace leaves a dangling `""` at the end of the
+     result.
+
+Find and fix the defects so the wrapper honours the contract below exactly.
+Keep the public API and behaviour otherwise unchanged.
+
+## Contract
+
+- Package name: `textwidth`. The grader imports `textwidth.public` (falling back
+  to `textwidth`); keep both import paths working.
+- Public API, UNCHANGED (do not rename anything or change the signature):
+      wrap(text: str, width: int) -> list[str]
+- Greedy packing: words are placed left-to-right; each word goes on the current
+  line if it still fits, otherwise it starts a new line. Words on a line are
+  joined by exactly ONE space.
+- Width is INCLUSIVE: a line may be exactly `width` characters long. A word that
+  brings the current line's length to exactly `width` (counting the single
+  joining space) MUST stay on that line -- it fits. Only a word that would push
+  the line PAST `width` starts a new line.
+- Whitespace: the input is tokenised on ANY run of whitespace (spaces, tabs,
+  newlines, multiple spaces all count as a single boundary). Leading and
+  trailing whitespace is dropped. Empty strings are never emitted as words.
+- Overlong word: a single word whose length is greater than `width` cannot fit
+  on any line. It is HARD-BROKEN into consecutive pieces of exactly `width`
+  characters (the final piece may be shorter). No emitted line ever exceeds
+  `width` characters when `width >= 1`. The break happens at the character
+  level, in order, with no characters lost or reordered. A line already in
+  progress is flushed before the long word is broken; the long word's final
+  short tail may then be joined by further words that still fit.
+- No trailing empty line: the result contains no empty strings. Empty input,
+  or input that is only whitespace, returns `[]` (an empty list, NOT `[""]`).
+- `width <= 0`: there is no positive line width to pack into, so `wrap` returns
+  `[]` for any input.
+
+## I/O example
+
+    >>> wrap("the quick brown fox", 9)
+    ['the quick', 'brown fox']      # 'the quick' is exactly 9 -> it fits
+    >>> wrap("aa bb cc", 5)
+    ['aa bb', 'cc']                 # 'aa bb' is exactly 5 -> packed, not split
+    >>> wrap("  lots   of\twhite\nspace  ", 11)
+    ['lots of', 'white space']      # whitespace collapses; no blank words
+    >>> wrap("supercalifragilistic", 7)
+    ['superca', 'lifragi', 'listic']   # overlong word hard-broken at width 7
+    >>> wrap("", 5)
+    []                              # empty input -> empty list, no trailing ''
+    >>> wrap("hello world", 0)
+    []                              # width <= 0 -> empty list
+
+- Standard library only.

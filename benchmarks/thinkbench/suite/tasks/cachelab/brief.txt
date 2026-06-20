@@ -1,0 +1,37 @@
+Start from an empty repository and implement a Python 3.11+ project named `cachelab`.
+
+Build an in-memory cache simulator with TTLs, stale-while-revalidate behavior, and per-key stampede protection. Use only the Python standard library.
+
+Expose:
+
+```python
+class Cache:
+    def __init__(self, clock=None): ...
+    def get(self, key: str, loader, ttl_seconds: int, stale_seconds: int = 0): ...
+    def invalidate(self, key: str) -> None: ...
+    def stats(self) -> dict: ...
+```
+
+`loader` is a callable used to compute the value on cache miss. If many threads request the same expired key concurrently, only one loader call should run for that key. Other threads should wait or receive a stale value when allowed by `stale_seconds`.
+
+Different keys must not block each other.
+
+Provide a fake clock for deterministic tests.
+
+Include tests for cache hits, misses, TTL expiration, stale values, per-key locking, concurrent requests, invalidation, loader exceptions, and statistics.
+
+Include a small CLI simulator:
+
+```bash
+python -m cachelab simulate scenario.json
+```
+
+The simulator should print JSON stats.
+
+## Contract
+
+- Expose `Cache` from `cachelab.public` (a `python -m cachelab simulate` CLI is also required).
+- `Cache(clock=None)`: when provided, `clock` is a zero-argument callable returning the current time as a float in seconds; use it for all TTL/stale timing so tests can drive time deterministically.
+- `stats()` returns a `dict` of integer counters reflecting cache activity (which counters you track is your choice).
+- On a cold or expired key, exactly one `loader` call runs even under many concurrent `get`s for that key; a loader that raises must not cache a value (the next `get` re-runs the loader).
+- The CLI `simulate` prints a JSON object of stats.

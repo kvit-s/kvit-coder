@@ -1,0 +1,74 @@
+BUG REPORT — rrulelite: the test suite is failing
+
+You have an existing Python package `rrulelite`, a tiny recurrence-rule expander.
+It ships with a unittest suite in `rrulelite/test_rrulelite.py`, and right now
+several of those tests FAIL. Fix the code so that ALL the tests pass. Do not
+rewrite the package from scratch and do not change its public API.
+
+## Symptom
+
+`expand(rule, start, limit)` walks a recurrence rule forward from `start` and is
+supposed to return the dates it generates. Daily and weekly rules already work,
+but several monthly / boundary cases come out wrong:
+
+    from datetime import date
+    from rrulelite.public import expand
+
+    # interval is ignored for monthly rules:
+    expand({"freq": "monthly", "interval": 2}, date(2026, 1, 10), 3)
+    #   EXPECTED [2026-01-10, 2026-03-10, 2026-05-10]
+    #   ACTUAL   [2026-01-10, 2026-02-10, 2026-03-10]   (steps 1 month, not 2)
+
+    # month-end overflow spills instead of clamping:
+    expand({"freq": "monthly"}, date(2026, 1, 31), 3)
+    #   EXPECTED [2026-01-31, 2026-02-28, 2026-03-31]
+    #   ACTUAL   [2026-01-31, 2026-03-03, 2026-03-31]   (Feb 31 -> Mar 3)
+
+    # `until` drops the date that lands exactly on the bound:
+    expand({"freq": "daily", "until": date(2026, 1, 3)}, date(2026, 1, 1), 10)
+    #   EXPECTED [2026-01-01, 2026-01-02, 2026-01-03]
+    #   ACTUAL   [2026-01-01, 2026-01-02]               (until treated exclusive)
+
+These defects interact: a monthly rule with `interval > 1` that starts on a
+month-end and carries an `until` bound exercises all three at once.
+
+## Reproduce
+
+Run the visible tests from the directory that contains the `rrulelite` package:
+
+    python -m unittest rrulelite.test_rrulelite
+
+## Contract (must hold after your fix)
+
+* Package name stays `rrulelite`; import path `rrulelite` / `rrulelite.public`.
+* Keep the public API exactly: `expand(rule: dict, start: date, limit: int) ->
+  list[date]` and the `RRuleError` exception. Do not rename them.
+* `rule` is a dict with:
+    - `freq`: one of `"daily"`, `"weekly"`, `"monthly"` (required). An
+      unsupported value raises `RRuleError`.
+    - `interval`: a positive int step (default 1). For `freq == "monthly"`,
+      `interval == 2` means EVERY OTHER month; for daily it means every 2nd day;
+      for weekly every 2nd week. A non-positive / non-int interval raises
+      `RRuleError`.
+    - `until`: an optional `date`. It is an INCLUSIVE upper bound — a generated
+      date EQUAL to `until` is kept, and the first date strictly AFTER `until`
+      stops the expansion.
+* The expansion ALWAYS starts at `start`: the first emitted date is `start`
+  itself (unless `start` already exceeds `until`, in which case the result is
+  empty). Subsequent dates are `start` plus 1*interval, 2*interval, ... steps.
+* At most `limit` dates are returned. `limit <= 0` returns an empty list.
+* MONTH-END semantics: stepping months clamps the day to the LAST valid day of
+  the target month. From Jan 31, stepping one month gives Feb 28 in a common
+  year and Feb 29 in a leap year (e.g. 2028), NOT an invalid Feb 31 and NOT a
+  rolled-over Mar 2 / Mar 3. Stepping further keeps using the ORIGINAL day where
+  the month allows it (Jan 31 -> Feb 28 -> Mar 31), i.e. clamping is per-step
+  from `start`, not a permanent truncation.
+
+Example:
+
+    expand({"freq": "monthly", "interval": 2, "until": date(2026, 7, 31)},
+           date(2026, 1, 31), 10)
+    #   -> [2026-01-31, 2026-03-31, 2026-05-31, 2026-07-31]
+
+Standard library only (`datetime`). Do not change the package name or the public
+function/exception names.

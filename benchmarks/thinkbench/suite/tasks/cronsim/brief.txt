@@ -1,0 +1,38 @@
+Start from an empty repository and implement a Python 3.11+ project named `cronsim`.
+
+Build a cron schedule parser and simulator. Use only the Python standard library.
+
+Expose these functions from `cronsim.public`:
+
+```python
+def parse_cron(expr: str) -> dict: ...
+def next_runs(expr: str, start_iso: str, count: int, timezone: str = "UTC") -> list[str]: ...
+def should_run(expr: str, instant_iso: str, timezone: str = "UTC") -> bool: ...
+```
+
+Support five-field cron expressions:
+
+```text
+minute hour day_of_month month day_of_week
+```
+
+Support:
+
+```text
+*
+comma lists
+ranges
+step values such as */15 and 1-10/2
+```
+
+Use standard cron OR semantics for day-of-month and day-of-week when both are restricted.
+
+Timezone handling must use `zoneinfo`. Output timestamps must be ISO strings in UTC.
+
+Include a CLI:
+
+```bash
+python -m cronsim next "*/15 9-17 * * 1-5" --start 2026-01-01T00:00:00Z --count 10 --timezone America/New_York
+```
+
+Include tests for ranges, steps, lists, invalid expressions, leap years, daylight saving transitions, weekday numbering, and deterministic output.

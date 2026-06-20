@@ -1,0 +1,24 @@
+We need a small Python library called `auditlog` for keeping an audit log — a
+record of who did what, and when. The kind of thing you reach for when someone
+eventually asks "who changed this setting?" or "when was that account
+deactivated?" and you'd like to have an answer instead of a shrug.
+
+The shape of it is simple enough: things happen in our app — a user updates a
+record, an admin grants a permission, a job deletes some data — and we want to
+note each of those down as it happens, with enough context to be useful later.
+Then, when someone comes asking, we want to be able to look back through the log
+and pull out the entries that matter — everything a particular person did, or
+everything that touched a particular thing, or whatever happened in some window
+of time.
+
+I care most about two things. First, that recording an event is easy enough that
+we'll actually do it everywhere we should, rather than skipping it because it's a
+hassle. Second, that the log is trustworthy — that when we read an entry back, we
+can believe it says what really happened. Some of what we log will be sensitive,
+so bear that in mind.
+
+It should be importable as `auditlog`, and there should be an obvious way to both
+write to the log and query it back. Beyond that the design is yours — lean on the
+standard library, keep it clean rather than sprawling, and include some tests and
+a short README showing how it's meant to be used. I'd rather see the choices
+you'd actually defend than every option under the sun.

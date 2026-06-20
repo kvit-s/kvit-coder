@@ -1,0 +1,23 @@
+We have a handful of functions scattered across our code that are genuinely
+expensive to call — some hit the network, some chew through a big computation —
+and we keep calling them with the same inputs over and over. I'd like a small
+Python library, `cachelayer`, that lets us remember the result of a call so the
+next call with the same inputs comes back fast instead of doing the work again.
+
+The basic shape is: point it at one of these expensive lookups, and from then on
+a repeat call with the same arguments returns the saved result. I want it to feel
+natural to drop into existing code without rewriting how those functions are
+called, and I want to be able to trust what's in there — a cached answer should be
+one I'd actually be comfortable handing back, not something stale I've quietly
+forgotten about.
+
+How you let people attach caching to a function, how you decide two calls count as
+"the same," and how you keep the cache from growing without bound are the
+interesting parts, and I'm leaving them to you. Use your judgment; I'd rather see
+the approach you'd actually defend than a pile of knobs. It should import as
+`cachelayer` and be pleasant to use from our own code.
+
+Keep it reasonably small and lean on the standard library where you can. Some
+tests around the behavior that matters — that hits come back without redoing the
+work, and that the cache does the right thing as it fills up — would give me
+confidence it works the way you think it does.

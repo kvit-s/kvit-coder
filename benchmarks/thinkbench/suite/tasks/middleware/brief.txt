@@ -1,0 +1,115 @@
+You have inherited a small Python library named `middleware`: a tiny in-process
+request router. The package is already written, imports cleanly, and its core
+operations work: `add(path, handler)` registers a handler callable for a path,
+and `dispatch(path)` looks the path up and calls its handler with the request
+(here the request is just the path string). Dispatching an unregistered path
+raises `NotFound`.
+
+It has NO middleware support: `dispatch` simply finds the handler and calls it.
+
+## Task
+
+Add MIDDLEWARE: small functions, registered with `use(fn)`, that wrap AROUND the
+handler in concentric layers — the "onion" model. Before-logic runs on the way
+in; after-logic unwinds on the way out.
+
+## Semantics (read carefully — this is the whole task)
+
+A middleware is a callable `fn(request, next)` where:
+
+- `request` is the request object (the path string), and
+- `next` is a zero-argument callable that runs the REST of the chain (the inner
+  layers, ending in the handler) and returns that inner response.
+
+A middleware returns the response for its layer. The usual shape is:
+
+    def example(request, next):
+        # ... before logic ...
+        response = next()      # run inner layers + handler, get their response
+        # ... after logic; may transform `response` ...
+        return response
+
+- `use(fn)` registers middleware. Middleware run in REGISTRATION ORDER on the
+  way in: the FIRST registered middleware is the OUTERMOST layer (its before-
+  logic runs first), and the handler sits at the centre. On the way out, after-
+  logic unwinds in REVERSE registration order (innermost first, outermost last).
+
+- A middleware that returns WITHOUT calling `next()` SHORT-CIRCUITS: the inner
+  layers and the handler never run, and `next()` is never reached for any layer
+  deeper than this one. But every OUTER middleware that has already run its
+  before-logic still runs its after-logic on the way back out (each is still
+  inside its own `next()` call) and still gets to transform the response.
+
+- After-logic can TRANSFORM the response: whatever a middleware returns becomes
+  the response handed back to the layer outside it. The value `dispatch` returns
+  is whatever the OUTERMOST layer returns (or the handler's response directly
+  when there is no middleware).
+
+- `next` runs the chain LAZILY from the point it is called. In particular, if a
+  middleware short-circuits BEFORE the centre is reached, the handler lookup
+  never happens — so dispatching a path with no registered handler does NOT
+  raise `NotFound` as long as some middleware short-circuits before the centre.
+  `NotFound` is only raised if the centre is actually reached for an
+  unregistered path.
+
+- Plain routes with NO middleware must behave EXACTLY as before: `dispatch`
+  finds the handler, calls it with the path, returns its response, and raises
+  `NotFound` for an unregistered path.
+
+## Example
+
+    r = Router()
+    r.add("/greet", lambda req: "hello")
+
+    trail = []
+    def outer(request, next):
+        trail.append("outer-before")
+        resp = next()
+        trail.append("outer-after")
+        return resp + "!"
+    def inner(request, next):
+        trail.append("inner-before")
+        resp = next()
+        trail.append("inner-after")
+        return resp.upper()
+
+    r.use(outer)               # registered first -> outermost
+    r.use(inner)               # registered second -> inner
+
+    r.dispatch("/greet")       # -> "HELLO!"
+    # trail == ["outer-before", "inner-before", "inner-after", "outer-after"]
+
+A short-circuiting before-middleware skips the handler but still unwinds the
+outer layer's after-logic:
+
+    r = Router()
+    r.add("/secret", lambda req: "TOP SECRET")
+
+    def audit(request, next):
+        resp = next()
+        return f"[audited] {resp}"            # outer: transforms on the way out
+    def guard(request, next):
+        return "403 Forbidden"                # inner: short-circuits, never calls next
+
+    r.use(audit)
+    r.use(guard)
+
+    r.dispatch("/secret")      # -> "[audited] 403 Forbidden"
+                               # handler never ran; audit's after-logic still did
+
+## Contract
+
+- Package name: `middleware`. The grader imports `middleware.public` (falling
+  back to `middleware`); keep both import paths working.
+- Public class `Router` with methods:
+    * `add(path, handler)` — register a handler callable for a path.
+    * `use(fn)` — register a middleware `fn(request, next)`.
+    * `dispatch(path) -> response` — run the middleware chain (if any) around the
+      handler for `path` and return the outermost layer's response.
+- `NotFound` (a subclass of `KeyError`) importable from the package, raised by
+  `dispatch` when the centre is reached for an unregistered path.
+- Middleware registration order defines the layering: index 0 is outermost
+  (before-logic first, after-logic last); the handler is the centre.
+- A short-circuit (returning without calling `next`) skips the handler and all
+  deeper layers, but the already-entered outer layers still run their after-logic.
+- Standard library only. No threading requirement.

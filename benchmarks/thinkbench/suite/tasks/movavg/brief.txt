@@ -1,0 +1,96 @@
+You have inherited a small Python library named `movavg`: a fixed-size sliding-
+window aggregator. The package is already written, imports cleanly, and the
+happy path works -- you push values in with `add`, and once enough have arrived
+`mean()`, `min()` and `max()` report statistics over the most recent window.
+It is used to summarise a live metric stream: a dashboard pushes each new
+sample into a `Window(size)` and reads back the rolling average and extremes.
+
+## Bug report
+
+The rolling stats drift away from the true window the longer the stream runs,
+and the errors are subtle enough that a quick eyeball of a short, all-increasing
+sequence looks fine:
+
+  1. The window seems to remember one too MANY samples. After a long stream the
+     rolling average reacts more sluggishly than it should -- as if an extra,
+     already-expired sample were still being counted. A `Window(3)` fed a long
+     run behaves like it is averaging four values, not three.
+
+  2. Before the window has filled up (fewer than `size` samples seen so far) the
+     average comes out too LOW. Push two values into a `Window(5)` and the
+     reported mean is much smaller than the average of those two values -- it is
+     dividing by the full window size instead of by how many samples are
+     actually present yet.
+
+  3. `min()` / `max()` go STALE. Once the sample that held the current minimum
+     (or maximum) slides out of the window, the reported extreme does not
+     recover -- it keeps returning the long-gone value even though that sample
+     is no longer in the window. A window of recent, larger values still claims
+     its minimum is some tiny number that scrolled off ages ago.
+
+  4. The mean is reported as a truncated whole number. Feeding values whose true
+     average is fractional (e.g. 1, 2 -> 1.5) reports `1`, not `1.5`; the
+     fractional part is silently dropped, so the rolling average is biased low.
+
+Find and fix the defects so the aggregator honours the contract below exactly.
+Keep the public API and behaviour otherwise unchanged.
+
+## Contract
+
+- Package name: `movavg`. The grader imports `movavg.public` (falling back to
+  `movavg`); keep both import paths working.
+- Public API, UNCHANGED (do not rename anything or change signatures):
+      Window(size)                 # size is a positive int; size <= 0 -> ValueError
+      Window.add(x) -> None        # push one value (an int or float)
+      Window.mean() -> float       # arithmetic mean of the current window
+      Window.min()                 # smallest value in the current window
+      Window.max()                 # largest value in the current window
+      len(window) -> int           # how many values the window currently holds
+- The "current window" is the most recent `min(N, size)` values added, where `N`
+  is the total number of `add` calls so far.
+- Capacity / eviction:
+    * The window holds AT MOST `size` values. Once it is full, each `add` evicts
+      the single OLDEST value so the count stays exactly `size` -- it never
+      retains `size + 1`. After `k >= size` adds, `len(window) == size` and the
+      window is exactly the last `size` values added, in order.
+- Partial window (before it fills): while fewer than `size` values have been
+  added, the window holds all of them and every statistic is computed over those
+  present values only -- e.g. `mean()` divides by the count actually present
+  (`len(window)`), NOT by `size`.
+- `mean()`:
+    * Returns the EXACT arithmetic mean as a float (real division, no rounding
+      or truncation): the mean of `1` and `2` is `1.5`, not `1`.
+    * Calling `mean()` on an empty window (no values added yet) raises
+      `ValueError`.
+- `min()` / `max()`:
+    * Return the smallest / largest value among the values CURRENTLY in the
+      window. When the value that held the extreme is evicted, the result must
+      reflect the remaining window -- a stale extreme from an evicted sample is
+      never returned.
+    * Calling either on an empty window raises `ValueError`.
+
+## I/O example
+
+    >>> w = Window(3)
+    >>> w.add(10)
+    >>> w.mean()                  # partial window: mean of [10]
+    10.0
+    >>> w.add(20)
+    >>> w.mean()                  # partial: mean of [10, 20], not /3
+    15.0
+    >>> w.add(30)
+    >>> w.mean(), w.min(), w.max()
+    (20.0, 10, 30)
+    >>> w.add(40)                 # full -> evict 10; window is [20, 30, 40]
+    >>> len(w)
+    3
+    >>> w.mean(), w.min(), w.max()
+    (30.0, 20, 40)
+    >>> w.add(5); w.add(6)        # window is now [40, 5, 6]
+    >>> w.min(), w.max()          # 20/30 evicted; extreme must recover
+    (5, 40)
+    >>> Window(2).add(1) or Window(2)  # mean of [1, 2] is 1.5, not 1
+    >>> u = Window(2); u.add(1); u.add(2); u.mean()
+    1.5
+
+- Standard library only.

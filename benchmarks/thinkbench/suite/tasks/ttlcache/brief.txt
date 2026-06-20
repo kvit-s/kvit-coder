@@ -1,0 +1,47 @@
+You have inherited a small Python library named `ttlcache`: an in-memory cache
+where each entry carries a time-to-live (TTL). The package is already written,
+imports cleanly, and most of it works. It ships with an injectable clock so its
+behaviour is fully deterministic — you pass `Cache(clock=...)` a zero-argument
+callable returning the current time as a number.
+
+## Bug report
+
+Entries are being served one tick PAST their TTL — they expire a moment late.
+
+Reproduction:
+
+    ticks = [0]
+    c = Cache(clock=lambda: ticks[0])
+    c.set("a", 1, ttl=10)      # set at t=0 with a 10-unit TTL
+
+    ticks[0] = 9
+    c.get("a")                 # -> 1   (correct: still fresh)
+
+    ticks[0] = 10
+    c.get("a")                 # -> 1   (WRONG: the 10-unit TTL has fully
+                               #         elapsed, so this should be a miss)
+
+    ticks[0] = 11
+    c.get("a")                 # -> None (eventually expires, one tick too late)
+
+In other words: a value set with `ttl=10` is still being returned at the exact
+moment it should expire. It should be considered expired — a miss — as soon as
+the elapsed time since `set` reaches the TTL, not strictly after it. The same
+late-expiry shows up anywhere freshness is judged (membership tests, remaining
+TTL, length, purge), because they all share the same notion of "expired".
+
+A TTL of 0 (or negative) should mean the entry is already expired and never
+served.
+
+## Contract
+
+- Package name: `ttlcache`. The grader imports `ttlcache.public` (falling back
+  to `ttlcache`); keep both import paths working.
+- Keep the PUBLIC API UNCHANGED: `Cache(clock=None)`, `Cache.set(key, value,
+  ttl)`, `Cache.get(key, default=None)`, plus the existing helpers
+  (`contains` / `in`, `delete`, `ttl_remaining`, `purge`, `clear`, `len`,
+  `stats`). Do not rename anything or change signatures.
+- Fix the expiry boundary so an entry expires exactly when its TTL elapses
+  (i.e. at and after `set_time + ttl`), not one tick later. Hits/misses and the
+  expiration counter must reflect the corrected boundary.
+- Standard library only.

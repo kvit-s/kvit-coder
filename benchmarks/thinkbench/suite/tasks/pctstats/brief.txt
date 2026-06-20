@@ -1,0 +1,37 @@
+You are given an existing Python package, `pctstats`, a small descriptive-statistics
+library. It has a bug. Fix it. Do not rewrite the library or change its public API —
+make the smallest change that makes the behaviour correct.
+
+## Bug report
+
+High percentiles come out too high. `percentile(values, p)` is supposed to use the
+nearest-rank method, but for large `p` (p90, p95, p99) it returns a value one
+position too far up the sorted data — and on skewed data p95 comes back as the
+maximum, which is clearly wrong.
+
+Repro:
+
+    >>> from pctstats import percentile
+    >>> data = [1] * 19 + [100000]      # 20 values: nineteen 1s and a single outlier
+    >>> percentile(data, 95)
+    100000                              # WRONG — p95 should be a small value (1),
+                                        # not the lone outlier / maximum
+    >>> percentile([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 30)
+    4                                   # WRONG — nearest-rank p30 of 1..10 is 3
+
+The low end and the exact endpoints look fine; it's the ranks in between that are
+off, and the error compounds at the top because the result saturates at the maximum.
+
+`mean`, `minimum`, and `maximum` are correct and should stay correct.
+
+## Contract
+
+- Package name stays `pctstats`; keep the public API:
+  `percentile(values, p)`, `mean(values)`, `minimum(values)`, `maximum(values)`.
+- `percentile` uses the **nearest-rank** method (no interpolation):
+  `rank = ceil(p / 100 * n)`, **1-based**, and the result is the value at that rank
+  in the ascending-sorted data. The rank is clamped to `[1, n]`.
+- `p` is a percentage in `[0, 100]`; values outside that range are clamped.
+  `p = 0` returns the minimum; `p = 100` returns the maximum.
+- An empty input sequence raises `ValueError` (already the case — keep it).
+- Pure standard library only.

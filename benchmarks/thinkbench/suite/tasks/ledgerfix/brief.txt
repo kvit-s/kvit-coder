@@ -1,0 +1,58 @@
+BUG REPORT — ledgerfix: transfers can create money / unbalance the books
+
+You have an existing Python package `ledgerfix` (an in-memory double-entry money
+ledger over integer cents). There is ONE bug. Find it and fix it. Keep the
+public API exactly as it is; do not rewrite the package from scratch.
+
+## Symptom
+
+When `transfer(src, dst, amount)` is called and the SOURCE account is underfunded
+(does not hold at least `amount`), the transfer is supposed to be rejected and
+leave both balances untouched. Instead, money appears from nowhere: the
+destination gets credited while the source is left unchanged, so the ledger's
+grand total goes UP. The books no longer balance.
+
+## Reproduction
+
+    from ledgerfix import Ledger, InsufficientFunds
+
+    led = Ledger()
+    led.open_account("alice", 100)   # alice has 100 cents
+    led.open_account("bob", 0)       # bob has 0 cents
+
+    total_before = led.total_cents()  # 100
+
+    # alice only has 100; this transfer of 500 must be rejected.
+    try:
+        led.transfer("alice", "bob", 500)
+    except InsufficientFunds:
+        pass  # expected: rejected, nothing moves
+
+    print(led.balance("alice"))   # EXPECTED 100 ... ACTUAL 100
+    print(led.balance("bob"))     # EXPECTED 0   ... ACTUAL 500  (!!)
+    print(led.total_cents())      # EXPECTED 100 ... ACTUAL 600  (money created!)
+
+A normal, fully-funded transfer (e.g. alice -> bob of 40 when alice has 100)
+works fine and conserves the total — only the underfunded case is broken.
+
+## Contract (must hold after your fix)
+
+* Package name stays `ledgerfix`; import path `ledgerfix` / `ledgerfix.public`.
+* Keep the existing public API and its names:
+  - `Ledger.open_account(account, opening_cents=0)`
+  - `Ledger.deposit(account, amount_cents) -> new_balance`
+  - `Ledger.withdraw(account, amount_cents) -> new_balance`  (rejects insufficient funds)
+  - `Ledger.transfer(src, dst, amount_cents) -> None`
+  - `Ledger.balance(account) -> int`
+  - `Ledger.total_cents() -> int`
+  - `Ledger.accounts() -> dict`
+  - exceptions `LedgerError`, `UnknownAccount`, `InsufficientFunds`
+* All amounts are non-negative integer cents; accounts may never go negative.
+* `transfer` must be ATOMIC: either BOTH legs apply (source debited, destination
+  credited) or NEITHER does. An underfunded source must reject the transfer and
+  leave BOTH balances exactly as they were.
+* A valid (fully funded) transfer must move the funds and conserve the grand
+  total returned by `total_cents()`.
+* Deposits and withdrawals on a single account must keep working as before.
+
+Do not change the package name or the public function/exception names.

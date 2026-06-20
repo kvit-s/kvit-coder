@@ -1,0 +1,109 @@
+You have inherited a small Python library named `serialhook`: a JSON-like
+serializer. The package is already written, imports cleanly, and works for the
+JSON basic types: `dumps(obj)` serializes a `dict` / `list` / `str` / `int` /
+`float` / `bool` / `None` to a JSON string, and `loads(s)` parses it back. It is
+a thin wrapper over the standard library's `json`, so its output for basic
+values is byte-for-byte identical to `json.dumps` with default settings.
+
+Two things are missing. There is NO way to serialize custom Python types
+(datetime, Decimal, …) — they raise `TypeError` like `json` does — and there is
+NO guard against circular references, so a structure that contains itself
+recurses until the interpreter gives up.
+
+## Task
+
+Add (a) a custom-type HOOK mechanism and (b) circular-reference DETECTION, WITHOUT
+breaking the existing basic-type behavior.
+
+## Semantics (read carefully — this is the whole task)
+
+### (a) Custom-type hooks
+
+- Add `register(type, tag, encode, decode)`. After registering, a value of that
+  `type` serializes to a TAGGED FORM: the JSON object
+  `{"__type__": tag, "value": <encoded>}`, where `<encoded>` is whatever
+  `encode(value)` returns. `loads` reverses it: a tagged form whose `tag` is
+  registered is routed to that type's `decode` callable, reconstructing the
+  original value.
+
+- The encoded payload is itself serialized RECURSIVELY. So `encode` may return a
+  payload that contains basic types OR other registered types (e.g. a dict that
+  holds a datetime), and it must round-trip. On `loads`, decode the payload
+  FIRST, then hand the decoded payload to the type's `decode`.
+
+- Registered types must round-trip when NESTED anywhere — inside lists, inside
+  dict values, and inside the payloads of other registered types — not just at
+  the top level.
+
+- Decode dispatch is BY TAG. A tagged form naming a tag that is not registered
+  is an error: raise `UnknownTagError`. Do not silently return the raw tagged
+  dict.
+
+- Be careful not to mistake ordinary user data for a tagged form. A dict is a
+  tagged form ONLY when it has exactly the two keys `__type__` and `value` and
+  its `__type__` is a string. A plain dict that merely happens to contain a
+  `"__type__"` key alongside other keys is ordinary data and must round-trip
+  unchanged.
+
+### (b) Circular-reference detection
+
+- `dumps` must detect cycles and raise `CircularReferenceError` (a clear error),
+  not recurse forever. Detection is along the CURRENT PATH (ancestry from the
+  root to the value being written), not "seen anywhere".
+
+- A value that merely appears more than once in SIBLING positions — a shared or
+  diamond reference, e.g. the same inner list placed at two keys of a dict — is
+  NOT a cycle and must serialize fine.
+
+### General
+
+- Do not change the basic-type behavior. `dumps` of a basic value must stay
+  byte-identical to `json.dumps(value)` defaults, and `loads(dumps(x)) == x` for
+  any basic `x`.
+
+## Example
+
+    from datetime import datetime
+    from decimal import Decimal
+
+    register(datetime, "datetime",
+             lambda dt: dt.isoformat(),
+             lambda s: datetime.fromisoformat(s))
+    register(Decimal, "decimal", str, Decimal)
+
+    dt = datetime(2020, 1, 2, 3, 4, 5)
+    wire = dumps({"when": dt, "tags": ["a", "b"]})
+    # wire == '{"when": {"__type__": "datetime", "value": "2020-01-02T03:04:05"}, "tags": ["a", "b"]}'
+    back = loads(wire)
+    assert back["when"] == dt          # nested registered type round-trips
+    assert back["tags"] == ["a", "b"]  # basic data untouched
+
+    # A registered type inside another registered type's payload:
+    wire = dumps([Decimal("1.5"), {"d": Decimal("2")}])
+    assert loads(wire) == [Decimal("1.5"), {"d": Decimal("2")}]
+
+    # Shared (NOT circular) reference is fine:
+    inner = [1, 2]
+    dumps({"x": inner, "y": inner})    # OK — no error
+
+    # Circular reference is rejected:
+    a = []
+    a.append(a)
+    dumps(a)                           # raises CircularReferenceError
+
+    # Basic round-trip stays byte-identical:
+    assert dumps({"b": 1, "a": [True, None, 1.5]}) == '{"b": 1, "a": [true, null, 1.5]}'
+
+    # A plain dict that happens to have a "__type__" key is data, not a tag:
+    assert loads(dumps({"__type__": "x", "n": 1})) == {"__type__": "x", "n": 1}
+
+## Contract
+
+- Package name: `serialhook`. The grader imports `serialhook.public` (falling
+  back to `serialhook`); keep both import paths working.
+- Module-level functions `dumps(obj) -> str`, `loads(s) -> obj`, and
+  `register(type, tag, encode, decode) -> None`, importable from the package.
+- `CircularReferenceError` and `UnknownTagError`, both importable from the
+  package, raised as described above. (They may share a common base class, but
+  that is not required.)
+- Standard library only. No threading requirement.

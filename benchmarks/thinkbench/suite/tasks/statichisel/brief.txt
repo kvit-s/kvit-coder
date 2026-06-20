@@ -1,0 +1,163 @@
+Start from an empty repository and implement a Python 3.11+ project named `statichisel`.
+
+Build a static site generator. Use only the Python standard library.
+
+Input directory structure:
+
+```text
+site/
+  pages/
+    index.md
+    about.md
+  templates/
+    base.html
+  assets/
+    style.css
+  site.json
+```
+
+Markdown files begin with front matter:
+
+```markdown
+---
+title: Home
+slug: /
+template: base.html
+---
+
+# Welcome
+
+This is **bold** text.
+```
+
+Support Markdown features:
+
+```text
+headings
+paragraphs
+bold
+italic
+inline code
+fenced code blocks
+unordered lists
+links
+```
+
+Template variables:
+
+```text
+{{ title }}
+{{ content }}
+{{ nav }}
+```
+
+Implement:
+
+```python
+def build_site(source_dir: str, output_dir: str) -> dict: ...
+```
+
+The build must copy assets, render pages, generate a navigation list, and return a JSON-serializable manifest of generated files.
+
+Include a CLI:
+
+```bash
+python -m statichisel build site/ dist/
+```
+
+Include tests for front matter parsing, Markdown rendering, template rendering, asset copying, slug handling, malformed front matter, and deterministic output.
+
+## Contract
+
+This section pins the parts of the spec that the held-out grader checks. The grader
+verifies BEHAVIOR and rendered CONTENT/STRUCTURE — never exact HTML byte-equality,
+because the exact markup is implementation-specific. Anything not pinned here is free.
+
+### Import path / package layout
+
+- The package is importable as `statichisel`.
+- `build_site` is importable as `statichisel.public.build_site` — i.e. the module
+  `statichisel/public.py` exposes the top-level function `build_site`.
+- The CLI is invocable as `python -m statichisel build <source_dir> <output_dir>`
+  (i.e. `statichisel/__main__.py` exists and handles the `build` subcommand). The
+  CLI's stdout format is NOT pinned (it may print a manifest, a summary, or nothing);
+  the grader only requires exit code 0 and that the output files appear on disk.
+
+### `build_site(source_dir, output_dir) -> dict`
+
+- Signature: `build_site(source_dir: str, output_dir: str) -> dict`. Both arguments
+  are filesystem path strings. `output_dir` need not pre-exist; `build_site` creates it.
+- Returns a JSON-serializable manifest `dict`. The manifest MUST let a caller
+  enumerate the generated files. The grader accepts ANY of these manifest shapes
+  (it derives the file list tolerantly, it does not require one specific key):
+    - a top-level key whose name contains "file"/"page"/"output"/"generated"/"manifest"
+      mapping to a list of file entries, OR
+    - a top-level key "outputs"/"results"/"build" holding such a list, OR
+    - the manifest itself being a list of file entries.
+  Each file entry is EITHER a path string, OR a dict carrying the path under any of
+  the keys: `path`, `output`, `dest`, `file`, `url`, `target`, `name`. Paths may be
+  absolute, or relative to `output_dir`, or relative to cwd — the grader normalizes
+  by basename and by joining against `output_dir`, so any consistent convention passes.
+- The manifest must be JSON-serializable (`json.dumps(manifest)` must not raise).
+- Calling `build_site` twice with identical inputs must be deterministic: the manifest
+  must serialize identically across runs, and the set of generated output files (by
+  path relative to `output_dir`) must be identical across runs.
+
+### Pages, front matter, slugs
+
+- Each `.md` file under `pages/` begins with YAML-ish front matter delimited by lines
+  of exactly `---` (a `---` line, key: value lines, a closing `---` line), followed by
+  the Markdown body. Front matter keys used by the grader: `title`, `slug`, `template`.
+- Each page produces exactly one generated HTML file in the output. The page reachable
+  at slug `/` (the root/index page) must produce a file whose basename is `index.html`.
+  A page with another slug (e.g. `about` or `/about`) must produce a corresponding
+  `.html` file (the grader matches by the slug stem, e.g. `about` -> a file whose
+  basename or path stem is `about`, accepting `about.html` or `about/index.html`).
+- Malformed front matter (e.g. a missing closing `---`) must NOT crash the build: the
+  build must complete and still produce output for the well-formed pages. (The grader
+  does not pin what happens to the malformed page itself, only that the build survives
+  and the well-formed pages still render.)
+
+### Rendered content / structure (NOT exact HTML)
+
+For a page whose Markdown body contains the listed feature, the grader checks the
+rendered HTML of that page for the following STRUCTURE. Each is satisfied by common
+HTML equivalents; exact tag choice and attributes are free:
+- bold `**x**` -> the text `x` wrapped in `<strong>...</strong>` OR `<b>...</b>`.
+- italic `*x*` / `_x_` -> the text `x` wrapped in `<em>...</em>` OR `<i>...</i>`.
+- heading `# H` -> the text `H` wrapped in some `<h1>`..`<h6>` tag.
+- inline code `` `x` `` -> the text `x` wrapped in `<code>...</code>`.
+- fenced code block -> the block's contents wrapped in `<pre>` and/or `<code>`.
+- unordered list (`- item` lines) -> `<ul>` with `<li>` item(s).
+- link `[text](url)` -> an `<a>` tag whose `href` is `url` and whose anchor text is `text`.
+- The page `title` from front matter appears substituted into the rendered output
+  (the `{{ title }}` template variable is replaced with the front matter title; the
+  literal string `{{ title }}` must NOT remain in the output).
+- The template's `{{ content }}` is replaced by the page's rendered body, and the
+  literal `{{ content }}` must NOT remain in the output.
+- A navigation list (`{{ nav }}`) is generated and substituted: the rendered output of
+  a page that uses `{{ nav }}` contains links/entries referencing the OTHER pages of
+  the site (the grader checks that nav references more than one page, e.g. multiple
+  `<a>` tags or page titles/slugs), and the literal `{{ nav }}` must NOT remain.
+
+### Assets
+
+- Every file under the source `assets/` directory is copied into the output. The
+  grader checks that an asset placed at `assets/<name>` is present somewhere under
+  `output_dir` after the build (matched by basename and by byte-equality of contents).
+  The exact destination subpath (e.g. `assets/style.css` vs `style.css`) is NOT pinned.
+
+# ASSUMES (conventions the grader fixes that the bare SPEC leaves open; pinned above
+# so the model is graded against the Contract, never a hidden guess):
+#  - `build_site` CREATES output_dir if absent (rather than requiring it to pre-exist).
+#  - The root page is the one with front-matter slug `/`; it emits `index.html`.
+#  - A non-root slug `s` emits a file whose basename/stem is `s` (`s.html` OR `s/index.html`).
+#  - The manifest enumerates generated files under a "file"/"page"/"output"-ish key,
+#    or "outputs"/"results"/"build", or is itself a list; entries are path strings or
+#    dicts keyed by path/output/dest/file/url/target/name. (Tolerant — see above.)
+#  - Asset destination subpath is free; only basename + byte-identical contents are checked.
+#  - Malformed front matter degrades gracefully (no crash); the malformed page's own
+#    fate is unspecified, only build survival + well-formed pages rendering are checked.
+#  - CLI stdout format is free; only exit 0 + files-on-disk are checked.
+#  - Markdown structure is checked by HTML EQUIVALENCE (strong|b, em|i, h1..h6, etc.),
+#    never by exact bytes.

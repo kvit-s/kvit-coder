@@ -1,0 +1,89 @@
+You have inherited a small Python library named `base62`: a base-62 integer
+codec. The package is already written, imports cleanly, and the happy path looks
+fine for small inputs -- single-character codes encode and decode, and a few
+spot checks pass. It is used to turn database row ids into short, URL-safe
+strings (and back), so `encode` and `decode` must be exact inverses for every
+non-negative id.
+
+## Bug report
+
+Under real use the codec corrupts ids, and the symptoms are easy to miss because
+single-digit values (0..61) happen to look correct:
+
+  1. `encode(0)` comes back as the EMPTY string `""` instead of `"0"`. The id 0
+     is a real, valid id and must encode to a single `"0"` digit. No non-negative
+     integer should ever encode to an empty string.
+
+  2. Any value that needs more than one digit comes out with its digits in the
+     WRONG ORDER -- reversed. `encode(62)` yields `"01"` when it should be
+     `"10"`, so the encoded codes don't round-trip and don't even sort sensibly.
+     The most-significant digit must come FIRST, exactly like decimal notation.
+
+  3. `decode` accepts GARBAGE: handed a string containing a character that is not
+     in the alphabet (say a space, `"-"`, or `"!"`), it silently returns a wrong
+     (often negative) number instead of rejecting the input. Invalid characters
+     must be refused.
+
+  4. `decode("")` silently returns `0`. The empty string is not a valid encoding
+     of anything and must be rejected too, not quietly treated as zero.
+
+Find and fix the defects so the codec honours the contract below exactly. Keep
+the public API and behaviour otherwise unchanged.
+
+## Contract
+
+- Package name: `base62`. The grader imports `base62.public` (falling back to
+  `base62`); keep both import paths working.
+- Public API, UNCHANGED (do not rename anything or change signatures):
+      encode(n: int) -> str
+      decode(s: str) -> int
+- The alphabet is fixed, exactly these 62 characters in this order (index 0 is
+  `'0'`, index 10 is `'A'`, index 36 is `'a'`, index 61 is `'z'`):
+
+      0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
+
+  So `'0'`->0, `'9'`->9, `'A'`->10, `'Z'`->35, `'a'`->36, `'z'`->61.
+- `encode(n)` for a non-negative integer `n`:
+    * Produces the base-62 representation with the MOST-SIGNIFICANT digit first
+      (big-endian), just like ordinary decimal.
+    * `encode(0)` is the single digit `"0"` -- never `""`.
+    * Never returns the empty string for any `n >= 0`.
+- `decode(s)`:
+    * Maps each character to its alphabet index and accumulates big-endian:
+      `value = value * 62 + index_of(char)`, left to right.
+    * RAISES (a `ValueError`) on any character outside the alphabet -- it never
+      returns a silent garbage or negative value.
+    * RAISES on the empty string `""` -- it is not a valid encoding.
+    * TOLERATES non-canonical leading zeros: a string with leading `'0'`
+      characters still decodes to its plain value (`decode("0A") == 10`,
+      `decode("00") == 0`). Leading zeros do not change the value and must not be
+      rejected.
+- Round-trip law: for every non-negative integer `n`, `decode(encode(n)) == n`
+  -- including 0, values straddling the base boundary (61/62/63), and large
+  multi-digit integers well beyond 64 bits.
+
+## I/O example
+
+    >>> from base62 import encode, decode
+    >>> encode(0)
+    '0'
+    >>> encode(61)
+    'z'
+    >>> encode(62)            # most-significant digit first
+    '10'
+    >>> decode('10')
+    62
+    >>> decode('0A')          # leading zero tolerated, value preserved
+    10
+    >>> decode(encode(123456789))
+    123456789
+    >>> decode('!')           # character outside the alphabet
+    Traceback (most recent call last):
+        ...
+    ValueError: invalid base-62 character: '!'
+    >>> decode('')            # empty string is not a valid encoding
+    Traceback (most recent call last):
+        ...
+    ValueError: decode received an empty string
+
+- Standard library only.

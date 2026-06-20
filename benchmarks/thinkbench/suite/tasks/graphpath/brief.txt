@@ -1,0 +1,74 @@
+You have inherited a small Python library named `graphpath`: a shortest-path
+finder over a weighted directed graph, using Dijkstra's algorithm. The package is
+already written, imports cleanly, and the happy path works -- on a graph where the
+greedy first route to each node also happens to be the cheapest, it returns the
+right distance. It is used by a routing layer that asks `shortest(graph, src, dst)`
+for the least-cost route between two nodes.
+
+## Bug report
+
+Under real graphs the finder misbehaves, and the symptoms are easy to miss
+because small "already-sorted" example graphs look fine:
+
+  1. On graphs where a node is first reached by an EXPENSIVE edge but a CHEAPER
+     route to it exists through other nodes, the finder reports the expensive
+     distance and route -- it seems to LOCK IN the first way it stumbles onto a
+     node and never reconsiders, even when a shorter path is found a moment
+     later. The answer comes back larger than the true shortest path.
+
+  2. Asking for the route from a node to ITSELF (`src == dst`) returns the right
+     distance (0) but an empty path. It should return the one-node path
+     containing just that node.
+
+  3. When `dst` simply CANNOT be reached from `src` (no directed route exists),
+     the finder does not say so cleanly -- it hands back a bogus
+     infinite-distance result with a nonsense path instead of signalling "no
+     route" the way the contract requires.
+
+  4. Even when the distance is right, the returned path reads BACKWARDS --
+     from `dst` to `src` rather than from `src` to `dst`.
+
+Find and fix the defects so the finder honours the contract below exactly.
+Keep the public API and behaviour otherwise unchanged.
+
+## Contract
+
+- Package name: `graphpath`. The grader imports `graphpath.public` (falling back
+  to `graphpath`); keep both import paths working.
+- Public API, UNCHANGED (do not rename anything or change the signature):
+      shortest(graph, src, dst) -> (distance, path) | None
+- Graph representation: an adjacency map `{node: {neighbor: weight}}`. Every
+  weight is a non-negative number (ints or floats; `0` is allowed). A node with
+  no outgoing edges maps to an empty dict `{}`. Nodes are any hashable key. The
+  graph is DIRECTED: an edge `a -> b` does NOT imply `b -> a`.
+- `shortest(graph, src, dst)` returns the minimum-total-weight route from `src`
+  to `dst`:
+    * On success, return the pair `(distance, path)` where `distance` is the
+      summed edge weight of the cheapest route and `path` is the list of nodes
+      from `src` to `dst` INCLUSIVE, in travel order (`path[0] == src`,
+      `path[-1] == dst`). Consecutive nodes in `path` must be joined by real
+      edges whose weights sum to exactly `distance`.
+    * A node always reaches itself: if `src == dst`, return `(0, [src])` -- the
+      single-node path -- even when that node has no outgoing edges.
+    * If `dst` is UNREACHABLE from `src` (no directed route exists), return
+      `None`. Do not return an infinite/sentinel distance or a partial path.
+- Algorithm requirement (Dijkstra correctness): a node's distance is only final
+  once it is settled as the closest un-settled node. A cheaper route discovered
+  AFTER a node was first encountered must still win -- do not freeze a node's
+  distance the first time any edge happens to reach it.
+
+## I/O example
+
+    >>> g = {"a": {"b": 1, "c": 4}, "b": {"c": 2, "d": 5}, "c": {"d": 1}, "d": {}}
+    >>> shortest(g, "a", "d")        # a->b->c->d = 1+2+1
+    (4, ['a', 'b', 'c', 'd'])
+    >>> shortest(g, "a", "a")        # a node reaches itself for free
+    (0, ['a'])
+    >>> shortest(g, "d", "a")        # no route out of d -> a
+    None
+    >>> # a cheaper route found LATE still wins:
+    >>> g2 = {"a": {"d": 10, "b": 1}, "b": {"c": 1}, "c": {"d": 1}, "d": {}}
+    >>> shortest(g2, "a", "d")       # a->b->c->d = 3, not the direct a->d = 10
+    (3, ['a', 'b', 'c', 'd'])
+
+- Standard library only.

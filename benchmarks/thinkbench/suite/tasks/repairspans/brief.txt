@@ -1,0 +1,51 @@
+BUG REPORT — repairspans: the test suite is failing — fix the code so all tests pass.
+
+You have an existing Python package `repairspans`, a tiny library for working with
+closed integer intervals. It ships with a test suite in the package
+(`repairspans/test_repairspans.py`) that is currently FAILING. There are a few
+planted bugs in the implementation. Find them and fix the code so that every test
+passes. Do NOT edit the tests, and do not rewrite the package from scratch — keep
+the public API exactly as it is.
+
+## Symptom
+
+Run the visible tests from the workspace root:
+
+    python -m repairspans.test_repairspans
+
+Several tests fail. The failures all stem from the handling of CLOSED intervals
+(intervals that include both endpoints) and from the assumption that input is
+already sorted. For example:
+
+  * `merge([[1, 2], [2, 3]])` should be `[[1, 3]]` (the intervals touch at the
+    point 2 and must collapse), but the buggy code returns `[[1, 2], [2, 3]]`.
+  * `merge([[3, 4], [1, 2]])` (unsorted input) should be `[[1, 2], [3, 4]]`, but
+    the buggy code mishandles the ordering.
+  * `overlaps([1, 2], [2, 3])` should be `True` (they share the point 2), but the
+    buggy code returns `False`.
+
+## Contract (must hold after your fix)
+
+* Package name stays `repairspans`; import path `repairspans` / `repairspans.public`.
+* Keep the existing public API and its names — two functions, exported from both
+  `repairspans` and `repairspans.public`:
+  - `merge(intervals) -> list[list[int]]`
+  - `overlaps(a, b) -> bool`
+* Intervals are `[start, end]` two-element sequences with `start <= end`, and they
+  are CLOSED: both endpoints are included.
+* TOUCHING / ADJACENT BEHAVIOR (define it exactly this way): because the intervals
+  are closed, two intervals that touch at a single shared endpoint count as
+  overlapping. So `[1, 2]` and `[2, 3]` overlap, and `merge` collapses them into
+  `[1, 3]`. Intervals that do NOT share a point (e.g. `[1, 2]` and `[3, 4]`,
+  whose nearest endpoints differ by more than 0) stay separate.
+* `overlaps(a, b)` returns `True` iff the two closed intervals share at least one
+  point (nesting and identical intervals count as overlapping; touching counts;
+  fully disjoint does not). It is symmetric: `overlaps(a, b) == overlaps(b, a)`.
+* `merge(intervals)`:
+  - returns a NEW list (does not mutate the input or its interval objects),
+  - is order-independent: it must produce the correct result for UNSORTED input,
+  - returns intervals sorted by start, with no two results overlapping or touching,
+  - returns `[]` for empty input, and `[[s, e]]` (a copy) for a single interval.
+
+Use only the Python standard library. Do not change the package name or the
+public function names.

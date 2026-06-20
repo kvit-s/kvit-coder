@@ -1,0 +1,97 @@
+You have inherited a small Python library named `hsm`: a finite state machine.
+The package is already written, imports cleanly, and works: a `Machine` has a
+`current` state, you wire up transitions with `add_transition(state, event,
+target)`, and `fire(event)` moves the machine to the target (raising
+`UnknownEvent` if the current state has no transition for that event).
+
+Today the machine is FLAT: states have no structure, an event is handled only if
+the CURRENT state itself defines a transition for it, and changing state does
+nothing beyond updating `current`.
+
+## Task
+
+Add HIERARCHICAL (nested) states with event bubbling and entry/exit hooks,
+WITHOUT breaking the existing flat behavior.
+
+## Semantics (read carefully — this is the whole task)
+
+- `add_state(name, parent=None)` declares a state nested inside `parent`. States
+  form ancestor chains up to a root (a state with no parent). A state never
+  needs to be declared to be used as a flat state; only nesting needs it.
+
+- BUBBLING. `fire(event)` first looks for a transition on the CURRENT (leaf)
+  state. If the leaf defines none for that event, the event BUBBLES up the
+  parent chain: the first ancestor that defines a transition for the event wins,
+  and the machine moves to THAT transition's target. If no state in the chain
+  handles the event, raise `UnknownEvent`.
+
+- ENTRY/EXIT HOOKS. `on_enter(state, fn)` and `on_exit(state, fn)` register
+  zero-argument callbacks. On a transition from the current leaf `source` to a
+  `target`, the machine:
+    * EXITS states starting at `source` and walking UP, firing each state's exit
+      hooks, stopping BEFORE the least common ancestor (LCA) of source and
+      target — the LCA itself is NOT exited;
+    * then ENTERS states from just below the LCA DOWN to `target`, firing each
+      state's enter hooks — the LCA itself is NOT entered.
+  Exit hooks fire deepest-first (child before parent); entry hooks fire
+  shallowest-first (parent before child).
+
+- The states exited/entered are computed from the actual current LEAF state and
+  the transition's TARGET — NOT from the ancestor where the matching transition
+  was found while bubbling. (A transition declared on a parent still exits the
+  child you were actually in.)
+
+- A transition whose source and target are the SAME state is an EXTERNAL
+  self-transition: that state IS exited and re-entered (it sits below its LCA,
+  which is its parent).
+
+- If source and target are in separate trees (no common ancestor), exit every
+  state from source up to its root and enter every state from target's root down
+  to target.
+
+- `Machine.trace` is a list recording the firing order: each entry is a tuple
+  `("exit", state)` or `("enter", state)`, appended in the exact order hooks
+  fire, accumulated across every `fire` call. It must be present and correct
+  even for states that have no registered callbacks.
+
+## Example
+
+    m = Machine("a")
+    m.add_state("top")
+    m.add_state("a", parent="top")
+    m.add_state("b", parent="top")
+    m.add_transition("top", "go", "b")   # 'go' is handled by the PARENT
+
+    m.fire("go")                 # in 'a', no 'go' -> bubbles to 'top', target 'b'
+    assert m.current == "b"
+    # exit 'a' (up to LCA 'top', exclusive), enter 'b' (down from 'top', exclusive)
+    assert m.trace == [("exit", "a"), ("enter", "b")]
+
+Deeper nesting keeps the common ancestor untouched:
+
+    m = Machine("a1")
+    m.add_state("root")
+    m.add_state("A", parent="root"); m.add_state("B", parent="root")
+    m.add_state("a1", parent="A");   m.add_state("b1", parent="B")
+    m.add_transition("a1", "x", "b1")
+    m.trace.clear()
+    m.fire("x")                  # a1 -> b1, LCA is 'root'
+    assert m.current == "b1"
+    # exit a1 then A; enter B then b1; 'root' is the LCA and is NOT touched
+    assert m.trace == [("exit", "a1"), ("exit", "A"), ("enter", "B"), ("enter", "b1")]
+
+## Contract
+
+- Package name: `hsm`. The grader imports `hsm.public` (falling back to `hsm`);
+  keep both import paths working.
+- Public class `Machine(initial)` with attribute `current`, list attribute
+  `trace`, and methods: `add_transition(state, event, target)`,
+  `add_state(name, parent=None)`, `on_enter(state, fn)`, `on_exit(state, fn)`,
+  `fire(event) -> str` (returns the new `current`), and the existing
+  `reset() -> str`.
+- `UnknownEvent(Exception)` importable from the package, raised by `fire` when
+  no state in the chain handles the event.
+- A flat machine (no `add_state` calls) must behave exactly as before: `fire`
+  resolves a transition on `current`, moves there, and — with no nesting — the
+  trace for such a move is `[("exit", source), ("enter", target)]`.
+- Standard library only. No threading requirement.

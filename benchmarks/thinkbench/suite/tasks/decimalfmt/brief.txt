@@ -1,0 +1,84 @@
+BUG REPORT — decimalfmt: the test suite is failing
+
+You have an existing Python package `decimalfmt`, a tiny money formatter that
+works in integer cents. It ships with a unittest suite in
+`decimalfmt/test_decimalfmt.py`, and right now several of those tests FAIL. Fix
+the code so that ALL the tests pass. Do not rewrite the package from scratch and
+do not change its public API.
+
+## Symptom
+
+`format_amount(cents, places, sep)` turns an integer number of cents into a
+human-readable string, and `parse_amount(s, places, sep)` turns it back. Small
+positive amounts come out right, but larger / negative / fractional cases are
+wrong, and the round trip is broken:
+
+    from decimalfmt.public import format_amount, parse_amount
+
+    # the negative sign lands in the wrong place:
+    format_amount(-1234567)
+    #   EXPECTED "-12,345.67"
+    #   ACTUAL   "123,45.-67"   (sign after the decimal, not in front)
+
+    # the fractional part is not zero-padded:
+    format_amount(5)
+    #   EXPECTED "0.05"
+    #   ACTUAL   "0.5"          (5 cents lost its leading zero)
+
+    # thousands grouping is applied from the wrong end:
+    format_amount(1234567)
+    #   EXPECTED "12,345.67"
+    #   ACTUAL   "123,45.67"    (grouped from the LEFT, not the right)
+
+    # and the round trip does not survive the grouping separators:
+    parse_amount("12,345.67")
+    #   EXPECTED 1234567
+    #   ACTUAL   ValueError     (the "," was never stripped)
+
+These defects interact: a large NEGATIVE amount with a single-cent fractional
+part, formatted and then parsed back, exercises all of them at once.
+
+## Reproduce
+
+Run the visible tests from the directory that contains the `decimalfmt` package:
+
+    python -m unittest decimalfmt.test_decimalfmt
+
+## Contract (must hold after your fix)
+
+* Package name stays `decimalfmt`; import path `decimalfmt` / `decimalfmt.public`.
+* Keep the public API exactly: `format_amount(cents: int, places: int = 2,
+  sep: str = ",") -> str`, `parse_amount(s: str, places: int = 2,
+  sep: str = ",") -> int`, and the `MoneyError` exception. Do not rename them.
+* `format_amount(cents, places=2, sep=",")` renders an integer number of cents:
+    - The amount is `cents / 10**places` units. The integer (whole-unit) part is
+      `abs(cents) // 10**places`; the fractional part is `abs(cents) % 10**places`.
+    - SIGN: a single leading `-` in FRONT of the whole number when `cents < 0`,
+      and nothing when `cents >= 0`. The sign never appears after a separator or
+      after the decimal point. Zero is non-negative ("0.00", no sign).
+    - GROUPING: the integer part is split into groups of three digits counting
+      FROM THE RIGHT, joined by `sep` (e.g. `1234567` whole-units ->
+      "1,234,567"). Fewer than four integer digits means no separator at all.
+    - FRACTION: exactly `places` digits after a single `.`, ZERO-PADDED on the
+      left, so `5` cents -> ".05" and a whole-dollar amount -> ".00". When
+      `places == 0` there is no `.` and no fractional part.
+    - `cents` must be an `int` (bool is not accepted); a bad `cents` or a
+      negative / non-int `places` raises `MoneyError`.
+* `parse_amount(s, places=2, sep=",")` is the INVERSE of `format_amount` for the
+  same `places` and `sep`:
+    - It honours a single leading `-`, STRIPS every `sep` separator, splits on
+      the `.`, pads / truncates the fractional run to `places` digits, and
+      returns the integer number of cents.
+    - `parse_amount(format_amount(c)) == c` for every int `c`.
+* ROUND TRIP: formatting then parsing must recover the original cents exactly,
+  INCLUDING the sign, the grouping separators, and zero-padded fractions.
+
+Example:
+
+    format_amount(-100000005)            # -> "-1,000,000.05"
+    parse_amount("-1,000,000.05")        # -> -100000005
+    format_amount(1234567, places=3)     # -> "1,234.567"
+    format_amount(-12345, places=0)      # -> "-12,345"
+
+Standard library only. Do not change the package name or the public
+function/exception names.

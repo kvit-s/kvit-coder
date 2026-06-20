@@ -1,0 +1,128 @@
+Start from an empty repository and implement a Python 3.11+ project named `confstack`.
+
+Build a configuration loader with strict precedence. Use only the Python standard library.
+
+Expose:
+
+```python
+def load_config(defaults: dict, config_file: str | None, env: dict, cli_args: list[str]) -> dict: ...
+```
+
+Precedence order:
+
+```text
+CLI flags > environment variables > config file > defaults
+```
+
+Config files are JSON. Environment variables use prefix `APP_`. CLI flags use `--key value`, `--nested.key value`, and booleans like `--feature-enabled` or `--no-feature-enabled`.
+
+Infer booleans, integers, and strings. Support nested keys with dot notation.
+
+Include a CLI:
+
+```bash
+python -m confstack show --defaults defaults.json --config app.json -- --port 9000 --no-debug
+```
+
+Include tests for precedence, nested keys, boolean false overriding true, missing config file, unknown flags, type inference, and deterministic output.
+
+## Contract
+
+This section pins the conventions the grader relies on. A correct implementation
+MUST satisfy everything below. Where the SPEC above leaves a convention open, the
+choice is pinned here so a defensible implementation is not failed on a guess.
+
+### Import path and CLI
+- The public API is importable as `confstack.public` and exposes the function
+  `load_config(defaults, config_file, env, cli_args)` with the signature above.
+- The CLI is invokable as `python -m confstack` (i.e. the package has a
+  `__main__` module). The `show` subcommand prints the merged config and exits 0.
+
+### Return value of `load_config`
+- Returns the merged configuration as a plain nested `dict`.
+- Dot-notation keys are EXPANDED into nested dicts in the returned value. A key
+  written `a.b.c` (from any source — config dot-key, env, or CLI) becomes
+  `{"a": {"b": {"c": <value>}}}` in the result. The literal dotted string is NOT
+  retained as a flat top-level key.
+- Output is deterministic: calling `load_config` twice with equal inputs returns
+  equal dicts, and the CLI's serialized output is byte-for-byte stable across runs
+  for equal inputs.
+
+### Precedence (strict, highest wins)
+```text
+CLI flags > environment variables > config file > defaults
+```
+- Sources are merged so that, for any given leaf key, the value from the
+  highest-precedence source that defines it wins.
+- Merging is RECURSIVE over nested dicts (a "deep merge"): a higher-precedence
+  source overriding `a.b` does NOT discard a lower-precedence `a.c`; both survive
+  under `a`. Only the overlapping leaf is overridden.
+- Boolean `false` from a higher-precedence source DOES override boolean `true`
+  from a lower-precedence source (and vice versa). Presence, not truthiness,
+  decides an override.
+
+### Defaults
+- `defaults` is a Python dict supplied by the caller. It may itself contain nested
+  dicts and/or dot-notation keys; dot-notation keys in `defaults` are expanded the
+  same way as every other source.
+
+### Config file
+- `config_file` is a path to a JSON object, or `None`.
+- If `config_file` is `None`, the config-file layer contributes nothing.
+- A missing config-file path (file does not exist) is NOT a hard error in
+  `load_config`: the config-file layer simply contributes nothing and lower layers
+  still apply. (It must not raise; it must not abort the merge.)
+- A config file whose JSON contains dot-notation keys has them expanded.
+
+### Environment variables
+- Only variables whose name starts with the prefix `APP_` are consumed; all other
+  env vars are ignored.
+- The prefix `APP_` is stripped, and the REMAINDER is lowercased to form the key.
+  So `APP_PORT` -> key `port`, `APP_DEBUG` -> key `debug`.
+- Nested keys in env use a double underscore `__` as the nesting separator:
+  `APP_DATABASE__HOST` -> `database.host` -> `{"database": {"host": ...}}`.
+  (Single underscores within a segment are preserved as part of that key segment,
+  e.g. `APP_LOG_LEVEL` -> key `log_level`.)
+- Env values are strings and are passed through type inference (below).
+
+### CLI flags (the `cli_args` list, and the CLI's post-`--` args)
+- `--key value` sets `key` to `value`.
+- `--nested.key value` sets the dotted key `nested.key` (expanded to nested dicts).
+- `--flag` (no following value, or followed by another `--…` token) sets `flag`
+  to boolean `true`.
+- `--no-flag` sets `flag` to boolean `false`. The `no-` prefix is stripped from
+  the FIRST segment of the key only; e.g. `--no-feature-enabled` sets
+  `feature-enabled` to `false` (only the leading `no-` is removed, not later
+  hyphens), and `--no-a.b` sets `a.b` to `false`.
+- Flag key segments keep their hyphens: `--feature-enabled` -> key
+  `feature-enabled` (hyphens are NOT converted to underscores).
+- "Unknown" flags are not an error: there is no fixed schema, so any `--key`
+  is accepted and merged. (The SPEC's "unknown flags" test means such flags are
+  handled gracefully, not rejected.)
+- CLI values (for the `--key value` form) are strings and are passed through
+  type inference (below). The explicit boolean forms `--flag` / `--no-flag`
+  yield real booleans directly.
+
+### Type inference (applied to STRING values from env and from `--key value`)
+Applied to a raw string value `s` (case-insensitive for booleans):
+- If `s` lowercased is `"true"`  -> Python `True`.
+- If `s` lowercased is `"false"` -> Python `False`.
+- Else if `s` is an OPTIONALLY-SIGNED run of ASCII digits (matches `-?\d+`, e.g.
+  `"9000"`, `"-3"`, `"0"`) -> Python `int`.
+- Else -> the string `s` unchanged (this includes `"1.5"`, `"007abc"`, `""`,
+  `"3.0"`, and any value with a leading `+`; only plain integers are coerced,
+  floats are left as strings).
+- Values that already arrive as non-strings (e.g. JSON numbers/booleans/objects
+  from a config file or nested dicts in `defaults`) are used AS-IS and are NOT
+  re-inferred.
+
+### CLI `show` subcommand
+- Usage: `python -m confstack show [--defaults defaults.json] [--config app.json] [-- <cli flags...>]`.
+- `--defaults PATH` loads a JSON object used as the `defaults` dict (optional;
+  absent or missing file -> empty defaults).
+- `--config PATH` is passed as `config_file`.
+- Everything after a literal `--` separator is passed through as `cli_args`.
+- The process environment is used for the `env` layer (only `APP_`-prefixed vars).
+- The merged config is printed as JSON to stdout and the process exits 0.
+</content>
+</invoke>

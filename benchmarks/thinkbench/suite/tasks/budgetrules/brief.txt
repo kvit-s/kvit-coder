@@ -1,0 +1,131 @@
+Start from an empty repository and implement a Python 3.11+ project named `budgetrules`.
+
+Build a rule-based personal finance transaction categorizer. Use only the Python standard library.
+
+Expose:
+
+```python
+def categorize(transactions: list[dict], rules: list[dict]) -> list[dict]: ...
+def summarize(categorized: list[dict]) -> dict: ...
+```
+
+Transaction format:
+
+```json
+{
+  "id": "txn_1",
+  "date": "2026-01-01",
+  "description": "ACME GROCERY",
+  "amount_cents": -5234
+}
+```
+
+Rules support:
+
+```text
+description_contains
+description_regex
+amount_min_cents
+amount_max_cents
+merchant_equals
+set_category
+set_tags
+priority
+```
+
+Highest priority matching rule wins. Ties are broken by rule order. If no rule matches, category is `uncategorized`.
+
+Summaries must total spending by category and month. Refunds should reduce spending.
+
+Include a CLI:
+
+```bash
+python -m budgetrules categorize --transactions txns.json --rules rules.json
+python -m budgetrules summarize categorized.json
+```
+
+Include tests for rule priority, regex matching, refunds, uncategorized transactions, monthly summaries, deterministic order, and malformed rules.
+
+## Contract
+
+This section pins the parts the prose above leaves implicit. The held-out grader
+checks BEHAVIOR against this contract; it does not require any particular internal
+file layout, helper names, or extra keys beyond those pinned here.
+
+### Import path & CLI
+
+- The package is importable as `budgetrules`, and the two functions are exposed from
+  the module `budgetrules.public`:
+
+  ```python
+  from budgetrules.public import categorize, summarize
+  ```
+
+- The CLI is invoked as `python -m budgetrules ...` and MUST emit JSON to stdout:
+
+  ```bash
+  python -m budgetrules categorize --transactions txns.json --rules rules.json
+  python -m budgetrules summarize categorized.json
+  ```
+
+  `categorize` prints the JSON list returned by `categorize(...)`; `summarize` reads
+  a JSON file holding that list and prints the JSON dict returned by `summarize(...)`.
+
+### `categorize(transactions, rules) -> list[dict]`
+
+- Returns a NEW list, same length and SAME ORDER as `transactions` (deterministic;
+  input is never reordered or mutated).
+- Each output element preserves the input transaction's existing fields (`id`,
+  `date`, `description`, `amount_cents`) and ADDS exactly these two fields:
+  - `category` — a `str`. Set from the winning rule's `set_category`. If no rule
+    matches, it is the literal string `"uncategorized"`.
+  - `tags` — a `list[str]`. Set from the winning rule's `set_tags` (a list of
+    strings). If the winning rule has no `set_tags`, or no rule matches, it is `[]`
+    (empty list, never `None`).
+
+- Rule matching: a rule matches a transaction when ALL of its present conditions
+  hold (conditions absent from the rule are not constraints). Conditions:
+  - `description_contains` — substring test against the transaction `description`,
+    CASE-INSENSITIVE.
+  - `description_regex` — `re.search` of the pattern against `description`
+    (case-sensitive unless the pattern itself opts out). A malformed/uncompilable
+    regex does NOT raise: such a rule simply fails to match.
+  - `amount_min_cents` — matches when `amount_cents >= amount_min_cents`.
+  - `amount_max_cents` — matches when `amount_cents <= amount_max_cents`.
+  - `merchant_equals` — exact, case-sensitive equality against the transaction
+    `description` (the merchant string).
+
+- Winner selection: among all matching rules, the one with the highest `priority`
+  wins. `priority` defaults to `0` when absent. Ties (equal priority) are broken by
+  RULE ORDER — the earliest such rule in `rules` wins.
+
+- Robustness: a malformed rule (not a dict, bad regex, non-string/non-list field
+  values, unknown extra keys) must NEVER raise — it either fails to match or
+  contributes no constraint, and categorization continues over the remaining rules.
+
+### `summarize(categorized) -> dict`
+
+Operates on the list returned by `categorize`. Returns a dict with exactly these two
+top-level keys, each a dict whose VALUES are integer cent totals:
+
+- `"by_category"` — maps each `category` string present in the input to the total
+  spending for that category, in cents.
+- `"by_month"` — maps each `"YYYY-MM"` month string (the first 7 chars of `date`)
+  to the total spending for that month, in cents.
+
+Spending convention (pin): a transaction's contribution to a total is the amount of
+money that LEFT the account, i.e. `-amount_cents` (debits, stored as NEGATIVE
+`amount_cents`, are POSITIVE spending; refunds/credits, stored as POSITIVE
+`amount_cents`, are NEGATIVE spending and therefore REDUCE the relevant totals). All
+totals are integers in cents. A category/month with a net-zero total still appears
+if at least one transaction contributed to it.
+
+## ASSUMPTIONS (pinned so the grader never grades a guess)
+
+- `set_tags`, when present on the winning rule, replaces tags wholesale (tags are
+  not accumulated across multiple matching rules — only the winner's tags apply).
+- `description_contains` is case-insensitive; `merchant_equals` is case-sensitive.
+- Spending sign convention is `-amount_cents` (debits negative in the input). This
+  makes "refunds reduce spending" hold and keeps per-category/per-month totals as
+  net spending in cents.
+- Month key is `date[:7]` (the `YYYY-MM` prefix of the ISO date string).

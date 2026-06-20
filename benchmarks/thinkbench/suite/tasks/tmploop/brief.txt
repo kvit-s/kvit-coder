@@ -1,0 +1,106 @@
+You have inherited a small Python library named `tmploop`: a string templater.
+The package is already written, imports cleanly, and works: a single function
+`render(template, context)` substitutes `{{ var }}` placeholders with values
+looked up from `context`. Lookups may be DOTTED — `{{ user.name }}` walks dict
+keys (falling back to object attributes) — and a missing lookup renders as the
+empty string. Literal text outside `{{ ... }}` is preserved verbatim.
+
+What it CANNOT do yet is loop or branch: there are no block tags.
+
+## Task
+
+Add two nestable BLOCK TAGS to the templater, leaving plain `{{ var }}`
+rendering exactly as it is.
+
+- `{{#each items}} BODY {{/each}}` — iterate `items` in order, rendering BODY
+  once per element.
+
+- `{{#if cond}} A {{else}} B {{/if}}` — render A when `cond` is truthy, else B.
+  The `{{else}}` arm is optional (`{{#if cond}} A {{/if}}` renders A or nothing).
+
+The two blocks must NEST in any combination (an `each` inside an `if`, an `if`
+inside an `each`, `each` inside `each`, to any depth), and the right closer must
+pair with the right opener.
+
+## Semantics (read carefully — this is the whole task)
+
+### `each`
+
+- Inside the body, these names are available for the CURRENT element:
+    * `{{ this }}`    — the element itself.
+    * `{{ @index }}`  — its 0-based position (an integer: 0, 1, 2, ...).
+    * `{{ @first }}`  — boolean, true on the first element only.
+    * `{{ @last }}`   — boolean, true on the last element only.
+  `@first` / `@last` are usable as `{{#if}}` conditions.
+- `{{ this.field }}` walks into the element with the usual dotted lookup. When
+  the element is a dict, its keys are ALSO reachable bare (`{{ field }}`), and
+  those bare names SHADOW the outer context for that one iteration. Names not
+  found in the element fall back to the outer (enclosing) context.
+- An `items` that is MISSING, `None`, empty, or not a list/sequence yields ZERO
+  iterations (BODY is emitted zero times). Strings and dicts are treated as
+  NON-iterable here — you iterate a list, not the characters of a string.
+- After the loop, the loop-local names (`this`, `@index`, ...) are gone again;
+  they do not leak to the enclosing scope.
+
+### `if`
+
+- `cond` is resolved with the same (dotted) lookup as a variable, then tested
+  for Python truthiness. FALSY means: a missing variable, `None`, `False`, `0`,
+  `""`, or an empty collection (`[]`, `{}`). Everything else is truthy.
+- The `{{else}}` arm is optional. Exactly one arm renders.
+
+### Unchanged
+
+- A plain `{{ var }}` (including dotted `{{ a.b.c }}`) renders exactly as before:
+  the looked-up value coerced with `str()`, or `""` if missing or `None`. Booleans
+  render as `true` / `false` (lowercase).
+
+## Whitespace (pin this exactly)
+
+- The engine performs NO whitespace trimming around tags. Each tag span — from
+  the opening `{{` to the closing `}}` — is removed exactly where it sits, and
+  every other character (spaces, tabs, newlines, literal text) is preserved BYTE
+  FOR BYTE. There is no "standalone tag" newline-eating and no body trimming.
+
+      render("a {{#if t}} b {{/if}} c", {"t": True})  ==  "a  b  c"
+
+  (Note the two spaces on each side: the spaces that flanked the now-removed
+  tags survive.) This is what lets output be checked by exact equality.
+
+- Inside `{{ ... }}` the inner expression IS stripped of surrounding whitespace,
+  so `{{ name }}` and `{{name}}` resolve the same variable.
+
+## Example
+
+    render("{{#each xs}}[{{ @index }}:{{ this }}]{{/each}}", {"xs": ["a", "b", "c"]})
+    # -> "[0:a][1:b][2:c]"
+
+    render(
+        "{{#each users}}{{#if @first}}{{ name }}{{else}}, {{ name }}{{/if}}{{/each}}",
+        {"users": [{"name": "Ada"}, {"name": "Bo"}, {"name": "Cy"}]},
+    )
+    # -> "Ada, Bo, Cy"
+
+    render(
+        "{{#if items}}<ul>{{#each items}}<li>{{ this }}</li>{{/each}}</ul>{{else}}empty{{/if}}",
+        {"items": []},
+    )
+    # -> "empty"        (an empty list is falsy, so the else arm renders)
+
+A bare field of a dict element shadows the outer context for that iteration:
+
+    render("{{#each rows}}{{ x }}{{/each}}", {"x": "OUT", "rows": [{"x": "A"}, {}]})
+    # -> "AOUT"         (first row has its own x=A; the second {} falls back to OUT)
+
+## Contract
+
+- Package name: `tmploop`. The grader imports `tmploop.public` (falling back to
+  `tmploop`); keep both import paths working.
+- Public function `render(template: str, context: dict) -> str`. It returns a
+  `str`; it does not print and does not write files.
+- `render(template, None)` is allowed and behaves as if `context` were `{}`.
+- A MALFORMED template — an unclosed `{{#each}}`/`{{#if}}`, a stray
+  `{{/each}}`/`{{/if}}` with no opener, a mismatched closer (`{{#each}}...{{/if}}`),
+  or an `{{else}}` outside an `{{#if}}` — raises an exception from `render` rather
+  than silently producing wrong output or hanging.
+- Standard library only. Do not use `eval`. No persistence, no threading.

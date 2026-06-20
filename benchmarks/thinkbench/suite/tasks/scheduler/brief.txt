@@ -1,0 +1,20 @@
+I'd like a small Python package, `scheduler`, that runs tasks on a schedule — some
+things need to happen every so often, others at particular times of day, and I want
+one place to register that work and have it actually fire when it's supposed to.
+
+The picture in my head is: I describe a handful of tasks, say when each one should
+run, hand the lot to the scheduler, and let it tick along firing them at the right
+moments. The kind of thing you'd reach for to send a nightly report, refresh a cache
+every few minutes, do the weekly cleanup — ordinary recurring chores, nothing exotic.
+
+What I care about most is that it's pleasant to register a task and say when it runs,
+and that I can trust the timing — when a task was due, it ran, and I can tell that it
+did. It should be importable as `scheduler`, and there should be an obvious way to
+actually start the thing going, whether that's from code or the command line; use
+your judgment.
+
+Beyond that the design is yours. Keep it small and lean on the standard library where
+you can — I'd rather see the choices you'd actually defend than a wall of options or
+configuration. Some real tests around the scheduling behavior would give me
+confidence it does what you think it does, and a couple of examples in a README so I
+can see how it's meant to be used. Clean and well-thought-through beats sprawling.
