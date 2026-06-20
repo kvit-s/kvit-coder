@@ -73,7 +73,23 @@ func RunThinkbench(ctx context.Context, flags ThinkbenchCLIFlags, runner *agent.
 		return fmt.Errorf("failed to create terminal log: %w", err)
 	}
 	defer terminalFile.Close()
-	out := io.MultiWriter(os.Stdout, NewANSIStripWriter(terminalFile))
+
+	// Tee both the harness progress and the agent's per-step transcript into the
+	// terminal log (ANSI codes stripped for the file). stdout/stderr keep their
+	// colors on screen.
+	terminalWriter := NewANSIStripWriter(terminalFile)
+	stdoutWriter := io.MultiWriter(os.Stdout, terminalWriter)
+	stderrWriter := io.MultiWriter(os.Stderr, terminalWriter)
+	out := stdoutWriter
+
+	// Route the agent runner's output through the same writers so each task's
+	// transcript is captured (mirrors the tool benchmark in Run()).
+	rw := runner.Writer()
+	rw.SetHeadless(false)
+	rw.SetQuiet(false)
+	rw.SetStdout(stdoutWriter)
+	rw.SetStderr(stderrWriter)
+	rw.SetColorOutput(stdoutWriter)
 
 	// --- Load suite -----------------------------------------------------------
 	allTasks, err := LoadThinkbenchSuite(suiteDir)
@@ -131,7 +147,7 @@ func RunThinkbench(ctx context.Context, flags ThinkbenchCLIFlags, runner *agent.
 	cfg.Tools.Shell.AllowInterpreters = true
 
 	timeout := time.Duration(cfg.Thinkbench.GetTimeoutPerRun()) * time.Second
-	executor := NewTBExecutor(runner, cfg, systemPrompt, env, workspace, observedDir, timeout, out, out)
+	executor := NewTBExecutor(runner, cfg, systemPrompt, env, workspace, observedDir, timeout, stdoutWriter, stderrWriter)
 
 	// --- Resume ---------------------------------------------------------------
 	completed := make(map[string]bool)
