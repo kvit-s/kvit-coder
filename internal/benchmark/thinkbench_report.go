@@ -138,9 +138,10 @@ func WriteTBResultsJSON(path string, res *TBResults) error {
 	return os.WriteFile(path, data, 0644)
 }
 
-// WriteTBResultsMarkdown writes the human-readable RESULTS.md, mirroring the
-// example bundle's headings (overall, by-type, per-task, observed).
-func WriteTBResultsMarkdown(path string, model string, res *TBResults) error {
+// WriteTBResultsMarkdown writes the human-readable report: overall, by-type,
+// per-task (with timing), every per-run result, a failures breakdown (which
+// grader checks failed), the observed tasks, and the config it ran with.
+func WriteTBResultsMarkdown(path string, model string, res *TBResults, rawResults []TBRunResult, configYAML string) error {
 	var b strings.Builder
 
 	b.WriteString("# thinkbench — results\n\n")
@@ -182,16 +183,66 @@ func WriteTBResultsMarkdown(path string, model string, res *TBResults) error {
 	b.WriteString("\n")
 
 	// Per-task.
-	b.WriteString("## Per-task (graded — mean score over trials)\n\n")
-	b.WriteString("| task | type | mean score | full-pass |\n")
-	b.WriteString("|---|---|--:|--:|\n")
+	b.WriteString("## Per-task (graded — mean over trials)\n\n")
+	b.WriteString("| task | type | mean score | full-pass | avg time | avg tokens |\n")
+	b.WriteString("|---|---|--:|--:|--:|--:|\n")
 	slugs := sortedKeys(res.ByTask)
 	for _, slug := range slugs {
 		entry := res.ByTask[slug]
 		r := entry.Models[model]
-		fmt.Fprintf(&b, "| %s | %s | %.2f | %d/%d |\n", slug, entry.Type, r.MeanScore, r.Solved, r.N)
+		fmt.Fprintf(&b, "| %s | %s | %.2f | %d/%d | %.0fs | %s |\n",
+			slug, entry.Type, r.MeanScore, r.Solved, r.N, r.AvgSecs, commaInt(r.AvgTokens))
 	}
 	b.WriteString("\n")
+
+	// Per-run results (graded) — one row per (task, trial).
+	graded := sortRuns(filterResults(rawResults, false))
+	if len(graded) > 0 {
+		b.WriteString("## Per-run results (graded)\n\n")
+		b.WriteString("| task | type | trial | score | checks | time | tokens | result |\n")
+		b.WriteString("|---|---|--:|--:|--:|--:|--:|---|\n")
+		for _, r := range graded {
+			fmt.Fprintf(&b, "| %s | %s | %d | %.3f | %d/%d | %.0fs | %s | %s |\n",
+				r.Slug, r.Type, r.Run, r.Score, r.Passed, r.Total,
+				float64(r.DurationMS)/1000, commaInt(r.Tokens), runOutcome(r))
+		}
+		b.WriteString("\n")
+	}
+
+	// Failures — graded runs below a full pass, with the exact checks that failed.
+	var fails []TBRunResult
+	for _, r := range graded {
+		if !r.FullPass {
+			fails = append(fails, r)
+		}
+	}
+	if len(fails) > 0 {
+		b.WriteString("## Failures (graded runs below full pass)\n\n")
+		for _, r := range fails {
+			imp := ""
+			if !r.ImportOK {
+				imp = ", import FAILED"
+			}
+			fmt.Fprintf(&b, "### %s — trial %d (score %.3f, %d/%d%s)\n\n", r.Slug, r.Run, r.Score, r.Passed, r.Total, imp)
+			if len(r.FailedChecks) > 0 {
+				b.WriteString("Failed checks:\n")
+				for _, c := range r.FailedChecks {
+					fmt.Fprintf(&b, "- %s\n", c)
+				}
+				b.WriteString("\n")
+			}
+			if len(r.Errors) > 0 {
+				b.WriteString("Errors:\n")
+				for _, e := range r.Errors {
+					fmt.Fprintf(&b, "- %s\n", truncateString(e, 300))
+				}
+				b.WriteString("\n")
+			}
+			if r.WorkspaceDir != "" {
+				fmt.Fprintf(&b, "Workspace kept at: `%s`\n\n", r.WorkspaceDir)
+			}
+		}
+	}
 
 	// Observed.
 	if len(res.Observed) > 0 {
@@ -206,7 +257,42 @@ func WriteTBResultsMarkdown(path string, model string, res *TBResults) error {
 		b.WriteString("\n")
 	}
 
+	// Embedded config the run used (mirrors the other benchmark reports).
+	if strings.TrimSpace(configYAML) != "" {
+		b.WriteString("## Configuration (config file)\n\n```yaml\n")
+		b.WriteString(configYAML)
+		if !strings.HasSuffix(configYAML, "\n") {
+			b.WriteString("\n")
+		}
+		b.WriteString("```\n")
+	}
+
 	return os.WriteFile(path, []byte(b.String()), 0644)
+}
+
+// runOutcome labels a graded run for the per-run table.
+func runOutcome(r TBRunResult) string {
+	switch {
+	case r.FullPass:
+		return "pass"
+	case !r.ImportOK:
+		return "import-fail"
+	default:
+		return "partial"
+	}
+}
+
+// sortRuns orders results by slug, then trial, for stable report output.
+func sortRuns(rs []TBRunResult) []TBRunResult {
+	out := make([]TBRunResult, len(rs))
+	copy(out, rs)
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Slug != out[j].Slug {
+			return out[i].Slug < out[j].Slug
+		}
+		return out[i].Run < out[j].Run
+	})
+	return out
 }
 
 // --- helpers ---------------------------------------------------------------

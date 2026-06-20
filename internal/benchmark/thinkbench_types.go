@@ -82,7 +82,8 @@ type TBRunResult struct {
 	LLMCalls        int
 
 	Errors       []string
-	WorkspaceDir string // persisted path for observed tasks / grading failures
+	FailedChecks []string // "check_id: detail" for each grader check that did not pass
+	WorkspaceDir string   // persisted path for observed tasks / grading failures
 }
 
 // CachedFrac returns the cached fraction of prompt tokens for this run.

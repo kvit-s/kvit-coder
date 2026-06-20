@@ -245,11 +245,21 @@ report:
 	}
 	results := BuildTBResults(model, time.Now().Unix(), flags.Runs, tasks, allResults, cfgMap)
 
+	// Embed the config file used (config-<suffix>.yaml, else config.yaml).
+	configYAML := ""
+	configFileName := "config.yaml"
+	if flags.Suffix != "" {
+		configFileName = fmt.Sprintf("config-%s.yaml", flags.Suffix)
+	}
+	if data, err := os.ReadFile(filepath.Join(originalWorkspaceRoot, configFileName)); err == nil {
+		configYAML = string(data)
+	}
+
 	if err := WriteTBResultsJSON(jsonPath, results); err != nil {
 		return fmt.Errorf("failed to write results.json: %w", err)
 	}
-	if err := WriteTBResultsMarkdown(outputPath, model, results); err != nil {
-		return fmt.Errorf("failed to write RESULTS.md: %w", err)
+	if err := WriteTBResultsMarkdown(outputPath, model, results, allResults, configYAML); err != nil {
+		return fmt.Errorf("failed to write report: %w", err)
 	}
 
 	fmt.Fprintf(out, "\nReport written to: %s\n", outputPath)

@@ -83,6 +83,26 @@ func parseScorecard(stdout string) (*TBScorecard, error) {
 	return nil, fmt.Errorf("no JSON scorecard found in %d bytes of stdout", len(stdout))
 }
 
+// summarizeFailedChecks returns a "check_id: detail" line for each grader check
+// that did not pass, so the report can show exactly where a run fell short.
+func summarizeFailedChecks(card *TBScorecard) []string {
+	if card == nil {
+		return nil
+	}
+	var out []string
+	for _, c := range card.Checks {
+		if !c.Passed {
+			detail := strings.TrimSpace(c.Detail)
+			if detail == "" {
+				out = append(out, c.ID)
+			} else {
+				out = append(out, fmt.Sprintf("%s: %s", c.ID, truncateString(detail, 160)))
+			}
+		}
+	}
+	return out
+}
+
 // failedScorecard returns a zero-score scorecard with the fixed denominator
 // from the manifest, used when grading itself fails.
 func failedScorecard(task TBTask) *TBScorecard {

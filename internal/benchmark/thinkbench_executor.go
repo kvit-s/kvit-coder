@@ -113,6 +113,7 @@ func (e *TBExecutor) Execute(ctx context.Context, task TBTask, runID int) *TBRun
 	result.Total = card.Total
 	result.ImportOK = card.ImportOK
 	result.FullPass = card.Total > 0 && card.Passed == card.Total
+	result.FailedChecks = summarizeFailedChecks(card)
 
 	// Keep the workspace for debugging on anything less than a full pass.
 	if !result.FullPass {

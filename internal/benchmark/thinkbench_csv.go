@@ -15,7 +15,7 @@ var TBCSVHeaders = []string{
 	"slug", "type", "run", "observed",
 	"score", "passed", "total", "full_pass", "import_ok",
 	"llm_calls", "tokens", "prompt_tokens", "generated_tokens", "cached_tokens",
-	"context_used", "cost", "duration_ms", "errors", "workspace_dir",
+	"context_used", "cost", "duration_ms", "errors", "workspace_dir", "failed_checks",
 }
 
 // TBCSVWriter appends thinkbench run results to a CSV for resume.
@@ -57,6 +57,7 @@ func NewTBCSVWriter(path string, resume bool) (*TBCSVWriter, error) {
 // WriteResult appends one result row.
 func (w *TBCSVWriter) WriteResult(r *TBRunResult) error {
 	errorsJSON, _ := json.Marshal(r.Errors)
+	failedJSON, _ := json.Marshal(r.FailedChecks)
 	row := []string{
 		r.Slug,
 		r.Type,
@@ -77,6 +78,7 @@ func (w *TBCSVWriter) WriteResult(r *TBRunResult) error {
 		strconv.FormatInt(r.DurationMS, 10),
 		string(errorsJSON),
 		r.WorkspaceDir,
+		string(failedJSON),
 	}
 	if err := w.writer.Write(row); err != nil {
 		return err
@@ -112,7 +114,7 @@ func LoadTBResults(path string) ([]TBRunResult, error) {
 
 	var out []TBRunResult
 	for _, row := range records[1:] {
-		if len(row) < len(TBCSVHeaders) {
+		if len(row) < 19 { // 19 = original column count; failed_checks (col 20) is optional
 			continue
 		}
 		run, _ := strconv.Atoi(row[2])
@@ -131,6 +133,11 @@ func LoadTBResults(path string) ([]TBRunResult, error) {
 		var errs []string
 		if row[17] != "" && row[17] != "null" {
 			_ = json.Unmarshal([]byte(row[17]), &errs)
+		}
+
+		var failed []string
+		if len(row) >= 20 && row[19] != "" && row[19] != "null" {
+			_ = json.Unmarshal([]byte(row[19]), &failed)
 		}
 
 		out = append(out, TBRunResult{
@@ -153,6 +160,7 @@ func LoadTBResults(path string) ([]TBRunResult, error) {
 			DurationMS:      durationMS,
 			Errors:          errs,
 			WorkspaceDir:    row[18],
+			FailedChecks:    failed,
 		})
 	}
 	return out, nil
