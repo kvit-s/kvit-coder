@@ -70,7 +70,7 @@ tools:
     excluded_patterns: []
 
   tasks:
-    enabled: false              # Enable Tasks.* tools (disables Plan.* and Checkpoint.* tools)
+    enabled: true              # Enable Tasks.* tools (disables Plan.* and Checkpoint.* tools)
     collapse: false             # Stage 2: Enable Tasks.Collapse
     plan: false                 # Stage 3: Enable plan-based Tasks tools
     # Runtime notice thresholds
