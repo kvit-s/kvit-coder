@@ -23,7 +23,8 @@ type ThinkbenchCLIFlags struct {
 	Types       string // comma-separated type override
 	SuiteDir    string // override suite directory
 	OutputFile  string
-	NoResume    bool
+	NoResume    bool // accepted for parity; thinkbench is fresh-by-default so this is a no-op
+	Resume      bool // opt in to resuming the most recent interrupted run
 	Suffix      string
 }
 
@@ -159,21 +160,27 @@ func RunThinkbench(ctx context.Context, flags ThinkbenchCLIFlags, runner *agent.
 	timeout := time.Duration(cfg.Thinkbench.GetTimeoutPerRun()) * time.Second
 	executor := NewTBExecutor(runner, cfg, systemPrompt, env, workspace, observedDir, timeout, stdoutWriter, stderrWriter)
 
-	// --- Resume ---------------------------------------------------------------
+	// --- Resume (opt-in) ------------------------------------------------------
+	// A plain run starts fresh (matching the other bench families). Resuming the
+	// most recent interrupted run is explicit, via --bench-thinkbench-resume.
 	completed := make(map[string]bool)
 	var allResults []TBRunResult
-	if !flags.NoResume {
-		prior, err := loadResumeCSV(resultsDir)
-		if err == nil && len(prior) > 0 {
-			for _, r := range prior {
+	if flags.Resume {
+		if prior := latestThinkbenchCSV(resultsDir); prior != "" {
+			loaded, _ := LoadTBResults(prior)
+			for _, r := range loaded {
 				completed[tbCompletedKey(r.Slug, r.Run)] = true
 				allResults = append(allResults, r)
 			}
-			fmt.Fprintf(out, "Resuming: %d runs already completed\n", len(prior))
+			csvPath = prior // append to the same CSV so the resume chain stays intact
+			fmt.Fprintf(out, "Resuming from %s: %d runs already completed\n", filepath.Base(prior), len(loaded))
+		} else {
+			fmt.Fprintf(out, "--bench-thinkbench-resume requested but no prior thinkbench CSV found; starting fresh\n")
 		}
 	}
 
-	csvWriter, err := NewTBCSVWriter(csvPath, !flags.NoResume)
+	// Append when resuming an existing CSV; create a new one otherwise.
+	csvWriter, err := NewTBCSVWriter(csvPath, flags.Resume)
 	if err != nil {
 		return fmt.Errorf("failed to open CSV: %w", err)
 	}
@@ -252,12 +259,12 @@ report:
 	return nil
 }
 
-// loadResumeCSV finds the most recent thinkbench CSV in the results dir and
-// loads it, so an interrupted sweep resumes across separate invocations.
-func loadResumeCSV(resultsDir string) ([]TBRunResult, error) {
+// latestThinkbenchCSV returns the path of the most recent thinkbench result CSV
+// in the results dir (by timestamped filename), or "" if none exists.
+func latestThinkbenchCSV(resultsDir string) string {
 	entries, err := os.ReadDir(resultsDir)
 	if err != nil {
-		return nil, err
+		return ""
 	}
 	var newest string
 	for _, e := range entries {
@@ -269,9 +276,9 @@ func loadResumeCSV(resultsDir string) ([]TBRunResult, error) {
 		}
 	}
 	if newest == "" {
-		return nil, nil
+		return ""
 	}
-	return LoadTBResults(filepath.Join(resultsDir, newest))
+	return filepath.Join(resultsDir, newest)
 }
 
 // providerFromURL makes a human-readable provider label from the endpoint URL.

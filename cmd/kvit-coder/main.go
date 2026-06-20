@@ -60,6 +60,7 @@ func main() {
 	benchThinkbench := flag.String("bench-thinkbench", "", "run thinkbench (coding agent) benchmarks (optional suffix)")
 	benchThinkbenchID := flag.String("bench-thinkbench-id", "", "run specific thinkbench task slugs (comma-separated)")
 	benchThinkbenchTypes := flag.String("bench-thinkbench-types", "", "filter thinkbench tasks by type (comma-separated)")
+	benchThinkbenchResume := flag.Bool("bench-thinkbench-resume", false, "resume the most recent interrupted thinkbench run (default: start fresh)")
 	thinkbenchSuite := flag.String("thinkbench-suite", "", "override thinkbench suite directory")
 
 	// Session flags
@@ -451,6 +452,7 @@ func main() {
 			SuiteDir:    *thinkbenchSuite,
 			OutputFile:  *benchmarkOutput,
 			NoResume:    *benchmarkNoResume,
+			Resume:      *benchThinkbenchResume,
 			Suffix:      thinkbenchSuffix,
 		}
 
