@@ -114,6 +114,63 @@ func isSystemBoundPath(p string) bool {
 	return false
 }
 
+// installPipPackages installs the given packages into the shared uv env (once
+// per invocation, at preflight) so agents can use common test deps (pytest)
+// without reaching outside the sandbox to locate them. It is best-effort: a
+// failure (e.g. offline) is warned and the run continues — agents fall back to
+// the stdlib (unittest), and the held-out grader is stdlib-only regardless.
+func installPipPackages(ctx context.Context, env *thinkbenchEnv, pkgs []string, out io.Writer) {
+	if len(pkgs) == 0 {
+		return
+	}
+
+	// Skip if every package already imports in the env (avoids a network hit on
+	// resume runs). Cheap probe via the env interpreter.
+	probe := "import importlib.util,sys; sys.exit(0 if all(importlib.util.find_spec(m) for m in sys.argv[1:]) else 1)"
+	check := exec.CommandContext(ctx, env.UVPy, append([]string{"-c", probe}, importNames(pkgs)...)...)
+	check.Env = append(os.Environ(), env.InjectEnv...)
+	if check.Run() == nil {
+		return // all present
+	}
+
+	fmt.Fprintf(out, "Installing test deps into uv env: %s\n", strings.Join(pkgs, " "))
+	args := append([]string{"pip", "install", "--python", env.UVPy, "--quiet"}, pkgs...)
+	cmd := exec.CommandContext(ctx, "uv", args...)
+	cmd.Env = append(os.Environ(), env.InjectEnv...)
+	cmd.Stdout = out
+	cmd.Stderr = out
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(out, "⚠️  could not pre-install %v (%v); agents will fall back to stdlib unittest\n", pkgs, err)
+	}
+}
+
+// importNames maps pip package names to their import module name for the
+// presence probe (only the common ones that differ need special-casing).
+func importNames(pkgs []string) []string {
+	special := map[string]string{
+		"pytest-cov":     "pytest_cov",
+		"pyyaml":         "yaml",
+		"beautifulsoup4": "bs4",
+	}
+	out := make([]string, len(pkgs))
+	for i, p := range pkgs {
+		// Strip any version specifier (pytest==8.0 → pytest).
+		name := p
+		for _, sep := range []string{"==", ">=", "<=", "~=", ">", "<", "["} {
+			if idx := strings.Index(name, sep); idx >= 0 {
+				name = name[:idx]
+			}
+		}
+		name = strings.TrimSpace(name)
+		if mod, ok := special[strings.ToLower(name)]; ok {
+			out[i] = mod
+		} else {
+			out[i] = strings.ReplaceAll(name, "-", "_")
+		}
+	}
+	return out
+}
+
 // resolveSandbox selects and builds the OS sandbox wrapper per the configured
 // mode. modes: "auto" (bwrap→firejail→none), "bwrap", "firejail", "none",
 // "require" (auto but hard-fail if none found). uvDir is bind-mounted read-only;

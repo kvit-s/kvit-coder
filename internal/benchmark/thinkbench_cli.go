@@ -125,6 +125,9 @@ func RunThinkbench(ctx context.Context, flags ThinkbenchCLIFlags, runner *agent.
 	if err != nil {
 		return fmt.Errorf("uv preflight failed: %w", err)
 	}
+	// Pre-install common test deps (default: pytest) so agents don't search the
+	// filesystem outside the sandbox for them.
+	installPipPackages(ctx, env, cfg.Thinkbench.GetPipPackages(), out)
 
 	sandbox, err := resolveSandbox(cfg.Thinkbench.GetSandbox(), env, workspace, out)
 	if err != nil {

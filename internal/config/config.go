@@ -70,6 +70,10 @@ type ThinkbenchConfig struct {
 	Types []string `yaml:"types"`
 	// Trials is the default trials-per-task (overridden by -n on the command line).
 	Trials int `yaml:"trials"`
+	// PipPackages are installed into the shared uv env at preflight so agents can
+	// use common test deps without reaching outside the sandbox to find them.
+	// nil (unset) defaults to ["pytest"]; an explicit empty list installs nothing.
+	PipPackages []string `yaml:"pip_packages"`
 	// IncludeObserved runs the ungraded ambiguous-spec tasks too (persist-only).
 	IncludeObserved bool `yaml:"include_observed"`
 }
@@ -96,6 +100,15 @@ func (t *ThinkbenchConfig) GetSandbox() string {
 		return "auto"
 	}
 	return t.Sandbox
+}
+
+// GetPipPackages returns the packages to pre-install into the uv env. An unset
+// (nil) list defaults to ["pytest"]; an explicit empty list installs nothing.
+func (t *ThinkbenchConfig) GetPipPackages() []string {
+	if t.PipPackages == nil {
+		return []string{"pytest"}
+	}
+	return t.PipPackages
 }
 
 // DiagnosticsConfig configures anomaly interrogation/logging (Improvement 2).
