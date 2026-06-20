@@ -142,12 +142,16 @@ func (it *Interrogator) ask(ctx context.Context, history []llm.Message, question
 
 	// No Tools and no ToolChoice: a plain chat completion is maximally compatible across
 	// OpenAI-style servers and the model has nothing to call, so it must answer in prose.
+	// enable_thinking:false suppresses reasoning so the model answers the question directly
+	// in `content` instead of emitting chain-of-thought we'd have to fall back to logging
+	// (ignored by servers/templates that don't support the key).
 	resp, err := it.client.Chat(askCtx, llm.ChatRequest{
-		Model:       it.cfg.LLM.Model,
-		Messages:    msgs,
-		Temperature: it.cfg.LLM.Temperature,
-		MaxTokens:   it.cfg.LLM.MaxTokens,
-		Stream:      false,
+		Model:              it.cfg.LLM.Model,
+		Messages:           msgs,
+		Temperature:        it.cfg.LLM.Temperature,
+		MaxTokens:          it.cfg.LLM.MaxTokens,
+		Stream:             false,
+		ChatTemplateKwargs: map[string]any{"enable_thinking": false},
 	})
 	if err != nil {
 		return "", err
@@ -302,7 +306,12 @@ func lastToolResult(messages []llm.Message) string {
 // Every template states the answer is for diagnostics and will not be graded, to reduce
 // the model performing rather than reporting.
 func buildInterrogationQuestion(ep Episode) string {
-	const diagnosticNote = "\n\nThis question is for diagnostics only. Your answer will NOT be graded and will NOT change the task. Answer concisely and honestly."
+	// Answers must be short, categorical, and free of chain-of-thought — the goal is to
+	// surface the model's wrong BELIEF (esp. whether it thinks its last call succeeded),
+	// not a narration of its reasoning. Each template ends with a strict answer format.
+	const format = "\n\nThis is a diagnostic question only — it does not change the task and is not graded. " +
+		"Do NOT narrate your reasoning or restate the question. Reply with ONLY the labeled lines below, " +
+		"one short answer each:\n"
 
 	switch ep.Trigger {
 	case TriggerPendingBlocked:
@@ -310,28 +319,30 @@ func buildInterrogationQuestion(ep Episode) string {
 		if diff == "" {
 			diff = "(diff unavailable)"
 		}
-		return fmt.Sprintf("An edit is pending with this diff:\n%s\n\n"+
-			"You are required to call `Edit.confirm` or `Edit.cancel` and nothing else. "+
-			"You instead called `%s`. Explain why - did you not see the pending state, "+
-			"did you expect the edit was already applied, or something else?%s",
-			diff, ep.OffendingTool, diagnosticNote)
+		return fmt.Sprintf("An edit is staged and waiting — you must call `Edit.confirm` to apply it or "+
+			"`Edit.cancel` to discard it. Its diff:\n%s\n\nYou instead called `%s`.%s"+
+			"ALREADY_APPLIED: do you believe this edit is already applied to the file? (yes/no)\n"+
+			"KNEW_CONFIRM: did you know you must call Edit.confirm to apply it? (yes/no)\n"+
+			"WHY: in one sentence, why did you call `%s` instead of confirm/cancel?",
+			diff, ep.OffendingTool, format, ep.OffendingTool)
 
 	case TriggerAlternatingLoop:
-		return fmt.Sprintf("You appear to be stuck in an alternating loop involving `%s`: "+
-			"issuing the same action and then cancelling/undoing it, repeatedly. "+
-			"Explain: (1) what you believe the current file/tool state is, (2) why the cycle "+
-			"keeps repeating, (3) what different action would actually make progress.%s",
-			ep.OffendingTool, diagnosticNote)
+		return fmt.Sprintf("You are repeating a cycle: do `%s`, then cancel/undo it, over and over.%s"+
+			"STATE_NOW: in one sentence, what does the file contain right now?\n"+
+			"WHY_CANCEL: in one sentence, why do you cancel each time?\n"+
+			"DIFFERENT_NEXT: in one sentence, what different action would actually make progress?",
+			ep.OffendingTool, format)
 
 	default: // duplicate_call, fatal, backtrack - all "same call again" shaped
 		prior := ep.PriorResult
 		if prior == "" {
 			prior = "(previous result unavailable)"
 		}
-		return fmt.Sprintf("You just issued this tool call again with identical arguments:\n`%s %s`\n\n"+
-			"The previous result was:\n%s\n\n"+
-			"Explain: (1) why you expected a different outcome, (2) what you believe the current "+
-			"file/tool state is, (3) what you think you must do next to make progress.%s",
-			ep.OffendingTool, ep.OffendingArgs, prior, diagnosticNote)
+		return fmt.Sprintf("You just made this call AGAIN with identical arguments:\n`%s %s`\n\n"+
+			"Its previous result was:\n%s%s"+
+			"SUCCEEDED_OR_FAILED: did your previous call succeed or fail? (one word)\n"+
+			"STATE_NOW: in one sentence, what does the file or result actually contain right now?\n"+
+			"WHY_REPEATED: in one sentence, why did you send the identical call again instead of something different?",
+			ep.OffendingTool, ep.OffendingArgs, prior, format)
 	}
 }

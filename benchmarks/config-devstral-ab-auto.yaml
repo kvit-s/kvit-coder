@@ -1,7 +1,7 @@
 llm:
   base_url: "http://192.168.8.20:8080/v1"  # Your OpenAI-compatible endpoint
-  model: "qwen3.6-27b-mtp"
-  context: 180000
+  model: "devstral-small-2"
+  context: 120000
   merge_thinking: false  # true = merge reasoning into content, false = discard
   verbose: 0             # 0 = off, >0 = show tool output up to N lines
 
@@ -15,7 +15,7 @@ agent:
 backtrack:
   enabled: true             # Enable backtracking on semantic errors (LLM misuse)
   max_retries: 3            # Max retries at same history point before falling back to error-in-history
-  inject_user_message: true # On limit reached: backtrack + inject user message (with error) instead of error-in-history
+  inject_user_message: false # On limit reached: backtrack + inject user message (with error) instead of error-in-history
 
 tools:
   # All tools are disabled by default - explicitly enable the ones you want
@@ -25,24 +25,17 @@ tools:
     max_file_size_kb: 128
     max_read_size_kb: 24
     max_partial_lines: 150
-    show_line_numbers: false    # content-based mode: hide gutter so the model can't copy line numbers into search text
+    show_line_numbers: true     # ABLATION: baseline value
 
-  # PROFILE: content-based + auto-apply, aligned to qwen's trained distribution
-  # (probe: qwen ranks search-replace #1, line-addressing #3; expects edits to auto-apply
-  #  with no confirm step). Goal: fix C3/E5 (parallel-edit + confirm collision) with config only.
+  # ABLATION "auto": baseline EXCEPT preview_mode off. Isolates AUTO-APPLY (lines mode + line numbers kept).
   edit:
     enabled: true
-    mode: "searchreplace"       # was "lines" — content-based (old_string -> new_string), qwen's #1
+    mode: "lines"               # baseline mode
     max_file_size_kb: 128
-    preview_mode: false         # auto-apply: no edit.confirm/edit.cancel handshake (removes the C3/E5 pending-loop)
+    preview_mode: false         # the ONE change vs baseline: auto-apply
     read_before_edit_msgs: 0    # require read within N messages before edit (0 = disabled)
-    pending_confirm_retries: 2  # (inert with preview_mode off)
+    pending_confirm_retries: 3  # (inert with preview_mode off)
     fuzzy_threshold: 0.0        # exact + rstrip/full-strip normalization. Bump to 0.8 if whitespace-drift misses appear.
-    # NOTE: the flags below are lines-mode features and are INERT in searchreplace mode
-    # (autoindent needs preview_mode; the ""-blank flip lives in lines apply). Left for easy revert.
-    smart_first_line_indent: true
-    max_autoindent_fix: 1
-    explicit_delete: true
 
   restore_file:
     enabled: true
@@ -116,9 +109,9 @@ prompts:
 
 # Improvement 2: anomaly interrogation / logging (observability only - does not change recovery)
 diagnostics:
-  interrogate_on_anomaly: true        # Ask qwen to explain loops / repeated calls / ignored confirm-cancel; log the Q&A
+  interrogate_on_anomaly: true        # Ask the model to explain loops / repeated calls / ignored confirm-cancel; log the Q&A
   interrogate_triggers: []            # [] = all: duplicate_call, pending_blocked, alternating_loop, fatal, backtrack
   interrogate_identical_threshold: 2  # Fire after N consecutive identical calls / pending-edit blocks
   interrogate_max_per_task: 3         # Hard cap on interrogations per task
-  interrogate_log_dir: ".kvit-coder-benchmark/interrogations"  # JSONL logs (relative to benchmarks/ launch dir, alongside results/ and workspace/)
+  interrogate_log_dir: ".kvit-coder-benchmark/interrogations"  # JSONL logs (relative to benchmarks/ launch dir)
   interrogate_then_inject: false      # Reserved for the later recovery variant (no-op in v1)

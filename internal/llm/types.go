@@ -35,6 +35,10 @@ type ChatRequest struct {
 	Tools       []ToolSpec `json:"tools,omitempty"`
 	ToolChoice  string     `json:"tool_choice,omitempty"`
 	Stream      bool       `json:"stream,omitempty"`
+	// ChatTemplateKwargs passes extra args to the server's chat template (llama.cpp /
+	// vLLM style), e.g. {"enable_thinking": false} to suppress reasoning for a call.
+	// Omitted from the body when nil; ignored by templates that don't use the key.
+	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
 }
 
 // ChoiceError represents an error returned in a choice (e.g., upstream provider errors)

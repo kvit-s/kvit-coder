@@ -25,16 +25,21 @@ tools:
     max_file_size_kb: 128
     max_read_size_kb: 24
     max_partial_lines: 150
-    show_line_numbers: true     # set to false for content-based edit modes (searchreplace, patch)
+    show_line_numbers: true     # baseline (devstral edits best in lines mode)
 
+  # REVERTED to baseline. Ablation: searchreplace mode caused the whole regression (edit-class
+  # 100% -> 76%); auto-apply was harmless (100%). devstral measures best on line-addressed edits;
+  # its probe "prefers search-replace" was aspiration, not capability.
+  # (Optional token-saver to test on the FULL suite separately: preview_mode: false — proven 100%
+  #  on the edit class, but the C-class self-correction benefit is untested with it off.)
   edit:
     enabled: true
-    mode: "lines"               # "lines" (default), "searchreplace", or "patch"
+    mode: "lines"               # baseline
     max_file_size_kb: 128
-    preview_mode: true         # enables edit.confirm/edit.cancel
-    read_before_edit_msgs: 0    # require read within N messages before edit (0 = disabled)
-    pending_confirm_retries: 3  # max retries when LLM ignores confirm/cancel (0 = disabled, default 5)
-    fuzzy_threshold: 0.0        # for searchreplace mode: 0 = exact only, 0.8 = enable fuzzy matching
+    preview_mode: true          # baseline
+    read_before_edit_msgs: 0
+    pending_confirm_retries: 3
+    fuzzy_threshold: 0.0
 
   restore_file:
     enabled: true
@@ -105,3 +110,12 @@ prompts:
   use_templates: false          # Enable template-based prompt generation (default: false uses hardcoded)
   templates_dir: ""             # Override embedded templates with filesystem directory (e.g., "./prompts")
   hot_reload: false             # Reload templates on each request (useful for development)
+
+# Improvement 2: anomaly interrogation / logging (observability only - does not change recovery)
+diagnostics:
+  interrogate_on_anomaly: true        # Ask the model to explain loops / repeated calls / ignored confirm-cancel; log the Q&A
+  interrogate_triggers: []            # [] = all: duplicate_call, pending_blocked, alternating_loop, fatal, backtrack
+  interrogate_identical_threshold: 2  # Fire after N consecutive identical calls / pending-edit blocks
+  interrogate_max_per_task: 3         # Hard cap on interrogations per task
+  interrogate_log_dir: ".kvit-coder-benchmark/interrogations"  # JSONL logs (relative to benchmarks/ launch dir)
+  interrogate_then_inject: false      # Reserved for the later recovery variant (no-op in v1)
