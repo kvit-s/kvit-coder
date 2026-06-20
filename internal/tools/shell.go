@@ -448,14 +448,22 @@ func (t *ShellAdvancedTool) validateCommand(cmd string, baseDir string) error {
 		"nc ", "nc\t",
 		"netcat ", "netcat\t",
 		"ncat ", "ncat\t",
-		// Arbitrary code execution via interpreters
-		"python -c", "python2 -c", "python3 -c",
-		"perl -e", "perl -E",
-		"ruby -e",
-		"node -e", "node --eval",
-		"php -r",
 		// Shell builtins that can execute arbitrary code
 		"eval ", "eval\t",
+	}
+
+	// Interpreter one-liners (python -c, node -e, ...) are blocked by default to
+	// keep the agent from bypassing the Edit tool, but the thinkbench harness
+	// enables them: its tasks are interpreter-driven and run inside a hard OS
+	// sandbox + isolated uv env, where `python3 -c` is the natural way to verify.
+	if !t.cfg.Tools.Shell.AllowInterpreters {
+		blocked = append(blocked,
+			"python -c", "python2 -c", "python3 -c",
+			"perl -e", "perl -E",
+			"ruby -e",
+			"node -e", "node --eval",
+			"php -r",
+		)
 	}
 
 	// Block file edit commands - only when Edit tool is available as an alternative

@@ -128,6 +128,7 @@ func RunThinkbench(ctx context.Context, flags ThinkbenchCLIFlags, runner *agent.
 	cfg.Workspace.AllowedReadPaths = nil
 	cfg.Tools.Shell.InjectEnv = env.InjectEnv
 	cfg.Tools.Shell.ExecPrefix = sandbox.ExecPrefix
+	cfg.Tools.Shell.AllowInterpreters = true
 
 	timeout := time.Duration(cfg.Thinkbench.GetTimeoutPerRun()) * time.Second
 	executor := NewTBExecutor(runner, cfg, systemPrompt, env, workspace, observedDir, timeout, out, out)

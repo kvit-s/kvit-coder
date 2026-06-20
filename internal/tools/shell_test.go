@@ -53,6 +53,27 @@ func TestShellTool_BlockedCommand(t *testing.T) {
 	}
 }
 
+func TestShellTool_InterpreterOneLiners(t *testing.T) {
+	tempMgr := NewTempFileManager(os.TempDir())
+	defer tempMgr.CleanupAll()
+
+	cmd := json.RawMessage(`{"command": "python3 -c \"print(1+1)\""}`)
+
+	// Default: interpreter one-liners are blocked.
+	blocked := NewShellTool(newTestConfig(), 10*time.Second, tempMgr)
+	if err := blocked.Check(context.Background(), cmd); err == nil {
+		t.Error("Expected python3 -c to be blocked by default, got nil")
+	}
+
+	// With AllowInterpreters (thinkbench): permitted.
+	cfg := newTestConfig()
+	cfg.Tools.Shell.AllowInterpreters = true
+	allowed := NewShellTool(cfg, 10*time.Second, tempMgr)
+	if err := allowed.Check(context.Background(), cmd); err != nil {
+		t.Errorf("Expected python3 -c to be allowed with AllowInterpreters, got %v", err)
+	}
+}
+
 func TestShellTool_Allowlist(t *testing.T) {
 	tempMgr := NewTempFileManager(os.TempDir())
 	defer tempMgr.CleanupAll()

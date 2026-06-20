@@ -287,6 +287,10 @@ type ShellToolConfig struct {
 	// when running shell commands. Used by the thinkbench harness to wrap agent
 	// commands in an OS sandbox (e.g. bwrap). Empty = run "sh -c" directly (default).
 	ExecPrefix []string `yaml:"-"`
+	// AllowInterpreters, when true, lifts the default block on interpreter
+	// one-liners (python -c, node -e, perl -e, ...). Set by the thinkbench harness,
+	// whose tasks are interpreter-driven and sandboxed. Default false (blocked).
+	AllowInterpreters bool `yaml:"-"`
 }
 
 // PlanToolsConfig configures all plan.* tools as a group
