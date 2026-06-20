@@ -41,7 +41,11 @@ func RunThinkbench(ctx context.Context, flags ThinkbenchCLIFlags, runner *agent.
 		os.Exit(1)
 	}()
 
-	tbRoot := filepath.Join(originalWorkspaceRoot, "benchmarks", "thinkbench")
+	// Anchor runtime dirs to the suite location (not cwd), matching main.go.
+	suiteDir, tbRoot := ResolveThinkbench(originalWorkspaceRoot, flags.SuiteDir, cfg.Thinkbench.SuiteDir)
+	if suiteDir == "" {
+		return fmt.Errorf("thinkbench suite not found (looked for benchmarks/thinkbench/suite/manifest.json); set thinkbench.suite_dir or --thinkbench-suite")
+	}
 	resultsDir := filepath.Join(tbRoot, "results")
 	observedDir := filepath.Join(resultsDir, "observed")
 	uvDir := filepath.Join(tbRoot, ".uv")
@@ -71,21 +75,7 @@ func RunThinkbench(ctx context.Context, flags ThinkbenchCLIFlags, runner *agent.
 	defer terminalFile.Close()
 	out := io.MultiWriter(os.Stdout, NewANSIStripWriter(terminalFile))
 
-	// --- Discover + load suite ------------------------------------------------
-	suiteDir := flags.SuiteDir
-	if suiteDir == "" {
-		suiteDir = cfg.Thinkbench.SuiteDir
-	}
-	if suiteDir == "" {
-		suiteDir = FindThinkbenchSuite(originalWorkspaceRoot)
-	}
-	if suiteDir == "" {
-		return fmt.Errorf("thinkbench suite not found (looked for benchmarks/thinkbench/suite/manifest.json); set thinkbench.suite_dir or --thinkbench-suite")
-	}
-	if abs, err := filepath.Abs(suiteDir); err == nil {
-		suiteDir = abs
-	}
-
+	// --- Load suite -----------------------------------------------------------
 	allTasks, err := LoadThinkbenchSuite(suiteDir)
 	if err != nil {
 		return fmt.Errorf("failed to load suite: %w", err)

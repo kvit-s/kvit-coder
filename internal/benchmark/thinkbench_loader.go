@@ -36,6 +36,32 @@ func FindThinkbenchSuite(root string) string {
 	return ""
 }
 
+// ResolveThinkbench resolves the suite directory and the thinkbench root (the
+// parent of the suite, under which the generated runs/.uv/results dirs live),
+// anchored to the suite location rather than the current working directory. This
+// lets the harness run identically from the repo root or from benchmarks/.
+// Precedence for the suite: explicit override → config suite_dir → discovery.
+// suiteDir is "" when the suite cannot be found; tbRoot then falls back to
+// <root>/benchmarks/thinkbench.
+func ResolveThinkbench(root, override, configDir string) (suiteDir, tbRoot string) {
+	suiteDir = override
+	if suiteDir == "" {
+		suiteDir = configDir
+	}
+	if suiteDir == "" {
+		suiteDir = FindThinkbenchSuite(root)
+	}
+	if suiteDir != "" {
+		if abs, err := filepath.Abs(suiteDir); err == nil {
+			suiteDir = abs
+		}
+		tbRoot = filepath.Dir(suiteDir)
+	} else {
+		tbRoot = filepath.Join(root, "benchmarks", "thinkbench")
+	}
+	return suiteDir, tbRoot
+}
+
 // LoadThinkbenchSuite reads the suite manifest and, per task, resolves the
 // on-disk brief, setup tree, and held-out grader path. It prefers the on-disk
 // brief.txt over the manifest copy to avoid drift.

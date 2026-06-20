@@ -247,11 +247,14 @@ func main() {
 	// The run workspace lives under benchmarks/thinkbench/runs/ (gitignored), kept
 	// physically separate from the suite (held-out graders/references).
 	if thinkbenchEnabled {
+		// Anchor the run workspace to the suite location (not cwd) so the harness
+		// runs identically from the repo root or from benchmarks/.
+		_, tbRoot := benchmark.ResolveThinkbench(originalWorkspaceRoot, *thinkbenchSuite, cfg.Thinkbench.SuiteDir)
 		wsName := "workspace"
 		if thinkbenchSuffix != "" {
 			wsName = "workspace-" + thinkbenchSuffix
 		}
-		cfg.Workspace.Root = filepath.Join(originalWorkspaceRoot, "benchmarks", "thinkbench", "runs", wsName)
+		cfg.Workspace.Root = filepath.Join(tbRoot, "runs", wsName)
 		cfg.Workspace.PathSafetyMode = "block"
 		cfg.Workspace.AllowOutsideWorkspace = false
 		cfg.Workspace.AllowedPaths = nil
