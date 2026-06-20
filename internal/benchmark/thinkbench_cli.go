@@ -53,16 +53,23 @@ func RunThinkbench(ctx context.Context, flags ThinkbenchCLIFlags, runner *agent.
 
 	timestamp := time.Now().Format("20060102-150405")
 
-	// Output paths.
+	// Reports are timestamped + suffix-named in the working dir, matching the
+	// benchmark-*.md / haystack-*.md convention. The .json is a matched pair next
+	// to the .md. The CSV (for resume) and observed/failure workspaces stay under
+	// the (gitignored) benchmarks/thinkbench/results tree.
+	suffixPart := ""
+	if flags.Suffix != "" {
+		suffixPart = "-" + flags.Suffix
+	}
 	outputPath := flags.OutputFile
 	if outputPath == "" {
-		outputPath = filepath.Join(resultsDir, "RESULTS.md")
+		outputPath = filepath.Join(originalWorkspaceRoot, fmt.Sprintf("thinkbench%s-%s.md", suffixPart, timestamp))
 	}
-	jsonPath := filepath.Join(filepath.Dir(outputPath), "results.json")
+	jsonPath := strings.TrimSuffix(outputPath, filepath.Ext(outputPath)) + ".json"
 	csvPath := filepath.Join(resultsDir, fmt.Sprintf("thinkbench-%s.csv", timestamp))
-	terminalPath := filepath.Join(resultsDir, fmt.Sprintf("terminal-thinkbench-%s.txt", timestamp))
+	terminalPath := filepath.Join(originalWorkspaceRoot, fmt.Sprintf("terminal-thinkbench%s-%s.txt", suffixPart, timestamp))
 
-	for _, d := range []string{resultsDir, observedDir} {
+	for _, d := range []string{resultsDir, observedDir, filepath.Dir(outputPath), filepath.Dir(terminalPath)} {
 		if err := os.MkdirAll(d, 0755); err != nil {
 			return fmt.Errorf("failed to create %s: %w", d, err)
 		}
@@ -235,7 +242,10 @@ report:
 		return fmt.Errorf("failed to write RESULTS.md: %w", err)
 	}
 
-	fmt.Fprintf(out, "\nResults written to:\n  %s\n  %s\n  %s\n", jsonPath, outputPath, csvPath)
+	fmt.Fprintf(out, "\nReport written to: %s\n", outputPath)
+	fmt.Fprintf(out, "JSON results:      %s\n", jsonPath)
+	fmt.Fprintf(out, "CSV data:          %s\n", csvPath)
+	fmt.Fprintf(out, "Terminal log:      %s\n", terminalPath)
 	return nil
 }
 
