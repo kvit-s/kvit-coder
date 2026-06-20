@@ -22,6 +22,7 @@ type thinkbenchEnv struct {
 	UVDir     string   // abs path to the shared uv venv
 	UVBin     string   // abs path to <uv>/bin
 	UVPy      string   // abs path to <uv>/bin/python
+	PyPrefix  string   // base interpreter prefix to bind into the sandbox ("" if it's a system path)
 	InjectEnv []string // env entries injected into agent run_command + grader
 	Sandbox   thinkbenchSandbox
 }
@@ -50,14 +51,18 @@ func provisionUV(ctx context.Context, uvDir, pyVersion string, out io.Writer) (*
 	}
 	uvBin := filepath.Join(absUV, "bin")
 	uvPy := filepath.Join(uvBin, "python")
+	uvPip := filepath.Join(uvBin, "pip")
 
-	// Create the venv if it doesn't already have an interpreter.
-	if _, err := os.Stat(uvPy); err != nil {
+	// (Re)create the venv if it lacks an interpreter or pip. The venv is seeded
+	// with pip/setuptools so agents can `pip install` their own test deps.
+	_, pyErr := os.Stat(uvPy)
+	_, pipErr := os.Stat(uvPip)
+	if pyErr != nil || pipErr != nil {
 		if err := os.MkdirAll(filepath.Dir(absUV), 0755); err != nil {
 			return nil, err
 		}
-		fmt.Fprintf(out, "Provisioning uv environment at %s (python %s)...\n", absUV, pyVersion)
-		cmd := exec.CommandContext(ctx, "uv", "venv", "--python", pyVersion, absUV)
+		fmt.Fprintf(out, "Provisioning uv environment at %s (python %s, seeded)...\n", absUV, pyVersion)
+		cmd := exec.CommandContext(ctx, "uv", "venv", "--seed", "--python", pyVersion, absUV)
 		cmd.Stdout = out
 		cmd.Stderr = out
 		if err := cmd.Run(); err != nil {
@@ -70,6 +75,19 @@ func provisionUV(ctx context.Context, uvDir, pyVersion string, out io.Writer) (*
 		return nil, fmt.Errorf("uv venv did not produce an interpreter at %s", uvPy)
 	}
 
+	// Resolve the base interpreter the venv links to. uv often uses a managed
+	// standalone CPython under ~/.local/share/uv/python/<...>, which lives outside
+	// the suite/workspace and must be bind-mounted (read-only) into the sandbox or
+	// the venv's python symlink dangles and falls back to system python.
+	pyPrefix := ""
+	if real, err := filepath.EvalSymlinks(uvPy); err == nil {
+		// real == <prefix>/bin/pythonX → prefix is two levels up.
+		prefix := filepath.Dir(filepath.Dir(real))
+		if !isSystemBoundPath(real) && !strings.HasPrefix(real, absUV+string(os.PathSeparator)) {
+			pyPrefix = prefix
+		}
+	}
+
 	injected := []string{
 		"VIRTUAL_ENV=" + absUV,
 		"UV_PROJECT_ENVIRONMENT=" + absUV,
@@ -80,22 +98,34 @@ func provisionUV(ctx context.Context, uvDir, pyVersion string, out io.Writer) (*
 		UVDir:     absUV,
 		UVBin:     uvBin,
 		UVPy:      uvPy,
+		PyPrefix:  pyPrefix,
 		InjectEnv: injected,
 	}, nil
+}
+
+// isSystemBoundPath reports whether a path lives under a system directory that
+// the sandbox already binds read-only (so it needs no extra bind).
+func isSystemBoundPath(p string) bool {
+	for _, top := range []string{"/usr/", "/bin/", "/sbin/", "/lib/", "/lib32/", "/lib64/", "/opt/"} {
+		if strings.HasPrefix(p, top) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveSandbox selects and builds the OS sandbox wrapper per the configured
 // mode. modes: "auto" (bwrap→firejail→none), "bwrap", "firejail", "none",
 // "require" (auto but hard-fail if none found). uvDir is bind-mounted read-only;
 // workspace is the (single) per-run workspace bound read-write.
-func resolveSandbox(mode, uvDir, workspace string, out io.Writer) (Sandbox, error) {
+func resolveSandbox(mode string, env *thinkbenchEnv, workspace string, out io.Writer) (Sandbox, error) {
 	bwrap, _ := exec.LookPath("bwrap")
 	firejail, _ := exec.LookPath("firejail")
 
 	pick := func(tool string) (Sandbox, error) {
 		switch tool {
 		case "bwrap":
-			return Sandbox{Tool: "bwrap", ExecPrefix: buildBwrapPrefix(bwrap, uvDir, workspace)}, nil
+			return Sandbox{Tool: "bwrap", ExecPrefix: buildBwrapPrefix(bwrap, env.UVDir, env.PyPrefix, workspace)}, nil
 		case "firejail":
 			return Sandbox{Tool: "firejail", ExecPrefix: buildFirejailPrefix(firejail, workspace)}, nil
 		default:
@@ -138,10 +168,11 @@ func resolveSandbox(mode, uvDir, workspace string, out io.Writer) (Sandbox, erro
 
 // buildBwrapPrefix builds a read-confining bubblewrap argv. It binds standard
 // system directories (read-only, symlink-aware for merged-/usr hosts), the uv
-// venv (read-only), and the run workspace (read-write) — and nothing else. The
-// repo/suite (held-out graders, references, other tasks) is NOT bound, so even
-// arbitrary shell cannot read it.
-func buildBwrapPrefix(bwrap, uvDir, workspace string) []string {
+// venv's base interpreter (read-only), the venv itself (read-write, so agents
+// can `pip install` their own test deps), and the run workspace (read-write) —
+// and nothing else. The repo/suite (held-out graders, references, other tasks)
+// is NOT bound, so even arbitrary shell cannot read it.
+func buildBwrapPrefix(bwrap, uvDir, pyPrefix, workspace string) []string {
 	args := []string{bwrap, "--die-with-parent", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"}
 
 	// System directories needed to run the interpreter, read-only.
@@ -149,8 +180,17 @@ func buildBwrapPrefix(bwrap, uvDir, workspace string) []string {
 		args = append(args, topDirBindArgs(top)...)
 	}
 
-	// uv env read-only; workspace read-write.
-	args = append(args, "--ro-bind", uvDir, uvDir)
+	// Base interpreter (uv-managed standalone CPython), read-only — required so
+	// the venv's python symlink resolves inside the sandbox.
+	if pyPrefix != "" {
+		args = append(args, "--ro-bind", pyPrefix, pyPrefix)
+	}
+
+	// uv env read-write (so `pip install` into the venv works); workspace
+	// read-write. The venv is shared, so per-run installs persist across runs —
+	// harmless for scoring since the held-out grader imports only the agent's
+	// package + stdlib.
+	args = append(args, "--bind", uvDir, uvDir)
 	args = append(args, "--bind", workspace, workspace)
 	args = append(args, "--chdir", "{workdir}")
 	args = append(args, "--")

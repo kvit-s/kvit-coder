@@ -124,7 +124,7 @@ func TestSandboxReadConfinement(t *testing.T) {
 		t.Fatalf("provisionUV: %v", err)
 	}
 
-	sb, err := resolveSandbox("auto", env.UVDir, workspace, io_Discard{})
+	sb, err := resolveSandbox("auto", env, workspace, io_Discard{})
 	if err != nil {
 		t.Fatalf("resolveSandbox: %v", err)
 	}
@@ -137,18 +137,31 @@ func TestSandboxReadConfinement(t *testing.T) {
 		t.Fatalf("smoke test (outside read should be denied): %v", err)
 	}
 
-	// Positive control: a read INSIDE the workspace must succeed.
-	args := make([]string, 0, len(sb.ExecPrefix)+3)
-	for _, a := range sb.ExecPrefix {
-		args = append(args, strings.ReplaceAll(a, "{workdir}", workspace))
+	runInSandbox := func(shellCmd string) (string, error) {
+		args := make([]string, 0, len(sb.ExecPrefix)+3)
+		for _, a := range sb.ExecPrefix {
+			args = append(args, strings.ReplaceAll(a, "{workdir}", workspace))
+		}
+		args = append(args, "sh", "-c", shellCmd)
+		c := exec.CommandContext(ctx, args[0], args[1:]...)
+		c.Dir = workspace
+		c.Env = append(os.Environ(), env.InjectEnv...)
+		out, err := c.CombinedOutput()
+		return string(out), err
 	}
-	args = append(args, "sh", "-c", "cat inside.txt")
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.Dir = workspace
-	cmd.Env = append(os.Environ(), env.InjectEnv...)
-	gotOut, err := cmd.CombinedOutput()
-	if err != nil || !strings.Contains(string(gotOut), "VISIBLE_INSIDE") {
-		t.Fatalf("inside read should succeed: err=%v out=%q", err, string(gotOut))
+
+	// Positive control: a read INSIDE the workspace must succeed.
+	if gotOut, err := runInSandbox("cat inside.txt"); err != nil || !strings.Contains(gotOut, "VISIBLE_INSIDE") {
+		t.Fatalf("inside read should succeed: err=%v out=%q", err, gotOut)
+	}
+
+	// The uv interpreter must resolve INSIDE the sandbox (not fall back to /usr).
+	gotOut, err := runInSandbox("command -v python3 && python3 -c 'import sys; print(sys.prefix)'")
+	if err != nil {
+		t.Fatalf("python3 in sandbox failed: %v (%s)", err, gotOut)
+	}
+	if !strings.Contains(gotOut, env.UVBin) || !strings.Contains(gotOut, env.UVDir) {
+		t.Fatalf("python3 in sandbox did not resolve to the uv env: %q (want bin %s / prefix %s)", gotOut, env.UVBin, env.UVDir)
 	}
 }
 

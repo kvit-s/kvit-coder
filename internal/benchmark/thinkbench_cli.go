@@ -103,7 +103,7 @@ func RunThinkbench(ctx context.Context, flags ThinkbenchCLIFlags, runner *agent.
 		return fmt.Errorf("uv preflight failed: %w", err)
 	}
 
-	sandbox, err := resolveSandbox(cfg.Thinkbench.GetSandbox(), env.UVDir, workspace, out)
+	sandbox, err := resolveSandbox(cfg.Thinkbench.GetSandbox(), env, workspace, out)
 	if err != nil {
 		return fmt.Errorf("sandbox preflight failed: %w", err)
 	}
