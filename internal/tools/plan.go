@@ -130,6 +130,191 @@ func (pm *PlanManager) FormatActivePlan() string {
 }
 
 // =============================================================================
+// Plan.write - Idempotent full-list rewrite (OpenCode/Codex-style, default mode)
+// =============================================================================
+
+// External (model-facing) status values, matching Codex update_plan / OpenCode
+// todowrite. Mapped to the internal Step.Status vocabulary so the existing
+// renderer (FormatActivePlan) and helpers keep working unchanged.
+const (
+	extStatusPending    = "pending"
+	extStatusInProgress = "in_progress"
+	extStatusCompleted  = "completed"
+)
+
+// externalToInternalStatus maps a model-facing status to the internal one.
+// Returns ("", false) for an unrecognized value.
+func externalToInternalStatus(ext string) (string, bool) {
+	switch ext {
+	case extStatusPending:
+		return "pending", true
+	case extStatusInProgress:
+		return "active", true
+	case extStatusCompleted:
+		return "complete", true
+	default:
+		return "", false
+	}
+}
+
+type PlanWriteTool struct {
+	manager *PlanManager
+}
+
+func NewPlanWriteTool(manager *PlanManager) *PlanWriteTool {
+	return &PlanWriteTool{manager: manager}
+}
+
+func (t *PlanWriteTool) Name() string {
+	return "Plan.write"
+}
+
+func (t *PlanWriteTool) Description() string {
+	return "Update the task plan. Provide the entire plan each call as a list of {step, status}. At most one step may be in_progress. Resend the full list with updated statuses to record progress."
+}
+
+func (t *PlanWriteTool) JSONSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"explanation": map[string]any{
+				"type":        "string",
+				"description": "Optional short note describing this plan update",
+			},
+			"plan": map[string]any{
+				"type":        "array",
+				"minItems":    1,
+				"description": "The full list of plan steps",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"step": map[string]any{
+							"type":        "string",
+							"description": "The step text",
+						},
+						"status": map[string]any{
+							"type":        "string",
+							"enum":        []string{extStatusPending, extStatusInProgress, extStatusCompleted},
+							"description": "Step status",
+						},
+					},
+					"required": []string{"step", "status"},
+				},
+			},
+		},
+		"required": []string{"plan"},
+	}
+}
+
+func (t *PlanWriteTool) PromptCategory() string     { return "plan" }
+func (t *PlanWriteTool) PromptOrder() int           { return 10 }
+func (t *PlanWriteTool) PromptTemplateName() string { return "" }
+func (t *PlanWriteTool) PromptSection() string {
+	return `You have one planning tool, ` + "`Plan.write`" + `, for tracking multi-step work.
+
+### Plan.write
+
+Call it with the **entire** current plan each time — a ` + "`plan`" + ` array of ` + "`{step, status}`" + ` items, plus an optional ` + "`explanation`" + `.
+
+**Status values:** ` + "`pending`" + `, ` + "`in_progress`" + `, ` + "`completed`" + `.
+
+### Rules
+1. **Resend the full list** every call. To make progress, send the same steps with updated statuses — there is no separate "complete step" call.
+2. **Exactly one** step should be ` + "`in_progress`" + ` at a time.
+3. Mark a step ` + "`completed`" + ` only after its work is actually done and verified — never on intent alone.
+4. When you discover new work, add it as a new step in the list.
+5. You do **not** need a plan to finish a task; use it when a task has several steps worth tracking.
+
+**Example:**
+` + "```json" + `
+{"explanation": "starting the fix", "plan": [
+  {"step": "Read the failing module", "status": "completed"},
+  {"step": "Fix the off-by-one", "status": "in_progress"},
+  {"step": "Run the tests", "status": "pending"}
+]}
+` + "```"
+}
+
+type planWriteItem struct {
+	Step   string `json:"step"`
+	Status string `json:"status"`
+}
+
+type planWriteArgs struct {
+	Explanation string          `json:"explanation"`
+	Plan        []planWriteItem `json:"plan"`
+}
+
+func (t *PlanWriteTool) Check(ctx context.Context, args json.RawMessage) error {
+	var params planWriteArgs
+	if err := json.Unmarshal(args, &params); err != nil {
+		return fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	if len(params.Plan) == 0 {
+		return fmt.Errorf("plan must contain at least one step")
+	}
+
+	inProgress := 0
+	for i, item := range params.Plan {
+		if strings.TrimSpace(item.Step) == "" {
+			return fmt.Errorf("step %d has an empty description", i+1)
+		}
+		internal, ok := externalToInternalStatus(item.Status)
+		if !ok {
+			return fmt.Errorf("step %d has invalid status %q (use pending, in_progress, or completed)", i+1, item.Status)
+		}
+		if internal == "active" {
+			inProgress++
+		}
+	}
+
+	if inProgress > 1 {
+		return fmt.Errorf("at most one step may be in_progress (found %d)", inProgress)
+	}
+
+	return nil
+}
+
+func (t *PlanWriteTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
+	var params planWriteArgs
+	if err := json.Unmarshal(args, &params); err != nil {
+		return nil, fmt.Errorf("invalid arguments: %w", err)
+	}
+
+	plan := &Plan{
+		TaskName: strings.TrimSpace(params.Explanation),
+		Steps:    make([]Step, 0, len(params.Plan)),
+	}
+
+	allComplete := true
+	for _, item := range params.Plan {
+		internal, _ := externalToInternalStatus(item.Status) // validated in Check
+		if internal != "complete" {
+			allComplete = false
+		}
+		plan.Steps = append(plan.Steps, Step{
+			Description: strings.TrimSpace(item.Step),
+			Status:      internal,
+		})
+	}
+
+	if allComplete {
+		plan.Status = "complete"
+	} else {
+		plan.Status = "in_progress"
+	}
+
+	// Full idempotent overwrite - no "already exists" gate.
+	t.manager.SetPlan(plan)
+
+	return map[string]any{
+		"status": "Plan updated",
+		"plan":   plan,
+	}, nil
+}
+
+// =============================================================================
 // plan.create - Create a new plan
 // =============================================================================
 

@@ -309,7 +309,17 @@ type ShellToolConfig struct {
 // PlanToolsConfig configures all plan.* tools as a group
 type PlanToolsConfig struct {
 	Enabled       bool   `yaml:"enabled"`        // group toggle for all plan.* tools
+	Mode          string `yaml:"mode"`           // "write" (default, full-list rewrite) or "incremental" (legacy 5-tool)
 	InjectionMode string `yaml:"injection_mode"` // "none" or "every_step"
+}
+
+// GetPlanMode returns the plan tool mode, defaulting to "write" (the
+// OpenCode/Codex-style full-list rewrite tool) when unset.
+func (p *PlanToolsConfig) GetPlanMode() string {
+	if p.Mode == "" {
+		return "write"
+	}
+	return p.Mode
 }
 
 // CheckpointToolsConfig configures all checkpoint.* tools as a group
@@ -485,9 +495,12 @@ func (c *Config) IsToolEnabled(toolName string) bool {
 		return c.Tools.Search.Enabled
 	case "shell":
 		return c.Tools.Shell.Enabled
+	case "plan.write", "Plan.write":
+		// Default full-list rewrite tool; disabled when Tasks tools are enabled
+		return c.Tools.Plan.Enabled && !c.Tools.Tasks.Enabled && c.Tools.Plan.GetPlanMode() == "write"
 	case "plan.create", "plan.add_step", "plan.complete_step", "plan.remove_step", "plan.move_step":
-		// Plan tools are disabled when Tasks tools are enabled
-		return c.Tools.Plan.Enabled && !c.Tools.Tasks.Enabled
+		// Legacy incremental tools; disabled when Tasks tools are enabled
+		return c.Tools.Plan.Enabled && !c.Tools.Tasks.Enabled && c.Tools.Plan.GetPlanMode() == "incremental"
 	case "checkpoint.list", "checkpoint.restore", "checkpoint.diff", "checkpoint.undo":
 		// User-facing checkpoint tools are disabled when Tasks tools are enabled
 		return c.Tools.Checkpoint.Enabled && !c.Tools.Tasks.Enabled

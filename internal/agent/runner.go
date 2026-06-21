@@ -83,6 +83,15 @@ func (r *Runner) Writer() *ui.Writer {
 	return r.writer
 }
 
+// ResetPlan clears any active plan. Used by the benchmark harness to give each
+// task a fresh PlanManager (the manager is shared across tasks in a single
+// process). No-op when planning is disabled.
+func (r *Runner) ResetPlan() {
+	if r.planManager != nil {
+		r.planManager.ClearPlan()
+	}
+}
+
 // backtrackResult contains the result of handleToolError
 type backtrackResult struct {
 	shouldBacktrack   bool

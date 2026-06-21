@@ -135,6 +135,9 @@ func (e *TBExecutor) runAgent(ctx context.Context, task TBTask, result *TBRunRes
 		{Role: llm.RoleUser, Content: task.Brief},
 	}
 
+	// Each task is a fresh conversation; clear any plan left over from a prior task.
+	e.runner.ResetPlan()
+
 	agentResult, err := e.runner.Run(timeoutCtx, agent.RunConfig{
 		Messages:     messages,
 		UseFileFirst: false,

@@ -75,6 +75,9 @@ func (e *Executor) Execute(ctx context.Context, benchmark BenchmarkDef, runID in
 	// Track start time
 	startTime := time.Now()
 
+	// Each task is a fresh conversation; clear any plan left over from a prior task.
+	e.runner.ResetPlan()
+
 	// Run agent
 	agentResult, err := e.runner.Run(timeoutCtx, agent.RunConfig{
 		Messages:     messages,

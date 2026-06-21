@@ -52,7 +52,7 @@ func NewPromptContext(registry RegistryInterface, cfg *config.Config) PromptCont
 	ctx.HasWrite = registry.IsEnabled("Write")
 	ctx.HasSearch = registry.IsEnabled("Search")
 	ctx.HasShell = registry.IsEnabled("Shell")
-	ctx.HasPlan = registry.IsEnabled("Plan.create")
+	ctx.HasPlan = registry.IsEnabled("Plan.create") || registry.IsEnabled("Plan.write")
 	ctx.HasCheckpoint = registry.IsEnabled("Checkpoint.list")
 	ctx.HasTasks = registry.IsEnabled("Tasks.Start")
 
@@ -87,7 +87,7 @@ func buildCapabilitiesList(registry RegistryInterface) []string {
 	if registry.IsEnabled("Shell") {
 		capabilities = append(capabilities, "running shell commands")
 	}
-	if registry.IsEnabled("Plan.create") {
+	if registry.IsEnabled("Plan.create") || registry.IsEnabled("Plan.write") {
 		capabilities = append(capabilities, "making and tracking plans")
 	}
 	if registry.IsEnabled("Checkpoint.list") {
@@ -108,7 +108,7 @@ func determineEnabledCategories(registry RegistryInterface) []string {
 	categoryTools := map[string][]string{
 		"filesystem": {"Read", "Write", "Edit", "Search"},
 		"shell":      {"Shell", "Shell.advanced"},
-		"plan":       {"Plan.create", "Plan.completeStep", "Plan.addStep"},
+		"plan":       {"Plan.write", "Plan.create", "Plan.completeStep", "Plan.addStep"},
 		"checkpoint": {"Checkpoint.list", "Checkpoint.restore"},
 	}
 

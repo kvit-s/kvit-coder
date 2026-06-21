@@ -1124,3 +1124,110 @@ func TestPlanCreateTool_AllowAfterComplete(t *testing.T) {
 		t.Errorf("expected task name 'Task 2', got %s", plan.TaskName)
 	}
 }
+
+// =============================================================================
+// Plan.write (full-list rewrite, default mode)
+// =============================================================================
+
+func callPlanWrite(t *testing.T, tool *PlanWriteTool, args string) (map[string]any, error) {
+	t.Helper()
+	raw := json.RawMessage(args)
+	if err := tool.Check(context.Background(), raw); err != nil {
+		return nil, err
+	}
+	res, err := tool.Call(context.Background(), raw)
+	if err != nil {
+		return nil, err
+	}
+	return res.(map[string]any), nil
+}
+
+func TestPlanWrite_OverwritesAndMapsStatus(t *testing.T) {
+	manager := NewPlanManager()
+	tool := NewPlanWriteTool(manager)
+
+	_, err := callPlanWrite(t, tool, `{"explanation":"start","plan":[
+		{"step":"Read code","status":"completed"},
+		{"step":"Fix bug","status":"in_progress"},
+		{"step":"Run tests","status":"pending"}
+	]}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	plan := manager.GetActivePlan()
+	if plan == nil {
+		t.Fatal("expected an active plan")
+	}
+	if plan.TaskName != "start" {
+		t.Errorf("expected TaskName 'start', got %q", plan.TaskName)
+	}
+	want := []string{"complete", "active", "pending"}
+	for i, w := range want {
+		if plan.Steps[i].Status != w {
+			t.Errorf("step %d: expected internal status %q, got %q", i, w, plan.Steps[i].Status)
+		}
+	}
+	if manager.GetActiveStepDescription() != "Fix bug" {
+		t.Errorf("expected active step 'Fix bug', got %q", manager.GetActiveStepDescription())
+	}
+
+	// Idempotent re-send / overwrite: no "already exists" error, fully replaces.
+	_, err = callPlanWrite(t, tool, `{"plan":[{"step":"Only step","status":"in_progress"}]}`)
+	if err != nil {
+		t.Fatalf("re-send should succeed (idempotent overwrite), got: %v", err)
+	}
+	plan = manager.GetActivePlan()
+	if len(plan.Steps) != 1 || plan.Steps[0].Description != "Only step" {
+		t.Errorf("expected plan replaced with single step, got %+v", plan.Steps)
+	}
+}
+
+func TestPlanWrite_AllCompletedMarksPlanComplete(t *testing.T) {
+	manager := NewPlanManager()
+	tool := NewPlanWriteTool(manager)
+
+	_, err := callPlanWrite(t, tool, `{"plan":[
+		{"step":"a","status":"completed"},
+		{"step":"b","status":"completed"}
+	]}`)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !manager.IsComplete() {
+		t.Error("expected plan to be complete")
+	}
+	if manager.GetActivePlan().Status != "complete" {
+		t.Errorf("expected plan status 'complete', got %q", manager.GetActivePlan().Status)
+	}
+}
+
+func TestPlanWrite_RejectsMultipleInProgress(t *testing.T) {
+	manager := NewPlanManager()
+	tool := NewPlanWriteTool(manager)
+
+	err := tool.Check(context.Background(), json.RawMessage(`{"plan":[
+		{"step":"a","status":"in_progress"},
+		{"step":"b","status":"in_progress"}
+	]}`))
+	if err == nil {
+		t.Fatal("expected error for >1 in_progress step")
+	}
+	if !strings.Contains(err.Error(), "in_progress") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestPlanWrite_RejectsEmptyPlanAndBadStatus(t *testing.T) {
+	tool := NewPlanWriteTool(NewPlanManager())
+
+	if err := tool.Check(context.Background(), json.RawMessage(`{"plan":[]}`)); err == nil {
+		t.Error("expected error for empty plan")
+	}
+	if err := tool.Check(context.Background(), json.RawMessage(`{"plan":[{"step":"a","status":"active"}]}`)); err == nil {
+		t.Error("expected error for invalid status 'active' (must use external vocabulary)")
+	}
+	if err := tool.Check(context.Background(), json.RawMessage(`{"plan":[{"step":"  ","status":"pending"}]}`)); err == nil {
+		t.Error("expected error for empty step text")
+	}
+}

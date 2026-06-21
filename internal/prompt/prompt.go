@@ -258,7 +258,7 @@ func (g *Generator) buildCapabilities() []string {
 	if g.registry.IsEnabled("Shell") {
 		capabilities = append(capabilities, "running shell commands")
 	}
-	if g.registry.IsEnabled("Plan.create") {
+	if g.registry.IsEnabled("Plan.create") || g.registry.IsEnabled("Plan.write") {
 		capabilities = append(capabilities, "making and tracking plans")
 	}
 	if g.registry.IsEnabled("Checkpoint.list") {

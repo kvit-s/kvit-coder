@@ -160,27 +160,35 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		debug(fmt.Sprintf("Enabled tool: %s", tasksRevertToTaskStartTool.Name()))
 	}
 
-	// Plan tools - disabled when Tasks tools are enabled
+	// Plan tools - disabled when Tasks tools are enabled.
+	// Mode "write" (default) registers a single idempotent rewrite tool;
+	// "incremental" registers the legacy 5-tool family.
 	if cfg.Tools.Plan.Enabled && !cfg.Tools.Tasks.Enabled && sc.PlanManager != nil {
-		planCreateTool := NewPlanCreateTool(sc.PlanManager)
-		registry.Enable(planCreateTool)
-		debug(fmt.Sprintf("Enabled tool: %s", planCreateTool.Name()))
+		if cfg.Tools.Plan.GetPlanMode() == "incremental" {
+			planCreateTool := NewPlanCreateTool(sc.PlanManager)
+			registry.Enable(planCreateTool)
+			debug(fmt.Sprintf("Enabled tool: %s", planCreateTool.Name()))
 
-		planAddStepTool := NewPlanAddStepTool(sc.PlanManager)
-		registry.Enable(planAddStepTool)
-		debug(fmt.Sprintf("Enabled tool: %s", planAddStepTool.Name()))
+			planAddStepTool := NewPlanAddStepTool(sc.PlanManager)
+			registry.Enable(planAddStepTool)
+			debug(fmt.Sprintf("Enabled tool: %s", planAddStepTool.Name()))
 
-		planCompleteStepTool := NewPlanCompleteStepTool(sc.PlanManager)
-		registry.Enable(planCompleteStepTool)
-		debug(fmt.Sprintf("Enabled tool: %s", planCompleteStepTool.Name()))
+			planCompleteStepTool := NewPlanCompleteStepTool(sc.PlanManager)
+			registry.Enable(planCompleteStepTool)
+			debug(fmt.Sprintf("Enabled tool: %s", planCompleteStepTool.Name()))
 
-		planRemoveStepTool := NewPlanRemoveStepTool(sc.PlanManager)
-		registry.Enable(planRemoveStepTool)
-		debug(fmt.Sprintf("Enabled tool: %s", planRemoveStepTool.Name()))
+			planRemoveStepTool := NewPlanRemoveStepTool(sc.PlanManager)
+			registry.Enable(planRemoveStepTool)
+			debug(fmt.Sprintf("Enabled tool: %s", planRemoveStepTool.Name()))
 
-		planMoveStepTool := NewPlanMoveStepTool(sc.PlanManager)
-		registry.Enable(planMoveStepTool)
-		debug(fmt.Sprintf("Enabled tool: %s", planMoveStepTool.Name()))
+			planMoveStepTool := NewPlanMoveStepTool(sc.PlanManager)
+			registry.Enable(planMoveStepTool)
+			debug(fmt.Sprintf("Enabled tool: %s", planMoveStepTool.Name()))
+		} else {
+			planWriteTool := NewPlanWriteTool(sc.PlanManager)
+			registry.Enable(planWriteTool)
+			debug(fmt.Sprintf("Enabled tool: %s", planWriteTool.Name()))
+		}
 	}
 
 	// Checkpoint tools - disabled when Tasks tools are enabled
