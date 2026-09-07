@@ -37,12 +37,16 @@ type ReasoningBlock struct {
 }
 
 type ToolCall struct {
-	ID   string `json:"id"`
-	Type string `json:"type"`
-	Function struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"` // JSON string
-	} `json:"function"`
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function ToolCallFunction `json:"function"`
+}
+
+// ToolCallFunction is the function half of a tool call: which tool, and the
+// arguments as the JSON string the model produced.
+type ToolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"` // JSON string
 }
 
 type ChatRequest struct {
@@ -66,28 +70,38 @@ type ChoiceError struct {
 }
 
 type ChatResponse struct {
-	ID      string `json:"id"`
-	Model   string `json:"model"`
-	Choices []struct {
-		Index        int          `json:"index"`
-		Message      Message      `json:"message"`
-		FinishReason string       `json:"finish_reason"`
-		Error        *ChoiceError `json:"error,omitempty"`
-	} `json:"choices"`
-	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-		TotalTokens      int `json:"total_tokens"`
-	} `json:"usage"`
+	ID      string   `json:"id"`
+	Model   string   `json:"model"`
+	Choices []Choice `json:"choices"`
+	Usage   Usage    `json:"usage"`
+}
+
+// Choice is one candidate answer. Every endpoint kvit-coder talks to returns
+// exactly one, so the loop only ever reads Choices[0].
+type Choice struct {
+	Index        int          `json:"index"`
+	Message      Message      `json:"message"`
+	FinishReason string       `json:"finish_reason"`
+	Error        *ChoiceError `json:"error,omitempty"`
+}
+
+// Usage is the token accounting the endpoint reports for one request.
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
 }
 
 type ToolSpec struct {
-	Type     string `json:"type"` // always "function"
-	Function struct {
-		Name        string         `json:"name"`
-		Description string         `json:"description"`
-		Parameters  map[string]any `json:"parameters"`
-	} `json:"function"`
+	Type     string           `json:"type"` // always "function"
+	Function ToolSpecFunction `json:"function"`
+}
+
+// ToolSpecFunction is the schema half of a tool spec, as the API expects it.
+type ToolSpecFunction struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Parameters  map[string]any `json:"parameters"`
 }
 
 // GenerationStats contains detailed generation statistics from the LLM server

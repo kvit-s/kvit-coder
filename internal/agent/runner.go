@@ -16,10 +16,18 @@ import (
 	"github.com/kvit-s/kvit-coder/internal/ui"
 )
 
+// LLMClient is the slice of the LLM client the agent loop actually uses.
+// Declaring it here rather than depending on *llm.Client lets a test drive the
+// loop with a scripted sequence of responses. *llm.Client satisfies it as-is.
+type LLMClient interface {
+	Chat(context.Context, llm.ChatRequest) (*llm.ChatResponse, error)
+	GetGenerationStats(context.Context, string) (*llm.GenerationStats, error)
+}
+
 // Runner executes the agent loop for LLM interactions
 type Runner struct {
 	cfg               *config.Config
-	llmClient         *llm.Client
+	llmClient         LLMClient
 	registry          *tools.Registry
 	writer            *ui.Writer
 	logger            *Logger
@@ -34,7 +42,7 @@ type Runner struct {
 // RunnerOptions contains all dependencies for creating a Runner
 type RunnerOptions struct {
 	Cfg               *config.Config
-	LLMClient         *llm.Client
+	LLMClient         LLMClient
 	Registry          *tools.Registry
 	Writer            *ui.Writer
 	Logger            *Logger

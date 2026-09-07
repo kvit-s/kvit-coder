@@ -272,12 +272,7 @@ func responsesToChat(resp *responsesResponse) *ChatResponse {
 	}
 
 	out := &ChatResponse{ID: resp.ID, Model: resp.Model}
-	out.Choices = append(out.Choices, struct {
-		Index        int          `json:"index"`
-		Message      Message      `json:"message"`
-		FinishReason string       `json:"finish_reason"`
-		Error        *ChoiceError `json:"error,omitempty"`
-	}{Message: msg, FinishReason: finishReason})
+	out.Choices = append(out.Choices, Choice{Message: msg, FinishReason: finishReason})
 	out.Usage.PromptTokens = resp.Usage.InputTokens
 	out.Usage.CompletionTokens = resp.Usage.OutputTokens
 	out.Usage.TotalTokens = resp.Usage.TotalTokens

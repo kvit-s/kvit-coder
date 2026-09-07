@@ -125,10 +125,7 @@ func (t *TasksStartTool) Call(ctx context.Context, args json.RawMessage) (any, e
 		ToolCalls: []llm.ToolCall{{
 			ID:   "tasks_start",
 			Type: "function",
-			Function: struct {
-				Name      string `json:"name"`
-				Arguments string `json:"arguments"`
-			}{
+			Function: llm.ToolCallFunction{
 				Name:      "Tasks.Start",
 				Arguments: string(args),
 			},

@@ -61,12 +61,7 @@ func TestChatSuccess(t *testing.T) {
 		resp := ChatResponse{
 			ID:    "chatcmpl-123",
 			Model: "test-model",
-			Choices: []struct {
-				Index        int          `json:"index"`
-				Message      Message      `json:"message"`
-				FinishReason string       `json:"finish_reason"`
-				Error        *ChoiceError `json:"error,omitempty"`
-			}{
+			Choices: []Choice{
 				{
 					Index: 0,
 					Message: Message{
@@ -76,11 +71,7 @@ func TestChatSuccess(t *testing.T) {
 					FinishReason: "stop",
 				},
 			},
-			Usage: struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
-				TotalTokens      int `json:"total_tokens"`
-			}{
+			Usage: Usage{
 				PromptTokens:     10,
 				CompletionTokens: 15,
 				TotalTokens:      25,
@@ -140,12 +131,7 @@ func TestChatWithoutAPIKey(t *testing.T) {
 		resp := ChatResponse{
 			ID:    "chatcmpl-123",
 			Model: "test-model",
-			Choices: []struct {
-				Index        int          `json:"index"`
-				Message      Message      `json:"message"`
-				FinishReason string       `json:"finish_reason"`
-				Error        *ChoiceError `json:"error,omitempty"`
-			}{
+			Choices: []Choice{
 				{Index: 0, Message: Message{Role: RoleAssistant, Content: "Response"}, FinishReason: "stop"},
 			},
 		}
@@ -243,12 +229,7 @@ func TestChatWithToolCalls(t *testing.T) {
 		resp := ChatResponse{
 			ID:    "chatcmpl-123",
 			Model: "test-model",
-			Choices: []struct {
-				Index        int          `json:"index"`
-				Message      Message      `json:"message"`
-				FinishReason string       `json:"finish_reason"`
-				Error        *ChoiceError `json:"error,omitempty"`
-			}{
+			Choices: []Choice{
 				{
 					Index: 0,
 					Message: Message{
@@ -257,10 +238,7 @@ func TestChatWithToolCalls(t *testing.T) {
 							{
 								ID:   "call_123",
 								Type: "function",
-								Function: struct {
-									Name      string `json:"name"`
-									Arguments string `json:"arguments"`
-								}{
+								Function: ToolCallFunction{
 									Name:      "get_weather",
 									Arguments: `{"location":"San Francisco"}`,
 								},
@@ -285,11 +263,7 @@ func TestChatWithToolCalls(t *testing.T) {
 		Tools: []ToolSpec{
 			{
 				Type: "function",
-				Function: struct {
-					Name        string         `json:"name"`
-					Description string         `json:"description"`
-					Parameters  map[string]any `json:"parameters"`
-				}{
+				Function: ToolSpecFunction{
 					Name:        "get_weather",
 					Description: "Get weather",
 					Parameters: map[string]any{

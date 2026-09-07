@@ -48,7 +48,7 @@ type Episode struct {
 // unchanged. Construction returns nil when diagnostics are disabled, so all call sites
 // can treat a nil *Interrogator as "do nothing".
 type Interrogator struct {
-	client   *llm.Client
+	client   LLMClient
 	cfg      *config.Config
 	writer   *ui.Writer
 	logger   *Logger
@@ -57,7 +57,7 @@ type Interrogator struct {
 }
 
 // NewInterrogator builds an Interrogator, or returns nil when interrogation is disabled.
-func NewInterrogator(cfg *config.Config, client *llm.Client, writer *ui.Writer, logger *Logger, runID string) *Interrogator {
+func NewInterrogator(cfg *config.Config, client LLMClient, writer *ui.Writer, logger *Logger, runID string) *Interrogator {
 	if cfg == nil || !cfg.Diagnostics.InterrogateOnAnomaly {
 		return nil
 	}
