@@ -1,13 +1,13 @@
 # Sibling worktrees (prevent watching other features)
 ../.clauding/worktrees/*
 
-# Dependencies
-node_modules/
+# Benchmark run outputs and runtime directories
+benchmarks/.kvit-coder-benchmark/
+benchmarks/thinkbench/runs/
+benchmarks/thinkbench/results/
+benchmarks/thinkbench/.uv/
+benchmarks/terminal-*.txt
+benchmarks/haystacks/*.txt
 
-# Build artifacts
-out/
-dist/
-.vscode-test/
-
-# Editor directories
-.vscode/
+# Vendored third-party task suite (Apache-2.0, see thinkbench/suite/NOTICE)
+benchmarks/thinkbench/suite/

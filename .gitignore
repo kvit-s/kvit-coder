@@ -1,6 +1,5 @@
 # Binaries
 /kvit-coder
-/benchmarks/kvit-coder
 /kvit-coder-ui
 /bin/
 
@@ -10,28 +9,14 @@
 *.dll
 *.so
 *.dylib
-
-# Test binary, built with `go test -c`
 *.test
-
-# Output of the go coverage tool
 *.out
 coverage.html
-
-# Dependency directories
+.gocache
 vendor/
 
 # Logs
 *.log
-
-# Benchmark artifacts
-benchmarks/.kvit-coder-benchmark/
-benchmarks/results/
-
-# Thinkbench runtime artifacts (suite/ is committed; these are generated)
-benchmarks/thinkbench/runs/
-benchmarks/thinkbench/.uv/
-benchmarks/thinkbench/results/
 
 # Local configs
 config-local.yaml
@@ -39,6 +24,25 @@ config-local.yaml
 # Workspace lock file
 .kvit-coder.lock
 
-# IDE
-.claude/
-.gocache
+# Benchmark run outputs. Every benchmark family writes a timestamped report and
+# a transcript per run; none of it is an input, and keeping it out of the index
+# also keeps it out of ripgrep, which honours this file.
+benchmarks/terminal-*.txt
+benchmarks/benchmark-*.md
+benchmarks/haystack-*.md
+benchmarks/thinkbench-*.md
+benchmarks/thinkbench-*.json
+benchmarks/kvit-coder
+benchmarks/.obsidian/
+
+# Benchmark runtime directories (the suites themselves are committed)
+benchmarks/.kvit-coder-benchmark/
+benchmarks/results/
+benchmarks/thinkbench/runs/
+benchmarks/thinkbench/results/
+benchmarks/thinkbench/.uv/
+
+# The haystack corpus is an amalgamation of this repo's own source, regenerated
+# by scripts/amalgamate-go.sh. Tracking it would keep a stale second copy of the
+# codebase in every search.
+benchmarks/haystacks/*.txt

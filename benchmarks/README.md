@@ -1,40 +1,55 @@
-# Benchmark Results
+# Benchmarks
 
-This directory contains benchmark results for various LLM models tested on the kvit-coder agent benchmark suite.
+This directory holds the inputs to kvit-coder's three benchmark families. The
+outputs — reports, transcripts and result JSON — are written here too, but they
+are not tracked: `.gitignore` excludes them, so a run leaves your checkout clean
+and its files stay out of `git grep` and `ripgrep`.
 
-## File Naming Convention
+## The three families
 
-| Pattern | Description |
-|---------|-------------|
-| `benchmark-{name}-{timestamp}.md` | Markdown report with summary and detailed statistics |
-| `terminal-{name}-{timestamp}.txt` | Full terminal output captured during the benchmark run |
-| `config-{name}.yaml` | Configuration for benchmark run (LLM endpoint, tools enabled) |
-| `benchmarks.yaml` | Benchmark definitions (tasks, validation criteria) |
+| Family | Flag | Definitions | What it measures |
+|---|---|---|---|
+| Tool benchmarks | `--benchmark` | `benchmarks.yaml` | Whether the model uses the tools correctly on small, checkable tasks |
+| Haystack | `--bench-haystack` | `haystack.yaml` | Retrieval of a planted fact from a large context |
+| Thinkbench | `--bench-thinkbench` | `thinkbench/suite/` | Autonomous coding tasks scored by a held-out grader |
 
-The `{name}` is a benchmark identifier that typically correlates with a model family, but the actual model used is recorded in the report's config section. A config may be updated with different model variants (e.g., different quantizations) between runs.
+`thinkbench/suite/` is a vendored third-party dataset from Thinkwright, licensed
+Apache-2.0. See `thinkbench/suite/NOTICE` and `thinkbench/suite/LICENSE`.
 
-## Report Structure
+## Per-model configs
 
-Each markdown report contains:
+`config-{name}.yaml` is a full kvit-coder config used for one benchmark run. All
+three families take an optional suffix that selects one: `--benchmark muse-spark`
+reads `config-muse-spark.yaml`. The suffix also names the run's workspace, so two
+benchmark runs with different suffixes can proceed at the same time.
 
-1. **Metadata** - Version, date, benchmark count
-2. **Summary Table** - Success rate, avg tokens, avg cost, avg duration per benchmark
-3. **Detailed Statistics** - Per-benchmark breakdown with standard deviation
-4. **Failure Analysis** - Common failure patterns and error messages
-5. **Configuration** - Full config.yaml used for the run
+Most of these configs point at local endpoints from earlier work on small models.
+`config-muse-spark.yaml` is the one that matches the current default in the
+repository root's `config.yaml`.
 
-## Interpreting Results
-
-- **Success Rate**: Percentage of runs that passed all validation checks
-- **Avg LLM Calls**: Number of agent turns (lower is better for efficiency)
-- **Avg Tokens**: Total tokens used (prompt + completion)
-- **Avg Duration**: Wall-clock time per benchmark run
-
-## Running New Benchmarks
+## Running
 
 ```bash
-# From repository root
-./kvit-coder --benchmark {model-name} -n 10
+# From the repository root
+go build -o kvit-coder ./cmd/kvit-coder
+
+./kvit-coder --benchmark muse-spark -n 10
+./kvit-coder --bench-thinkbench muse-spark
 ```
 
-Results will be saved to this directory automatically.
+The haystack family needs its corpus, which is an amalgamation of this repo's own
+Go source. It is regenerated rather than tracked, because a committed copy would
+put a stale second copy of the codebase into every search:
+
+```bash
+scripts/amalgamate-go.sh          # writes benchmarks/haystacks/kvit-coder.go.txt
+./kvit-coder --bench-haystack muse-spark
+```
+
+## Outputs
+
+A run writes `benchmark-{name}-{timestamp}.md` (or `haystack-`/`thinkbench-`),
+`terminal-{name}-{timestamp}.txt` with the full agent transcript, and for
+thinkbench a matching `.json`. Runtime scratch goes under
+`.kvit-coder-benchmark/` and `thinkbench/runs/`. None of it is tracked; copy
+anything you want to keep somewhere outside the checkout.
