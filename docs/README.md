@@ -1,0 +1,21 @@
+# Documents
+
+Design notes and reviews for kvit-coder. The program itself is described in the
+repository root's `README.md`; these are the documents behind its current shape.
+
+## Current
+
+| File | What it is |
+|---|---|
+| [`review.md`](review.md) | Architecture review of the program as it stood at commit `fe77715`, September 2026, and the case for the redesign. Section 2 describes the whole system and is the fastest way in. |
+| [`redesign.md`](redesign.md) | What to build instead: one process per turn, a session directory, a steering inbox, background processes, a question tool, syntax-tree command permissions, batched calls, model profiles. Sixteen sections plus an appendix of ideas not taken. |
+| [`redesign-plan.md`](redesign-plan.md) | How `redesign.md` was implemented, stage by stage. All eleven stages are committed; the header records what is left. |
+| [`redesign-mcp.md`](redesign-mcp.md) | A proposal, not yet built. One process per turn tears down MCP server connections every turn, which costs more than the reconnect time for servers holding per-connection state. Proposes a separate long-running program that holds them. |
+| [`bench-refactor.md`](bench-refactor.md) | A proposal, not yet built. Moving the benchmark harness out of the agent binary into its own command. |
+| [`agents-ram.md`](agents-ram.md) | Measured memory cost of one session of each coding agent on this machine, September 2026. Reference for how many can run at once, not about kvit-coder's design. |
+
+## Archive
+
+[`archive/`](archive/) holds plans and reviews for work that is finished or
+abandoned. They describe states the program has left, so read them as history
+rather than as guidance. `archive/README.md` says what each one was.

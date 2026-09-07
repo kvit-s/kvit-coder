@@ -2,7 +2,7 @@ package benchmark
 
 // This file defines the data model for the thinkbench benchmark family — a
 // parallel family to haystack that runs autonomous coding-agent tasks graded by
-// a held-out python grader (see thinkbench-plan.md / thinkbench.md). It reads
+// a held-out python grader (see docs/archive/thinkbench.md). It reads
 // the suite directly from disk (no YAML inlining) and produces continuous
 // passed/total scores rather than the binary pass/fail of the tool benchmarks.
 

@@ -11,6 +11,51 @@ of them on `main`.
 Line references are to the tree at commit `fe77715` and will drift; treat them
 as "look here", not as coordinates.
 
+## Status: all eleven stages are done
+
+Every stage below was done, in order, on `main` in September 2026:
+
+| Stage | Commit | Subject |
+|---|---|---|
+| 0 | `4e54253` | drive the loop from a scripted client |
+| 1 | `9558f01` | fixes that stand alone: cost, timeouts, path containment |
+| 2 | `ceaff81` | sessions are directories, and hold everything that outlives a turn |
+| 3 | `c59a0dd` | one inbox, drained once per iteration |
+| 4 | `8a90b05` | ctrl-c ends the turn instead of ending the process |
+| 5 | `7d94d74` | the model can ask, and the answer is the tool's result |
+| 6 | `59cb9df` | work that outlives the turn that started it |
+| 7 | `3ded4e8` | permission from the command's syntax tree, not from its text |
+| 8 | `fcca35e` | several independent calls in one request |
+| 9 | `90b3b72` | stop paying the weak-model tax by default |
+| 10 | `7211dc5` | say what the schema cannot, and stop there |
+
+The stage descriptions below are kept as the record of what was intended and
+why. Read them as history; where they disagree with the code, the code is right.
+
+### What is still open
+
+Three things this plan named and did not do.
+
+**Compaction.** `redesign.md` §12 describes it; the "Deferred" section at the
+end of this document says why it was left out and what stage 2 did to make it
+addable without redesign. It is a standalone `kvit-coder compact -s <name>` that
+makes one model call and writes a new session, and nothing in the loop changes.
+Stage 9's accounting is what will tell you whether it is needed.
+
+**Two questions about the opencode.ai endpoint,** both a few minutes of
+experiment, both gating assumptions the plan was built on. Does the endpoint
+accept replayed `function_call` items whose `reasoning` items are absent, which
+decides whether resuming a session works at all? And does it cache by the
+`x-opencode-session` header, which is the whole premise of pinning
+`KVIT_RUN_ID`?
+
+**Appendix A of `redesign.md`,** which holds the ideas from maki that were not
+taken: an `index` tool, code execution as a tool, a read-only research subagent,
+a writable memory, and richer display.
+
+Two proposals written after this plan are in [`redesign-mcp.md`](redesign-mcp.md)
+and [`bench-refactor.md`](bench-refactor.md); neither is built.
+
 ---
 
 ## Stage 0 — make the loop testable

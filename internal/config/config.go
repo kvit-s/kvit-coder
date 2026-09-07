@@ -124,7 +124,7 @@ func (p ProjectInstructionsConfig) PathOrDefault() string {
 // kvit-coder connect to external tool servers (over stdio or HTTP) and surface
 // each server's tools to the model as ordinary agent tools. The section is
 // absent by default, so existing configs are unaffected and the feature is
-// zero-cost when unused. See mcp-plan.md.
+// zero-cost when unused. See docs/archive/mcp-plan.md.
 type MCPConfig struct {
 	// Enabled is the group toggle. When false (default) no servers are dialed.
 	Enabled bool `yaml:"enabled"`

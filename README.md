@@ -1,6 +1,17 @@
 # kvit-coder
 
-An LLM coding agent with tool-use capabilities, designed for local/self-hosted models via OpenAI-compatible APIs. Includes a built-in benchmark suite for evaluating model performance.
+A coding agent in Go. It sends a conversation to an OpenAI-compatible model
+endpoint, receives tool calls, runs them against a workspace directory on disk,
+feeds the results back, and repeats until the model answers without asking for a
+tool.
+
+It is built for a capable hosted reasoning model. The default configuration
+drives Muse Spark 1.3 through opencode.ai over OpenAI's Responses API with a
+1M-token context, and any OpenAI-compatible endpoint works, including a local
+one — `agent.profile: weak` turns on the machinery written for models that
+mis-format tool calls and miscount line numbers.
+
+Three benchmark harnesses ship with it; see [`benchmarks/`](benchmarks/).
 
 ## Quick Start
 
@@ -13,21 +24,25 @@ go build -o kvit-coder-ui ./cmd/kvit-coder-ui
 
 ### Configure
 
-Create `config.yaml`:
+The repository's own `config.yaml` is a working example. A minimal one:
 
 ```yaml
 llm:
-  base_url: "http://127.0.0.1:8080/v1"
-  api_key_env: "OPENAI_API_KEY"
-  model: "my-model"
-  temperature: 0.2
-  max_output_tokens: 2048
+  base_url: "https://opencode.ai/zen/go/v1"
+  api_key_env: "OPENCODE_API_KEY"
+  model: "muse-spark-1.3-contributor"
+  api_backend: "responses"    # this endpoint does not serve /chat/completions
+  reasoning_effort: "high"
+  headers:
+    - "x-opencode-session=kvit-coder-${KVIT_RUN_ID}"
+  context: 1048576
 
 workspace:
   root: "."
 
 agent:
-  max_tool_iterations: 25
+  profile: strong             # "weak" enables the local-model compensation
+  max_tool_iterations: 1000
 
 tools:
   read:
@@ -58,10 +73,38 @@ tools:
 
 ## Architecture
 
-Two binaries:
+**One process per turn.** `kvit-coder` starts, reads the session from disk, runs
+one instruction, appends what happened, and exits. A driver starts it again for
+the next one. Nothing that must outlive a turn is held in memory, so a wedged
+turn ends when its process does, and the driver holds no agent state.
 
-- **`kvit-coder`** — Headless agent for automation, scripting, and benchmarking. Requires `-p` or `--benchmark`.
-- **`kvit-coder-ui`** — Interactive terminal UI (BubbleTea) with multi-line input, command history, and syntax highlighting.
+**A session is a directory**, under `~/.kvit-coder/sessions/<name>/`:
+
+| Entry | Holds |
+|---|---|
+| `history.jsonl` | Append-only, one timestamped event per line |
+| `meta.json` | Created and last-touched times, workspace, model, first prompt |
+| `checkpoints/` | The shadow git repository the checkpoint tools commit into |
+| `proc/` | Pidfiles and logs for background processes |
+| `inbox/` | Files dropped here reach the model on the next iteration |
+| `tmp/` | Tool output too large to put in a message |
+
+That is what lets a turn run in its own process without losing the checkpoint
+history, the temp files the model was told about, or a steering message typed
+while it was working. A session is also a record you can open months later and
+read.
+
+**Two binaries:**
+
+- **`kvit-coder`** — one turn, headless. Needs `-p` (or `-pq`), a session with
+  `-s`, or a benchmark flag. This is what you script against.
+- **`kvit-coder-ui`** — the interactive terminal front end (BubbleTea), with
+  multi-line input, command history and syntax highlighting. It does not link
+  the agent; it spawns `kvit-coder` per turn and keeps the session name stable
+  across them.
+
+The design behind this is written up in [`docs/`](docs/) — start with
+[`docs/redesign.md`](docs/redesign.md).
 
 ## Tools
 
@@ -479,6 +522,13 @@ prompts:
 
 ## Benchmarking
 
+Three families run from the same binary. Their inputs live in
+[`benchmarks/`](benchmarks/) and are tracked; their outputs — a timestamped
+report, a full agent transcript, and for thinkbench a results JSON — are written
+there too and are deliberately untracked, so a run leaves the checkout clean and
+its transcripts stay out of `ripgrep`. Copy anything worth keeping somewhere
+outside the repository.
+
 ### Run Benchmarks
 
 ```bash
@@ -517,7 +567,13 @@ llm:
 
 Needle retrieval in large context windows (1-5 hop reasoning, no tools required):
 
+The corpus is an amalgamation of this repository's own Go source, regenerated
+rather than tracked — a committed copy would put a stale second copy of the
+codebase into every search. Build it first:
+
 ```bash
+scripts/amalgamate-go.sh          # writes benchmarks/haystacks/kvit-coder.go.txt
+
 ./kvit-coder --bench-haystack mymodel
 ./kvit-coder --bench-haystack mymodel --bench-haystack-id 1H1,2H1
 ```
@@ -578,6 +634,19 @@ benchmarks:
 ```
 
 Validation types: `file_contains`, `file_equals`, `file_exists`, `file_not_exists`, `file_line_count`, `tool_called`, `tool_called_with`, `output_contains`, `output_not_contains`, `output_matches`, `multi_tool_calls`
+
+## Documents
+
+[`docs/`](docs/) holds the design notes. [`docs/review.md`](docs/review.md)
+describes what the program was and what was wrong with it;
+[`docs/redesign.md`](docs/redesign.md) describes what was built instead and is
+the place to start. [`docs/redesign-plan.md`](docs/redesign-plan.md) records how
+that was done stage by stage and what remains open. Two proposals are written up
+but not built: [`docs/redesign-mcp.md`](docs/redesign-mcp.md) on holding MCP
+connections outside the turn, and
+[`docs/bench-refactor.md`](docs/bench-refactor.md) on moving the benchmark
+harness into its own command. [`docs/archive/`](docs/archive/) is superseded
+material, kept for the record.
 
 ## License
 
