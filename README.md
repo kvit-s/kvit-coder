@@ -393,10 +393,21 @@ cache. Setting `KVIT_RUN_ID` in the environment pins a value instead.
 
 | Key | Description |
 |-----|-------------|
+| `profile` | `strong` (default) or `weak` — see below |
 | `max_tool_iterations` | Max tool calls per run |
 | `agent_file` | Path to agent instructions file |
 | `project_instructions.enabled` | Load project instructions before `-p` prompts (default true) |
 | `project_instructions.path` | Project instructions file path; relative paths resolve from the launch directory (default `CLAUDE.md`) |
+
+**Profiles.** A lot of the loop exists to catch a model getting confused:
+backtracking away from a bad tool call, ending a turn after three identical
+calls, a confirm handshake before an edit is applied, scraping tool calls out of
+prose, fuzzy matching and indentation repair, asking the model to explain an
+anomaly, and retrying an empty answer. On a model that does not make those
+mistakes each one is a tax — a retry that discards good work, a handshake that
+costs two round trips per edit, a fuzzy match that silently edits the wrong
+lines. `profile: strong`, the default, skips all of it; `profile: weak`
+reproduces the earlier behaviour exactly.
 
 ### `tools`
 

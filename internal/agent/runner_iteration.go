@@ -26,7 +26,7 @@ func (r *Runner) handleFinalAnswer(
 	finishReason := resp.Choices[0].FinishReason
 
 	// Check for malformed tool call
-	if finishReason == "stop" && r.registry.LooksLikeMalformedToolCall(assistantMsg.Content) {
+	if finishReason == "stop" && !r.cfg.Agent.IsStrong() && r.registry.LooksLikeMalformedToolCall(assistantMsg.Content) {
 		r.writer.Warn("Detected malformed tool call in response, auto-continuing...")
 		state.messages = append(state.messages, llm.Message{
 			Role:    llm.RoleUser,
@@ -37,7 +37,10 @@ func (r *Runner) handleFinalAnswer(
 
 	// Handle empty response with reasoning
 	if assistantMsg.Content == "" {
-		if assistantMsg.ReasoningContent != "" {
+		// Retrying an empty answer, and then telling the model to "make the
+		// tool calls now", exists for a model that stalls. A model that
+		// answers with nothing meant to answer with nothing.
+		if assistantMsg.ReasoningContent != "" && !r.cfg.Agent.IsStrong() {
 			if state.emptyReasoningRetries < maxEmptyReasoningRetries {
 				state.emptyReasoningRetries++
 				r.writer.Warn(fmt.Sprintf("LLM returned empty response with reasoning, retrying... (%d/%d)",

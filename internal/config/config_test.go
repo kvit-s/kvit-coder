@@ -335,3 +335,94 @@ func TestCheckPathPermissionPrefixSibling(t *testing.T) {
 		t.Errorf("a sibling directory sharing the workspace's name prefix was treated as %v, want denied", res)
 	}
 }
+
+// TestProfileStrongTurnsOffTheWeakModelMachinery: the profile is applied once,
+// at load, so nothing downstream has to consult it.
+func TestProfileStrongTurnsOffTheWeakModelMachinery(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	body := `
+llm:
+  model: test
+workspace:
+  root: "."
+backtrack:
+  enabled: true
+diagnostics:
+  interrogate_on_anomaly: true
+tools:
+  edit:
+    enabled: true
+    preview_mode: true
+    fuzzy_threshold: 0.8
+    smart_first_line_indent: true
+    max_autoindent_fix: 3
+`
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Agent.IsStrong() {
+		t.Fatal("the default profile is not strong")
+	}
+	if cfg.Backtrack.Enabled {
+		t.Error("backtracking is on under the strong profile")
+	}
+	if cfg.Tools.Edit.PreviewMode {
+		t.Error("the edit confirm handshake is on under the strong profile")
+	}
+	if cfg.Tools.Edit.FuzzyThreshold != 0 || !cfg.Tools.Edit.ExactMatchOnly {
+		t.Errorf("fuzzy matching is on under the strong profile: threshold=%v exactOnly=%v",
+			cfg.Tools.Edit.FuzzyThreshold, cfg.Tools.Edit.ExactMatchOnly)
+	}
+	if cfg.Tools.Edit.SmartFirstLineIndent || cfg.Tools.Edit.MaxAutoindentFix != 0 {
+		t.Error("indentation repair is on under the strong profile")
+	}
+	if cfg.Diagnostics.InterrogateOnAnomaly {
+		t.Error("anomaly interrogation is on under the strong profile")
+	}
+}
+
+// TestProfileWeakChangesNothing: "weak" is what the loop did before the profile
+// existed, so the config must come through exactly as written.
+func TestProfileWeakChangesNothing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	body := `
+agent:
+  profile: weak
+llm:
+  model: test
+workspace:
+  root: "."
+backtrack:
+  enabled: true
+diagnostics:
+  interrogate_on_anomaly: true
+tools:
+  edit:
+    enabled: true
+    preview_mode: true
+    fuzzy_threshold: 0.8
+`
+	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Agent.IsStrong() {
+		t.Fatal("profile: weak was read as strong")
+	}
+	if !cfg.Backtrack.Enabled || !cfg.Tools.Edit.PreviewMode ||
+		cfg.Tools.Edit.FuzzyThreshold != 0.8 || cfg.Tools.Edit.ExactMatchOnly ||
+		!cfg.Diagnostics.InterrogateOnAnomaly {
+		t.Errorf("profile: weak changed the configuration: %+v", cfg.Tools.Edit)
+	}
+}

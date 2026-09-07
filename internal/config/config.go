@@ -74,10 +74,28 @@ type Config struct {
 
 // AgentConfig configures the agent loop and startup instruction sources.
 type AgentConfig struct {
+	// Profile says how much the loop should compensate for the model.
+	//
+	// "weak" keeps every mechanism that exists to catch a model getting
+	// confused: backtracking away from a bad tool call, the duplicate-call
+	// kill switch, the confirm handshake before an edit is applied, scraping
+	// tool calls out of prose, fuzzy matching and indentation repair, asking
+	// the model to explain itself after an anomaly, and retrying an empty
+	// answer. Each of those was written for a model that needed it.
+	//
+	// "strong", the default, skips all of it. On a model that does not make
+	// those mistakes, each mechanism is a tax: a retry that discards good
+	// work, a handshake that costs two round trips per edit, a fuzzy match
+	// that silently edits the wrong lines.
+	Profile             string                    `yaml:"profile"`
 	MaxIterations       int                       `yaml:"max_tool_iterations"`
 	AgentFile           string                    `yaml:"agent_file"`
 	ProjectInstructions ProjectInstructionsConfig `yaml:"project_instructions"`
 }
+
+// IsStrong reports whether the loop should skip the machinery that exists to
+// compensate for a weak model. It is the default.
+func (a AgentConfig) IsStrong() bool { return !strings.EqualFold(a.Profile, "weak") }
 
 // ProjectInstructionsConfig controls the Claude-Code-style project instruction
 // file loaded for headless -p runs.
@@ -703,6 +721,32 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Tools.Checkpoint.MaxTurns == 0 {
 		cfg.Tools.Checkpoint.MaxTurns = 100
+	}
+
+	// The strong profile turns off the machinery written to compensate for a
+	// weak model. Applying it here, once, rather than at each of the twenty
+	// places that read these settings, means none of them can be missed — and
+	// it is why "profile: weak" reproduces the old behaviour exactly: it
+	// changes nothing at all.
+	if cfg.Agent.IsStrong() {
+		// Backtracking discards an assistant turn and retries after a semantic
+		// tool error. On a model that reads the error and corrects itself, it
+		// throws away work and pays for the same tokens twice.
+		cfg.Backtrack.Enabled = false
+		// The confirm handshake makes every edit two tool calls, and with it
+		// go the indentation repair and first-line-indent guessing that only
+		// run alongside it.
+		cfg.Tools.Edit.PreviewMode = false
+		cfg.Tools.Edit.SmartFirstLineIndent = false
+		cfg.Tools.Edit.MaxAutoindentFix = 0
+		// Fuzzy matching edits the closest thing it can find to what the model
+		// asked for, which is a silent wrong edit when the model was right and
+		// the file had moved on.
+		cfg.Tools.Edit.ExactMatchOnly = true
+		cfg.Tools.Edit.FuzzyThreshold = 0
+		// Interrogation makes an extra model call to ask the model why it did
+		// something odd. It is a diagnostic for a model that does odd things.
+		cfg.Diagnostics.InterrogateOnAnomaly = false
 	}
 
 	// Set default shell timeouts

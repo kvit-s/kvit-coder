@@ -215,6 +215,7 @@ func (r *Runner) processLLMResponse(ctx context.Context, resp *llm.ChatResponse,
 	if state.totalTokens > state.agentStats.MaxContextUsed {
 		state.agentStats.MaxContextUsed = state.totalTokens
 	}
+	r.checkContextBudget(promptTokens, state)
 
 	// Ask the endpoint for cost and native token counts. This is OpenRouter's
 	// /generation endpoint and 404s elsewhere, so it is opt-in; it is also the
@@ -291,4 +292,27 @@ func (r *Runner) handleProviderError(ctx context.Context, resp *llm.ChatResponse
 
 	r.writer.Info("Retry succeeded")
 	return retryResp
+}
+
+// contextWarnFraction is how full the window has to be before it is worth
+// saying so. Below this there is nothing useful to do about it.
+const contextWarnFraction = 0.8
+
+// checkContextBudget compares what the last request actually cost against the
+// window the model has, and says so once when it is running out. Until now
+// llm.context was only a number in a display string: nothing compared anything
+// to it, so the first sign of trouble was a 400 from the endpoint.
+func (r *Runner) checkContextBudget(promptTokens int, state *runState) {
+	limit := r.cfg.LLM.Context
+	if limit <= 0 || promptTokens <= 0 || state.contextWarned {
+		return
+	}
+	if float64(promptTokens) < contextWarnFraction*float64(limit) {
+		return
+	}
+	state.contextWarned = true
+	r.writer.Warn(fmt.Sprintf(
+		"the conversation is using %d of the model's %d token window (%.0f%%). "+
+			"Finish what is in progress; a new session will start from a clean context",
+		promptTokens, limit, 100*float64(promptTokens)/float64(limit)))
 }

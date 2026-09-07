@@ -200,14 +200,17 @@ func TestIterationCapReached(t *testing.T) {
 	}
 }
 
-// TestDuplicateCallDetection: repeating a call verbatim earns an error result,
-// and doing it maxConsecutiveDuplicates times stops the loop.
+// TestDuplicateCallDetection: under the weak profile, repeating a call verbatim
+// earns an error result, and doing it maxConsecutiveDuplicates times stops the
+// loop.
 func TestDuplicateCallDetection(t *testing.T) {
 	same := func(id string) scriptStep {
 		return calls(toolCall(id, "echo", map[string]string{"arg": "same"}))
 	}
+	cfg := testConfig()
+	cfg.Agent.Profile = "weak"
 	client := newFakeClient(same("c1"), same("c2"), same("c3"), same("c4"), answer("unreachable"))
-	runner, _ := newTestRunner(t, testConfig(), client, &scriptedTool{name: "echo"})
+	runner, _ := newTestRunner(t, cfg, client, &scriptedTool{name: "echo"})
 
 	res, err := runner.Run(context.Background(), RunConfig{Messages: userStart("go")})
 	if err != nil {
@@ -594,5 +597,63 @@ func TestQuestionRunsLastInABatch(t *testing.T) {
 		if !ids[id] {
 			t.Errorf("tool call %s has no result", id)
 		}
+	}
+}
+
+// TestStrongProfileRunsRepeatedCalls: the duplicate-call kill switch is there
+// for a model that loops. On one that does not, a legitimate repeat — polling
+// the same status twice — must not end the turn.
+func TestStrongProfileRunsRepeatedCalls(t *testing.T) {
+	same := func(id string) scriptStep {
+		return calls(toolCall(id, "echo", map[string]string{"arg": "same"}))
+	}
+	cfg := testConfig() // profile defaults to strong
+	if !cfg.Agent.IsStrong() {
+		t.Fatal("the default profile is not strong")
+	}
+	client := newFakeClient(same("c1"), same("c2"), same("c3"), same("c4"), answer("all four ran"))
+	runner, _ := newTestRunner(t, cfg, client, &scriptedTool{name: "echo"})
+
+	res, err := runner.Run(context.Background(), RunConfig{Messages: userStart("go")})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	assertShape(t, res.FinalMessages,
+		"user",
+		"assistant+tool_calls", "tool:echo",
+		"assistant+tool_calls", "tool:echo",
+		"assistant+tool_calls", "tool:echo",
+		"assistant+tool_calls", "tool:echo",
+		"assistant",
+	)
+	for _, m := range res.FinalMessages {
+		if strings.Contains(m.Content, "DUPLICATE CALL ERROR") {
+			t.Fatalf("the duplicate-call guard fired under the strong profile: %q", m.Content)
+		}
+	}
+	if res.Cancelled {
+		t.Error("the run was cancelled by the duplicate-call kill switch")
+	}
+}
+
+// TestStrongProfileDoesNotScrapeProse: under the strong profile the model's
+// prose is an answer, not a tool call waiting to be found in it.
+func TestStrongProfileDoesNotScrapeProse(t *testing.T) {
+	prose := `I would run Shell({"command": "rm -rf build"}) here, but let me explain first.`
+
+	client := newFakeClient(answer(prose))
+	runner, _ := newTestRunner(t, testConfig(), client, &scriptedTool{name: "Shell"})
+
+	res, err := runner.Run(context.Background(), RunConfig{Messages: userStart("go")})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	assertShape(t, res.FinalMessages, "user", "assistant")
+	if last := res.FinalMessages[1]; len(last.ToolCalls) != 0 {
+		t.Errorf("a sentence about a command was turned into %d tool calls", len(last.ToolCalls))
+	}
+	if client.callCount() != 1 {
+		t.Errorf("made %d model calls, want 1: the answer was treated as a tool call", client.callCount())
 	}
 }

@@ -150,6 +150,9 @@ type runState struct {
 	totalToolTime               time.Duration
 	totalToolCalls              int
 	totalTokens                 int
+	// contextWarned stops the "running out of context" warning repeating every
+	// iteration once it has been said.
+	contextWarned bool
 	// lastRequestCost is what the endpoint charged for the most recent answer,
 	// or 0 when llm.generation_stats is off. Backtracking records it against
 	// the history it discards.
@@ -202,7 +205,11 @@ func (r *Runner) initRunState(rcfg RunConfig) *runState {
 		}),
 		requestStartTime: time.Now(),
 		agentStats:       &stats.AgentStats{},
-		normalizer:       llm.NewResponseNormalizer(r.registry, r.cfg.LLM.MergeThinking),
+		// The extractor scrapes tool calls out of prose, for models that
+		// describe a call instead of making one. A model that emits proper
+		// tool calls does not need it, and scraping its prose can turn a
+		// sentence about a command into a command.
+		normalizer: llm.NewResponseNormalizer(r.toolCallExtractor(), r.cfg.LLM.MergeThinking),
 	}
 }
 
@@ -386,4 +393,15 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 
 	result.FinalMessages = state.messages
 	return result, nil
+}
+
+// toolCallExtractor returns the registry when tool calls should be scraped out
+// of the model's prose, and nil when they should not. Under the strong profile
+// the model is expected to emit proper tool calls, and reading its prose for
+// something that looks like one risks acting on a sentence about a command.
+func (r *Runner) toolCallExtractor() llm.ToolCallExtractor {
+	if r.cfg.Agent.IsStrong() {
+		return nil
+	}
+	return r.registry
 }

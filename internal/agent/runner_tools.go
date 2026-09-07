@@ -191,8 +191,11 @@ func (r *Runner) executeSingleTool(
 		return result
 	}
 
-	// Check for immediate duplicate call
-	if internalName == state.lastToolName && tc.Function.Arguments == state.lastToolArgs {
+	// Check for immediate duplicate call. The kill switch that ends the turn
+	// after three identical calls is for a model that loops; on one that does
+	// not, it turns a legitimate repeat — polling the same status twice — into
+	// a stopped turn.
+	if !r.cfg.Agent.IsStrong() && internalName == state.lastToolName && tc.Function.Arguments == state.lastToolArgs {
 		state.consecutiveDuplicates++
 
 		if state.consecutiveDuplicates >= maxConsecutiveDuplicates {

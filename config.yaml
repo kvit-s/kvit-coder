@@ -34,6 +34,13 @@ workspace:
   path_safety_mode: "ask_once"  # "block", "warn", "ask_once", "ask_always"
 
 agent:
+  # strong (default) or weak. "weak" keeps every mechanism written to catch a
+  # model getting confused: backtracking away from a bad tool call, the
+  # duplicate-call kill switch, the confirm handshake before an edit is applied,
+  # scraping tool calls out of prose, fuzzy matching and indentation repair,
+  # anomaly interrogation, and retrying an empty answer. "strong" skips all of
+  # it: on a model that does not make those mistakes each one is a tax.
+  profile: strong
   max_tool_iterations: 1000
   project_instructions:
     enabled: true          # Load instructions before -p prompts when the file exists

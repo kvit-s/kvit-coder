@@ -221,8 +221,12 @@ func FormatContextStr(totalTokens, contextLimit int) string {
 	}
 	tokensK := float64(totalTokens) / 1000.0
 	if contextLimit > 0 {
+		// The share of the window in use is the number that says whether
+		// anything needs to be done about it; the raw token count on its own
+		// never told you that.
 		contextK := float64(contextLimit) / 1000.0
-		return fmt.Sprintf("%.1fk/%.0fk", tokensK, contextK)
+		percent := 100 * float64(totalTokens) / float64(contextLimit)
+		return fmt.Sprintf("%.1fk/%.0fk %.0f%%", tokensK, contextK, percent)
 	}
 	return fmt.Sprintf("%.1fk", tokensK)
 }
