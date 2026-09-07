@@ -23,11 +23,11 @@ func TestBuildInterrogationQuestion(t *testing.T) {
 		trigger string
 		want    []string
 	}{
-		{TriggerDuplicateCall, []string{"identical arguments", "make progress", "diagnostics only"}},
-		{TriggerFatal, []string{"identical arguments", "diagnostics only"}},
-		{TriggerBacktrack, []string{"identical arguments", "diagnostics only"}},
-		{TriggerPendingBlocked, []string{"Edit.confirm", "Edit.cancel", "diagnostics only"}},
-		{TriggerAlternatingLoop, []string{"alternating loop", "make progress", "diagnostics only"}},
+		{TriggerDuplicateCall, []string{"identical arguments", "something different", "diagnostic question only"}},
+		{TriggerFatal, []string{"identical arguments", "diagnostic question only"}},
+		{TriggerBacktrack, []string{"identical arguments", "diagnostic question only"}},
+		{TriggerPendingBlocked, []string{"Edit.confirm", "Edit.cancel", "diagnostic question only"}},
+		{TriggerAlternatingLoop, []string{"repeating a cycle", "make progress", "diagnostic question only"}},
 	}
 	for _, c := range cases {
 		t.Run(c.trigger, func(t *testing.T) {

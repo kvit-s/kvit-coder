@@ -4,6 +4,8 @@ package session
 import (
 	"bufio"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -127,6 +129,19 @@ func (m *Manager) AppendToSession(name string, messages []llm.Message) error {
 	}
 
 	return nil
+}
+
+// RunIDVar is the environment variable the LLM client's ${KVIT_RUN_ID} header
+// placeholder expands from. Endpoints that route by a session header put every
+// request carrying the same value on one backend.
+const RunIDVar = "KVIT_RUN_ID"
+
+// RunIDFor derives a stable run ID from a session name. Reopening the same
+// session produces the same ID, so the turn lands on the backend that already
+// holds the prompt cache for this conversation instead of a cold one.
+func RunIDFor(name string) string {
+	sum := sha256.Sum256([]byte("kvit-coder-session:" + name))
+	return hex.EncodeToString(sum[:6])
 }
 
 // GenerateSessionName generates a unique session name in YYYY-MM-DD-random6 format.

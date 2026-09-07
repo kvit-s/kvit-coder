@@ -296,3 +296,42 @@ func TestLLMHeadersRunIDFromEnv(t *testing.T) {
 		t.Errorf("x-opencode-session = %q, want pinned", got)
 	}
 }
+
+// TestPathWithinRejectsPrefixSiblings pins the containment rule: a directory
+// whose name merely starts with an allowed or denied directory's name is not
+// inside it. The old check was a plain string prefix, so /home/sk/kvit-coder-notes
+// counted as inside /home/sk/kvit-coder and inherited its permissions.
+func TestPathWithinRejectsPrefixSiblings(t *testing.T) {
+	cases := []struct {
+		parent, child string
+		want          bool
+	}{
+		{"/home/sk/kvit-coder", "/home/sk/kvit-coder", true},
+		{"/home/sk/kvit-coder", "/home/sk/kvit-coder/internal/tools", true},
+		{"/home/sk/kvit-coder", "/home/sk/kvit-coder-notes", false},
+		{"/home/sk/kvit-coder", "/home/sk/kvit-coder-notes/secrets.txt", false},
+		{"/home/sk/kvit-coder", "/home/sk", false},
+		{"/home/sk/kvit-coder", "/home/sk/kvit-coder/../other", false},
+		{"/etc", "/etc/passwd", true},
+	}
+	for _, c := range cases {
+		if got := pathWithin(c.parent, c.child); got != c.want {
+			t.Errorf("pathWithin(%q, %q) = %v, want %v", c.parent, c.child, got, c.want)
+		}
+	}
+}
+
+// TestCheckPathPermissionPrefixSibling is the same rule seen through the config
+// API a tool actually calls.
+func TestCheckPathPermissionPrefixSibling(t *testing.T) {
+	cfg := &Config{}
+	cfg.Workspace.Root = "/home/sk/kvit-coder"
+	cfg.Workspace.PathSafetyMode = "block"
+
+	if res, _ := cfg.CheckPathPermission("/home/sk/kvit-coder/main.go", AccessWrite); res != PermissionGranted {
+		t.Errorf("a file inside the workspace was not granted: %v", res)
+	}
+	if res, _ := cfg.CheckPathPermission("/home/sk/kvit-coder-notes/main.go", AccessWrite); res != PermissionDenied {
+		t.Errorf("a sibling directory sharing the workspace's name prefix was treated as %v, want denied", res)
+	}
+}

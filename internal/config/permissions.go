@@ -39,21 +39,21 @@ func (c *Config) CheckPathPermission(path string, accessType AccessType) (Permis
 	// Check denied paths first (highest priority)
 	for _, denied := range c.Workspace.DeniedPaths {
 		deniedAbs, _ := filepath.Abs(expandPath(denied))
-		if strings.HasPrefix(absPath, deniedAbs) {
+		if pathWithin(deniedAbs, absPath) {
 			return PermissionDenied, fmt.Errorf("path is in denied_paths")
 		}
 	}
 
 	// Check if within workspace root
 	workspaceAbs, _ := filepath.Abs(c.Workspace.Root)
-	if strings.HasPrefix(absPath, workspaceAbs) {
+	if pathWithin(workspaceAbs, absPath) {
 		return PermissionGranted, nil
 	}
 
 	// Check allowed_paths (read+write)
 	for _, allowed := range c.Workspace.AllowedPaths {
 		allowedAbs, _ := filepath.Abs(expandPath(allowed))
-		if strings.HasPrefix(absPath, allowedAbs) {
+		if pathWithin(allowedAbs, absPath) {
 			return PermissionGranted, nil
 		}
 	}
@@ -61,7 +61,7 @@ func (c *Config) CheckPathPermission(path string, accessType AccessType) (Permis
 	// Check allowed_read_paths (read-only)
 	for _, allowedRead := range c.Workspace.AllowedReadPaths {
 		allowedReadAbs, _ := filepath.Abs(expandPath(allowedRead))
-		if strings.HasPrefix(absPath, allowedReadAbs) {
+		if pathWithin(allowedReadAbs, absPath) {
 			if accessType == AccessWrite {
 				return PermissionReadOnly, fmt.Errorf("path is read-only")
 			}
@@ -84,6 +84,23 @@ func (c *Config) CheckPathPermission(path string, accessType AccessType) (Permis
 		}
 		return PermissionDenied, fmt.Errorf("path outside workspace")
 	}
+}
+
+// pathWithin reports whether child is parent itself or sits underneath it.
+// A plain string prefix test is not enough: it makes /home/sk/notes look like
+// it is inside /home/sk/note, so a directory named as a prefix of an allowed or
+// denied one inherits that directory's permissions.
+func pathWithin(parent, child string) bool {
+	parent = filepath.Clean(parent)
+	child = filepath.Clean(child)
+	if parent == child {
+		return true
+	}
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func expandPath(path string) string {

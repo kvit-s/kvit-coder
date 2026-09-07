@@ -216,8 +216,12 @@ func (r *Runner) processLLMResponse(ctx context.Context, resp *llm.ChatResponse,
 		state.agentStats.MaxContextUsed = state.totalTokens
 	}
 
-	// Query generation stats for extended data
-	if resp.ID != "" {
+	// Ask the endpoint for cost and native token counts. This is OpenRouter's
+	// /generation endpoint and 404s elsewhere, so it is opt-in; it is also the
+	// only place that learns the cost of this request, which backtracking
+	// accounting reads back through state.lastRequestCost.
+	state.lastRequestCost = 0
+	if resp.ID != "" && r.cfg.LLM.GenerationStats {
 		genStats, err := r.llmClient.GetGenerationStats(context.Background(), resp.ID)
 		if err == nil {
 			if genStats.Data.NativeTokensPrompt > 0 {
@@ -225,6 +229,7 @@ func (r *Runner) processLLMResponse(ctx context.Context, resp *llm.ChatResponse,
 				completionTokens = genStats.Data.NativeTokensCompletion
 				state.totalTokens = promptTokens + completionTokens
 			}
+			state.lastRequestCost = genStats.Data.TotalCost
 			state.agentStats.TotalCacheReadTokens += genStats.Data.NativeTokensCached
 			state.agentStats.TotalCost += genStats.Data.TotalCost
 			state.agentStats.CacheDiscount += genStats.Data.CacheDiscount

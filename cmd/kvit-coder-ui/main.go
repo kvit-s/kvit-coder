@@ -117,11 +117,18 @@ func main() {
 		log.Fatalf("Failed to create session manager: %v", err)
 	}
 
+	// Without a session name the UI spawns every turn with no -s, so nothing
+	// the agent learns survives to the next prompt. Name the session up front.
+	currentSession := *sessionName
+	if currentSession == "" {
+		currentSession = sessionMgr.GenerateSessionName()
+	}
+
 	// Create and run UI
 	ui := tui.New(tui.Options{
 		AgentPath:   agentBinary,
 		ConfigPath:  *configPath,
-		SessionName: *sessionName,
+		SessionName: currentSession,
 		SessionMgr:  sessionMgr,
 		Config:      cfg,
 	})

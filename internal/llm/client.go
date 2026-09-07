@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -19,6 +20,11 @@ const (
 	// only there and answer /chat/completions with an error.
 	BackendResponses = "responses"
 )
+
+// defaultRequestTimeout bounds one HTTP request end to end. Without it a
+// hung endpoint hangs the agent with no way out short of killing the process.
+// It has to cover a slow reasoning model's whole answer, so it is generous.
+const defaultRequestTimeout = 10 * time.Minute
 
 type Client struct {
 	baseURL string
@@ -57,6 +63,16 @@ func WithHeaders(headers map[string]string) Option {
 	}
 }
 
+// WithTimeout bounds one HTTP request end to end, overriding the default of
+// ten minutes. A non-positive value leaves the default in place.
+func WithTimeout(d time.Duration) Option {
+	return func(c *Client) {
+		if d > 0 {
+			c.client.Timeout = d
+		}
+	}
+}
+
 // WithReasoningEffort sets how much thinking a reasoning model should do.
 // Only the Responses backend sends it; the accepted values are the provider's
 // (commonly minimal, low, medium, high).
@@ -65,13 +81,20 @@ func WithReasoningEffort(effort string) Option {
 }
 
 func NewClient(baseURL, apiKey string, opts ...Option) *Client {
+	// Reusing a connection to a local llama.cpp server produced spurious EOFs,
+	// which is why keep-alives were turned off. That workaround costs a fresh
+	// TLS handshake on every request to a hosted endpoint, so apply it only to
+	// the plain-HTTP servers it was written for.
+	disableKeepAlives := strings.HasPrefix(baseURL, "http://")
+
 	c := &Client{
 		baseURL: baseURL,
 		apiKey:  apiKey,
 		backend: BackendChatCompletions,
 		client: &http.Client{
+			Timeout: defaultRequestTimeout,
 			Transport: &http.Transport{
-				DisableKeepAlives: true, // Disable connection reuse to avoid EOF issues
+				DisableKeepAlives: disableKeepAlives,
 			},
 		},
 	}

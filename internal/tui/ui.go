@@ -42,7 +42,7 @@ func New(opts Options) *UI {
 	// Load history
 	history, _ := ui.LoadHistory(historyFile)
 
-	return &UI{
+	u := &UI{
 		agentPath:      opts.AgentPath,
 		configPath:     opts.ConfigPath,
 		currentSession: opts.SessionName,
@@ -51,6 +51,19 @@ func New(opts Options) *UI {
 		history:        history,
 		historyFile:    historyFile,
 	}
+	u.pinRunID()
+	return u
+}
+
+// pinRunID puts a run ID derived from the current session into the environment,
+// which every agent this UI spawns inherits. Deriving it from the session name
+// rather than at random means a turn in this session always reaches the backend
+// that already holds its prompt cache.
+func (u *UI) pinRunID() {
+	if u.currentSession == "" {
+		return
+	}
+	os.Setenv(session.RunIDVar, session.RunIDFor(u.currentSession))
 }
 
 // Run starts the interactive UI loop
@@ -175,6 +188,7 @@ func (u *UI) handleCommand(input string) bool {
 	case "new":
 		// Start a new session
 		u.currentSession = u.sessionMgr.GenerateSessionName()
+		u.pinRunID()
 		fmt.Printf("Started new session: %s\n\n", u.currentSession)
 
 	case "switch":
@@ -189,6 +203,7 @@ func (u *UI) handleCommand(input string) bool {
 			return false
 		}
 		u.currentSession = sessionName
+		u.pinRunID()
 		fmt.Printf("Switched to session: %s\n\n", sessionName)
 
 	case "sessions":

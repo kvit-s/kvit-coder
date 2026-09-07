@@ -9,5 +9,5 @@ Examples:
 Parameters:
 - command (required): The shell command
 - working_dir (optional): Directory to run in (default: {{ .WorkspaceRoot }})
-- timeout (optional): Seconds, default 30, max 180
+- timeout (optional): Seconds, default {{ .Config.Tools.Shell.DefaultTimeout }}, max {{ .Config.Tools.Shell.MaxTimeout }}
 

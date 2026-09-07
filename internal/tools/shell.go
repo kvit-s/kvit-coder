@@ -152,6 +152,16 @@ func NewShellAdvancedTool(cfg *config.Config, timeout time.Duration, tempFileMgr
 	}
 }
 
+// maxTimeout is the ceiling a call's own timeout is clamped to, from
+// tools.shell.max_timeout. Falls back to ten minutes when unconfigured, which
+// is what a Config built by config.Load always has.
+func (t *ShellAdvancedTool) maxTimeout() time.Duration {
+	if t.cfg != nil && t.cfg.Tools.Shell.MaxTimeout > 0 {
+		return time.Duration(t.cfg.Tools.Shell.MaxTimeout) * time.Second
+	}
+	return 10 * time.Minute
+}
+
 func (t *ShellAdvancedTool) Name() string {
 	return "Shell.advanced"
 }
@@ -173,8 +183,9 @@ func (t *ShellAdvancedTool) JSONSchema() map[string]any {
 				"description": "Working directory (relative to workspace root or absolute)",
 			},
 			"timeout": map[string]any{
-				"type":        "integer",
-				"description": "Timeout in seconds (default: 30, max: 180)",
+				"type": "integer",
+				"description": fmt.Sprintf("Timeout in seconds (default: %d, max: %d)",
+					int(t.timeout.Seconds()), int(t.maxTimeout().Seconds())),
 			},
 		},
 		"required": []string{"command"},
@@ -224,7 +235,8 @@ Examples:
 Parameters:
 - command (required): The shell command
 - working_dir (optional): Directory to run in (default: %s)
-- timeout (optional): Seconds, default 30, max 180`, t.workspaceRoot)
+- timeout (optional): Seconds, default %d, max %d`,
+		t.workspaceRoot, int(t.timeout.Seconds()), int(t.maxTimeout().Seconds()))
 }
 
 // Check performs validation - delegates to Shell.advanced
@@ -291,13 +303,13 @@ func (t *ShellAdvancedTool) Call(ctx context.Context, args json.RawMessage) (any
 		workDir = resolvedDir
 	}
 
-	// Determine timeout: use provided value or default, capped at 3 minutes
-	const maxTimeout = 3 * time.Minute
+	// Determine timeout: use the provided value or the configured default,
+	// capped at tools.shell.max_timeout.
 	timeout := t.timeout
 	if params.Timeout > 0 {
 		timeout = time.Duration(params.Timeout) * time.Second
-		if timeout > maxTimeout {
-			timeout = maxTimeout
+		if max := t.maxTimeout(); timeout > max {
+			timeout = max
 		}
 	}
 

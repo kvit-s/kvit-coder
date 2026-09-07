@@ -519,6 +519,13 @@ func main() {
 		log.Fatalf("Failed to create session manager: %v", err)
 	}
 
+	// Pin the run ID to the session, unless the caller already chose one.
+	// Endpoints that route by a session header then send every turn of this
+	// conversation to the backend that already holds its prompt cache.
+	if *sessionName != "" && os.Getenv(session.RunIDVar) == "" {
+		os.Setenv(session.RunIDVar, session.RunIDFor(*sessionName))
+	}
+
 	// Acquire lock on session if specified
 	if *sessionName != "" {
 		sessionUnlock, err := sessionMgr.AcquireLock(*sessionName)

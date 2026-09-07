@@ -70,6 +70,11 @@ type RunResult struct {
 	// impose a time budget (the thinkbench executor) use it to report the
 	// budget rather than the bare "context deadline exceeded".
 	TimedOut bool
+	// BudgetExhausted is set when the loop ran out of iterations
+	// (agent.max_tool_iterations) while the model still wanted to keep going.
+	// The run produced no final answer, and without this the caller could not
+	// tell that apart from a model that simply finished.
+	BudgetExhausted bool
 }
 
 // NewRunner creates a new agent runner
@@ -132,8 +137,12 @@ type runState struct {
 	totalToolTime               time.Duration
 	totalToolCalls              int
 	totalTokens                 int
-	agentStats                  *stats.AgentStats
-	normalizer                  *llm.ResponseNormalizer
+	// lastRequestCost is what the endpoint charged for the most recent answer,
+	// or 0 when llm.generation_stats is off. Backtracking records it against
+	// the history it discards.
+	lastRequestCost float64
+	agentStats      *stats.AgentStats
+	normalizer      *llm.ResponseNormalizer
 
 	// Anomaly interrogation state (Improvement 2), per-task.
 	interrogationCount int
@@ -199,6 +208,11 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 		maxIters = 10
 	}
 
+	// The loop leaving without ever breaking out means the model still wanted
+	// another iteration when the budget ran out. Every exit path below clears
+	// this; the one that does not is the cap.
+	budgetExhausted := true
+
 	for i := 0; i < maxIters; i++ {
 		r.logger.AgentIteration(i, 0)
 
@@ -225,12 +239,14 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 		llmResult, err := r.callLLM(iterCtx, state)
 		if err != nil {
 			iterCancel()
+			budgetExhausted = false
 			result.FinalMessages = state.messages
 			return result, err
 		}
 
 		if llmResult.shouldBreak {
 			iterCancel()
+			budgetExhausted = false
 			result.Cancelled = llmResult.cancelled
 			result.TimedOut = llmResult.timedOut
 			result.FinalMessages = state.messages
@@ -250,22 +266,20 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 			if state.consecutiveProviderFailures > 0 && state.consecutiveProviderFailures < maxProviderFailures {
 				continue
 			}
+			budgetExhausted = false
 			result.FinalMessages = state.messages
 			break
 		}
 
 		state.messages = append(state.messages, *assistantMsg)
 
-		// Get token counts and request cost for backtracking
+		// Token counts and request cost for backtracking. The cost comes from
+		// the generation-stats call processLLMResponse already made; asking a
+		// second time doubled the HTTP requests per iteration for a number the
+		// loop already had.
 		promptTokens := llmResult.response.Usage.PromptTokens
 		completionTokens := llmResult.response.Usage.CompletionTokens
-		var requestCost float64
-		if llmResult.response.ID != "" {
-			genStats, err := r.llmClient.GetGenerationStats(context.Background(), llmResult.response.ID)
-			if err == nil {
-				requestCost = genStats.Data.TotalCost
-			}
-		}
+		requestCost := state.lastRequestCost
 
 		// No tool calls = final answer
 		if len(assistantMsg.ToolCalls) == 0 {
@@ -274,6 +288,7 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 			if shouldContinue {
 				continue
 			}
+			budgetExhausted = false
 			result.FinalMessages = state.messages
 			break
 		}
@@ -314,14 +329,30 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 			} else {
 				result.Cancelled = true
 			}
+			budgetExhausted = false
 			result.FinalMessages = state.messages
 			break
 		}
 
 		if shouldBreak {
+			budgetExhausted = false
 			result.FinalMessages = state.messages
 			break
 		}
+	}
+
+	// Running out of iterations used to end the turn silently, with the model
+	// mid-task and no answer printed. Say so, in the history as well as on the
+	// terminal, so the next turn has the fact and the caller can act on it.
+	result.BudgetExhausted = budgetExhausted
+	if budgetExhausted {
+		notice := fmt.Sprintf("Stopped after %d iterations without a final answer: the iteration budget "+
+			"(agent.max_tool_iterations) ran out while work was still in progress.", maxIters)
+		r.writer.Warn(notice)
+		state.messages = append(state.messages, llm.Message{
+			Role:    llm.RoleAssistant,
+			Content: "[" + notice + "]",
+		})
 	}
 
 	// Collect backtrack stats

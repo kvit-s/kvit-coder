@@ -69,6 +69,10 @@ func newTestRunner(t *testing.T, cfg *config.Config, client LLMClient, ts ...too
 	writer := ui.NewWriter(0)
 	writer.SetStdout(&out)
 	writer.SetStderr(&out)
+	// Headless routes every message through the writer's own streams; the
+	// default path prints through the color package straight to os.Stdout,
+	// which a test cannot capture.
+	writer.SetHeadless(true)
 
 	logger, err := NewLogger("", false)
 	if err != nil {
@@ -185,8 +189,14 @@ func TestIterationCapReached(t *testing.T) {
 		"assistant+tool_calls", "tool:echo",
 		"assistant+tool_calls", "tool:echo",
 		"assistant+tool_calls", "tool:echo",
+		"assistant", // the notice that the budget ran out
 	)
-	_ = out
+	if !res.BudgetExhausted {
+		t.Error("BudgetExhausted is false after the loop hit the iteration cap")
+	}
+	if !strings.Contains(out.String(), "iteration budget") {
+		t.Errorf("nothing about the iteration budget was reported:\n%s", out.String())
+	}
 }
 
 // TestDuplicateCallDetection: repeating a call verbatim earns an error result,

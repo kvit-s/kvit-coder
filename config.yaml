@@ -10,12 +10,18 @@ llm:
   api_backend: "responses"   # this endpoint answers /chat/completions with a 500 for this model
   reasoning_effort: "high"   # minimal | low | medium | high | xhigh
   headers:
-    # ${KVIT_RUN_ID} is unique per kvit-coder process, so two agents running at
-    # once do not share one backend and compete for the same prompt cache.
+    # ${KVIT_RUN_ID} identifies this conversation, so two agents running at once
+    # do not share one backend and compete for the same prompt cache. With -s it
+    # is derived from the session name, so reopening a session lands on the
+    # backend that already holds its cache.
     - "x-opencode-session=kvit-coder-${KVIT_RUN_ID}"
   context: 1048576
   merge_thinking: false  # true = merge reasoning into content, false = discard
   verbose: 0             # 0 = off, >0 = show tool output up to N lines
+  # Ask the endpoint for per-request cost and native token counts. This is
+  # OpenRouter's /generation endpoint and 404s elsewhere, so it is off by
+  # default; turning it on doubles the HTTP requests per iteration.
+  generation_stats: false
 
 # Previous default -- a local model behind the llama-swap-plus front door:
 #   base_url: "http://192.168.8.20:8080/v1"
@@ -73,6 +79,8 @@ tools:
     # Always blocked: sudo, su, apt, yum, brew, shutdown, reboot, chroot, mkfs, dd, sed -i, awk, cd
     allowed_commands: []        # allowlist (empty = allow all)
     disallowed_commands: []     # blocklist (checked after allowlist)
+    default_timeout: 120        # seconds a command gets when the call names none
+    max_timeout: 600            # ceiling on what a call may ask for
 
   plan:
     enabled: false              # group toggle for all plan.* tools

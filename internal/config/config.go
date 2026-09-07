@@ -38,7 +38,12 @@ type Config struct {
 		Context         int     `yaml:"context"`        // Max context size for display (0 = don't show)
 		MergeThinking   bool    `yaml:"merge_thinking"` // Merge reasoning_content into content (default: false, discard thinking)
 		Verbose         int     `yaml:"verbose"`        // 0 = off, >0 = show tool output up to N lines
-		BenchmarkCmd    string  `yaml:"benchmark_cmd"`  // External command for benchmarks (use {prompt} placeholder)
+		// GenerationStats asks the endpoint for per-request cost and native
+		// token counts after each answer. It is an OpenRouter endpoint
+		// (/generation) and returns 404 everywhere else, so it is off by
+		// default: leaving it on doubles the HTTP requests per iteration.
+		GenerationStats bool   `yaml:"generation_stats"`
+		BenchmarkCmd    string `yaml:"benchmark_cmd"` // External command for benchmarks (use {prompt} placeholder)
 	} `yaml:"llm"`
 
 	Workspace struct {
@@ -474,6 +479,12 @@ type ShellToolConfig struct {
 	// configs (e.g. SWE-bench, which runs in a Docker container and needs python -c
 	// to introspect the codebase). Default false (blocked) for normal use.
 	AllowInterpreters bool `yaml:"allow_interpreters"`
+
+	// DefaultTimeout is how long a shell command may run when the call does
+	// not ask for a timeout, in seconds. Default 120.
+	DefaultTimeout int `yaml:"default_timeout"`
+	// MaxTimeout caps what a call may ask for, in seconds. Default 600.
+	MaxTimeout int `yaml:"max_timeout"`
 }
 
 // PlanToolsConfig configures all plan.* tools as a group
@@ -655,6 +666,14 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Tools.Checkpoint.MaxTurns == 0 {
 		cfg.Tools.Checkpoint.MaxTurns = 100
+	}
+
+	// Set default shell timeouts
+	if cfg.Tools.Shell.DefaultTimeout == 0 {
+		cfg.Tools.Shell.DefaultTimeout = 120
+	}
+	if cfg.Tools.Shell.MaxTimeout == 0 {
+		cfg.Tools.Shell.MaxTimeout = 600
 	}
 
 	// Set default path safety mode
