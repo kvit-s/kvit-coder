@@ -31,9 +31,10 @@ type Client struct {
 	apiKey  string
 	client  *http.Client
 
-	backend         string
-	headers         map[string]string
-	reasoningEffort string
+	backend          string
+	headers          map[string]string
+	reasoningEffort  string
+	reasoningSummary string
 }
 
 // Option adjusts a Client at construction time.
@@ -78,6 +79,15 @@ func WithTimeout(d time.Duration) Option {
 // (commonly minimal, low, medium, high).
 func WithReasoningEffort(effort string) Option {
 	return func(c *Client) { c.reasoningEffort = effort }
+}
+
+// WithReasoningSummary asks a reasoning model for readable text describing its
+// thinking, which is the only part of its reasoning anyone can read: the rest
+// comes back encrypted, to be replayed rather than understood. Only the
+// Responses backend sends it; the accepted values are the provider's (commonly
+// auto, concise, detailed). Without it merge_thinking has nothing to merge.
+func WithReasoningSummary(summary string) Option {
+	return func(c *Client) { c.reasoningSummary = summary }
 }
 
 func NewClient(baseURL, apiKey string, opts ...Option) *Client {

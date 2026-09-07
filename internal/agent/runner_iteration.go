@@ -173,6 +173,9 @@ func (r *Runner) handlePostIteration(
 ) bool {
 	// Handle backtrack if needed
 	if toolResult.shouldBacktrack {
+		// These messages may already be in the session, so say they were taken
+		// back rather than pretend they never happened.
+		r.discard(state, rollbackPoint)
 		state.messages = state.messages[:rollbackPoint]
 
 		if toolResult.userMessageToInject != "" {

@@ -260,3 +260,66 @@ func TestOpenFollowsSucceededBy(t *testing.T) {
 		t.Errorf("opening %q resolved to %q, want \"newer\"", "old", resolved.Name())
 	}
 }
+
+// TestRollbackIsAppliedOnLoad: the loop takes messages back by appending a
+// record of the discard, never by rewriting the file. What Load returns is the
+// conversation; the abandoned attempt stays in the file, where it says what the
+// model tried.
+func TestRollbackIsAppliedOnLoad(t *testing.T) {
+	mgr := setupTestManager(t)
+	sess, err := mgr.Open("rollback")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	_ = sess.AppendMessages([]llm.Message{{Role: llm.RoleUser, Content: "go"}})
+	// An attempt the loop then abandons.
+	_ = sess.AppendMessages([]llm.Message{
+		{Role: llm.RoleAssistant, Content: "wrong turn"},
+		{Role: llm.RoleTool, Name: "Edit", Content: "no such file"},
+	})
+	if err := sess.Rollback(2); err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	_ = sess.AppendMessages([]llm.Message{{Role: llm.RoleAssistant, Content: "recovered"}})
+
+	loaded, err := sess.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("loaded %d messages, want the prompt and the recovered answer: %+v", len(loaded), loaded)
+	}
+	if loaded[0].Content != "go" || loaded[1].Content != "recovered" {
+		t.Errorf("loaded %q then %q, want the discarded attempt skipped", loaded[0].Content, loaded[1].Content)
+	}
+
+	// The file still holds everything, including what was taken back.
+	data, err := os.ReadFile(sess.HistoryPath())
+	if err != nil {
+		t.Fatalf("read history: %v", err)
+	}
+	if !strings.Contains(string(data), "wrong turn") {
+		t.Error("the abandoned attempt was removed from the file, which is meant to be append-only")
+	}
+	if !strings.Contains(string(data), `"kind":"rollback"`) {
+		t.Error("the discard was not recorded as its own line")
+	}
+}
+
+// TestRollbackCannotUnderflow: a discard larger than the history so far leaves
+// an empty conversation rather than panicking.
+func TestRollbackCannotUnderflow(t *testing.T) {
+	mgr := setupTestManager(t)
+	sess, _ := mgr.Open("underflow")
+	_ = sess.AppendMessages([]llm.Message{{Role: llm.RoleUser, Content: "one"}})
+	_ = sess.Rollback(50)
+
+	loaded, err := sess.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(loaded) != 0 {
+		t.Errorf("loaded %d messages, want none", len(loaded))
+	}
+}

@@ -32,12 +32,18 @@ type Config struct {
 		// ReasoningEffort asks a reasoning model for more or less thinking.
 		// Only the "responses" backend sends it; values are the provider's
 		// (commonly minimal, low, medium, high).
-		ReasoningEffort string  `yaml:"reasoning_effort"`
-		Temperature     float32 `yaml:"temperature"`
-		MaxTokens       int     `yaml:"max_output_tokens"`
-		Context         int     `yaml:"context"`        // Max context size for display (0 = don't show)
-		MergeThinking   bool    `yaml:"merge_thinking"` // Merge reasoning_content into content (default: false, discard thinking)
-		Verbose         int     `yaml:"verbose"`        // 0 = off, >0 = show tool output up to N lines
+		ReasoningEffort string `yaml:"reasoning_effort"`
+		// ReasoningSummary asks a reasoning model for readable text describing
+		// its thinking. Only the "responses" backend sends it; values are the
+		// provider's (auto, concise, detailed), and "off" suppresses it.
+		// Empty follows merge_thinking, because thinking that is never
+		// requested cannot be merged.
+		ReasoningSummary string  `yaml:"reasoning_summary"`
+		Temperature      float32 `yaml:"temperature"`
+		MaxTokens        int     `yaml:"max_output_tokens"`
+		Context          int     `yaml:"context"`        // Max context size for display (0 = don't show)
+		MergeThinking    bool    `yaml:"merge_thinking"` // Merge reasoning_content into content (default: false, discard thinking)
+		Verbose          int     `yaml:"verbose"`        // 0 = off, >0 = show tool output up to N lines
 		// GenerationStats asks the endpoint for per-request cost and native
 		// token counts after each answer. It is an OpenRouter endpoint
 		// (/generation) and returns 404 everywhere else, so it is off by
@@ -646,6 +652,23 @@ func ensureRunID() {
 		}
 		os.Setenv(runIDVar, hex.EncodeToString(buf[:]))
 	})
+}
+
+// ReasoningSummaryOrDefault says what to ask the provider for. Turning on
+// merge_thinking without this asks the model to think and then throws the
+// readable part away, so an unset value follows merge_thinking.
+func (c *Config) ReasoningSummaryOrDefault() string {
+	switch strings.ToLower(c.LLM.ReasoningSummary) {
+	case "":
+		if c.LLM.MergeThinking {
+			return "auto"
+		}
+		return ""
+	case "off", "none", "false":
+		return ""
+	default:
+		return c.LLM.ReasoningSummary
+	}
 }
 
 // LLMHeaders parses llm.headers into the header map the LLM client wants,

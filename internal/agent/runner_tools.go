@@ -48,6 +48,11 @@ func (r *Runner) executeTools(
 		}
 
 		toolResult := r.executeSingleTool(ctx, tc, state, rollbackPoint, promptTokens, completionTokens, requestCost, contextStr)
+		// Write this tool's result before starting the next one, so a long
+		// batch of calls is readable as it goes.
+		if !toolResult.shouldBacktrack {
+			r.flush(state)
+		}
 
 		if toolResult.shouldBacktrack {
 			result.shouldBacktrack = true

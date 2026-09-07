@@ -57,6 +57,11 @@ const (
 	// KindSettings records the model and options a turn ran with, so a
 	// transcript read later says what produced it.
 	KindSettings Kind = "settings"
+	// KindRollback records that the loop discarded the last few messages,
+	// which is how backtracking appears in a file that is only ever appended
+	// to. Load applies it; the discarded attempt stays in the file, where it
+	// says what the model tried and why it was taken back.
+	KindRollback Kind = "rollback"
 )
 
 // Event is one line of history.jsonl. One JSON object per line keeps the file
@@ -80,6 +85,10 @@ type Event struct {
 	// Model and MergeThinking accompany KindSettings.
 	Model         string `json:"model,omitempty"`
 	MergeThinking *bool  `json:"merge_thinking,omitempty"`
+
+	// Dropped accompanies KindRollback: how many messages at the end of the
+	// history so far are no longer part of the conversation.
+	Dropped int `json:"dropped,omitempty"`
 }
 
 // Meta is meta.json: what this session is, and what it was compacted from or
@@ -296,6 +305,15 @@ func (s *Session) AppendMessages(messages []llm.Message) error {
 	return nil
 }
 
+// Rollback records that the loop discarded the last n messages. The messages
+// stay in the file — it is append-only — and Load skips them.
+func (s *Session) Rollback(n int) error {
+	if n <= 0 {
+		return nil
+	}
+	return s.Append(Event{Kind: KindRollback, Dropped: n})
+}
+
 // Notice records something that happened to the turn rather than in the
 // conversation.
 func (s *Session) Notice(text string) error {
@@ -344,6 +362,14 @@ func readHistory(path string) ([]llm.Message, error) {
 			var msg llm.Message
 			if err := json.Unmarshal([]byte(line), &msg); err == nil && msg.Role != "" {
 				messages = append(messages, msg)
+			}
+			continue
+		}
+		if ev.Kind == KindRollback {
+			// The loop took these back, so they are not part of the
+			// conversation even though they are still in the file.
+			if drop := min(ev.Dropped, len(messages)); drop > 0 {
+				messages = messages[:len(messages)-drop]
 			}
 			continue
 		}

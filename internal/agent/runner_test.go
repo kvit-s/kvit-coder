@@ -657,3 +657,140 @@ func TestStrongProfileDoesNotScrapeProse(t *testing.T) {
 		t.Errorf("made %d model calls, want 1: the answer was treated as a tool call", client.callCount())
 	}
 }
+
+// TestHistoryIsWrittenPerIteration: a turn's work reaches the session as the
+// turn goes, not only when it ends. Before this, a turn killed outright lost
+// everything it had done, and a running turn could not be read at all.
+func TestHistoryIsWrittenPerIteration(t *testing.T) {
+	client := newFakeClient(
+		calls(toolCall("c1", "echo", map[string]string{"arg": "a"})),
+		calls(toolCall("c2", "echo", map[string]string{"arg": "b"})),
+		answer("done"),
+	)
+	runner, _ := newTestRunner(t, testConfig(), client, &scriptedTool{name: "echo"})
+
+	// Each flush is one batch, so the number of batches is the number of
+	// moments the session was brought up to date.
+	var batches [][]llm.Message
+	runner.SetPersist(func(batch []llm.Message) error {
+		batches = append(batches, batch)
+		return nil
+	}, nil)
+
+	res, err := runner.Run(context.Background(), RunConfig{Messages: userStart("go")})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// Two iterations, each writing the model's turn and then its tool result,
+	// plus the final answer: the session is brought up to date after every
+	// message rather than once at the end.
+	if len(batches) < 5 {
+		t.Fatalf("the session was written %d time(s), want one write per message", len(batches))
+	}
+	for i, b := range batches {
+		if len(b) != 1 {
+			t.Errorf("write %d carried %d messages, want them written one at a time", i, len(b))
+		}
+	}
+
+	// Everything the loop produced was written exactly once, in order, and the
+	// prompt that was already in the session was not written again.
+	var written []llm.Message
+	for _, b := range batches {
+		written = append(written, b...)
+	}
+	assertShape(t, written,
+		"assistant+tool_calls", "tool:echo",
+		"assistant+tool_calls", "tool:echo",
+		"assistant",
+	)
+	if len(written) != len(res.FinalMessages)-1 {
+		t.Errorf("wrote %d messages for a history of %d (excluding the prompt)",
+			len(written), len(res.FinalMessages)-1)
+	}
+}
+
+// TestBacktrackedMessagesAreNeverWritten: the reason the flush happens at the
+// iteration boundary rather than per message. A discarded attempt must not
+// reach an append-only file, which cannot take it back.
+func TestBacktrackedMessagesAreNeverWritten(t *testing.T) {
+	cfg := testConfig()
+	cfg.Backtrack.Enabled = true
+	cfg.Backtrack.MaxRetries = 5
+
+	client := newFakeClient(
+		calls(toolCall("c1", "bad", map[string]string{"arg": "x"})),
+		answer("recovered"),
+	)
+	bad := &scriptedTool{name: "bad", call: func(context.Context, json.RawMessage) (any, error) {
+		return nil, tools.SemanticErrorf("that path does not exist")
+	}}
+	runner, _ := newTestRunner(t, cfg, client, bad)
+
+	// The session applies a discard the way session.Load does: drop that many
+	// messages from the end.
+	var written []llm.Message
+	var discards []int
+	runner.SetPersist(
+		func(batch []llm.Message) error {
+			written = append(written, batch...)
+			return nil
+		},
+		func(n int) error {
+			discards = append(discards, n)
+			written = written[:len(written)-min(n, len(written))]
+			return nil
+		},
+	)
+
+	if _, err := runner.Run(context.Background(), RunConfig{Messages: userStart("go")}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	// The failed attempt was written as it happened and then taken back, so
+	// what the session replays is the recovered answer alone.
+	if len(discards) != 1 {
+		t.Fatalf("the loop recorded %d discards, want 1 for the backtrack", len(discards))
+	}
+	assertShape(t, written, "assistant")
+}
+
+// TestPartialTurnIsWrittenWhenCancelled: the case that used to lose the lot.
+func TestPartialTurnIsWrittenWhenCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client := newFakeClient(
+		calls(toolCall("c1", "echo", map[string]string{"arg": "a"})),
+		calls(toolCall("c2", "slow", map[string]string{"arg": "b"})),
+		answer("unreachable"),
+	)
+	slow := &scriptedTool{name: "slow", call: func(context.Context, json.RawMessage) (any, error) {
+		cancel()
+		return map[string]any{"partial": "output"}, nil
+	}}
+	runner, _ := newTestRunner(t, testConfig(), client,
+		&scriptedTool{name: "echo"}, slow)
+
+	var written []llm.Message
+	runner.SetPersist(func(batch []llm.Message) error {
+		written = append(written, batch...)
+		return nil
+	}, nil)
+
+	res, err := runner.Run(ctx, RunConfig{Messages: userStart("go")})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Cancelled {
+		t.Fatal("the run does not report being cancelled")
+	}
+
+	// The first iteration's work survives the interrupt, as does the record of
+	// what the second one was doing when it was cut short.
+	assertShape(t, written,
+		"assistant+tool_calls", "tool:echo",
+		"assistant+tool_calls", "tool:slow",
+	)
+}

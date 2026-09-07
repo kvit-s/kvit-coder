@@ -313,7 +313,8 @@ func main() {
 	llmClient := llm.NewClient(cfg.LLM.BaseURL, cfg.LLM.APIKey,
 		llm.WithBackend(cfg.LLM.APIBackend),
 		llm.WithHeaders(cfg.LLMHeaders()),
-		llm.WithReasoningEffort(cfg.LLM.ReasoningEffort))
+		llm.WithReasoningEffort(cfg.LLM.ReasoningEffort),
+		llm.WithReasoningSummary(cfg.ReasoningSummaryOrDefault()))
 
 	// Resolve the session before anything that keeps state, because everything
 	// that outlives a turn now lives in the session directory: the checkpoint

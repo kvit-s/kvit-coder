@@ -52,8 +52,11 @@ func (n *ResponseNormalizer) NormalizeResponse(msg *Message) bool {
 		}
 	}
 
-	// Handle ReasoningContent based on merge_thinking config
-	if len(msg.ToolCalls) > 0 && msg.ReasoningContent != "" {
+	// Fold the model's thinking into its content, or drop it. This used to
+	// happen only on a turn that made tool calls, so the thinking behind a
+	// final answer was discarded however merge_thinking was set — the one turn
+	// whose reasoning a person is most likely to want.
+	if msg.ReasoningContent != "" {
 		if n.mergeThinking {
 			if msg.Content != "" {
 				msg.Content = msg.ReasoningContent + "\n\n" + msg.Content

@@ -41,6 +41,8 @@ type Runner struct {
 	interrogator      *Interrogator
 	inbox             *inbox.Inbox
 	procs             *procs.Registry
+	persist           func([]llm.Message) error
+	rollback          func(int) error
 }
 
 // RunnerOptions contains all dependencies for creating a Runner
@@ -62,6 +64,15 @@ type RunnerOptions struct {
 	// Procs owns the processes that outlive a turn. The loop asks it once per
 	// iteration what has happened and puts the answer in the inbox. Optional.
 	Procs *procs.Registry
+	// Persist, when set, is handed each message as the loop produces it, so a
+	// turn's work reaches the session as it happens: a crash costs one message
+	// rather than the turn, and "tail -f" on the history has something to
+	// follow while the turn is still running.
+	Persist func([]llm.Message) error
+	// Rollback, when set, is told that the last n persisted messages were
+	// discarded, which is how backtracking appears in a file that is only ever
+	// appended to.
+	Rollback func(n int) error
 }
 
 // RunConfig contains per-run configuration options
@@ -104,6 +115,8 @@ func NewRunner(opts RunnerOptions) *Runner {
 		toolCtx:           opts.ToolCtx,
 		inbox:             opts.Inbox,
 		procs:             opts.Procs,
+		persist:           opts.Persist,
+		rollback:          opts.Rollback,
 	}
 	// nil when diagnostics are disabled; all call sites are nil-safe.
 	r.interrogator = NewInterrogator(opts.Cfg, opts.LLMClient, opts.Writer, opts.Logger, runID)
@@ -150,6 +163,9 @@ type runState struct {
 	totalToolTime               time.Duration
 	totalToolCalls              int
 	totalTokens                 int
+	// persistedUpTo is how much of messages has already reached the session.
+	// Everything after it is what the current iteration has produced.
+	persistedUpTo int
 	// contextWarned stops the "running out of context" warning repeating every
 	// iteration once it has been said.
 	contextWarned bool
@@ -201,8 +217,9 @@ const (
 // initRunState initializes all mutable state for a single Run execution
 func (r *Runner) initRunState(rcfg RunConfig) *runState {
 	return &runState{
-		messages:     rcfg.Messages,
-		loopDetector: NewLoopDetector(),
+		messages:      rcfg.Messages,
+		persistedUpTo: len(rcfg.Messages),
+		loopDetector:  NewLoopDetector(),
 		backtracker: NewBacktrackTracker(BacktrackConfig{
 			Enabled:           r.cfg.Backtrack.Enabled,
 			MaxRetries:        r.cfg.Backtrack.MaxRetries,
@@ -222,6 +239,10 @@ func (r *Runner) initRunState(rcfg RunConfig) *runState {
 // It returns the updated messages and stats after completion.
 func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 	state := r.initRunState(rcfg)
+
+	// Whatever is left unwritten when the loop ends goes to the session, on
+	// every path out of Run including an early error return.
+	defer r.flush(state)
 
 	result := &RunResult{
 		Stats:     state.agentStats,
@@ -306,6 +327,10 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 		}
 
 		state.messages = append(state.messages, *assistantMsg)
+		// The model's turn goes to the session now rather than at the end of
+		// the iteration, so a crash costs this one message and a reader
+		// following the file sees it immediately.
+		r.flush(state)
 
 		// Token counts and request cost for backtracking. The cost comes from
 		// the generation-stats call processLLMResponse already made; asking a
@@ -409,4 +434,55 @@ func (r *Runner) toolCallExtractor() llm.ToolCallExtractor {
 		return nil
 	}
 	return r.registry
+}
+
+// flush hands the session everything produced since the last call. It is
+// called at each iteration boundary and once more when the loop ends, so a
+// long turn is readable while it runs and survives being killed.
+func (r *Runner) flush(state *runState) {
+	if r.persist == nil {
+		return
+	}
+	// Backtracking can leave the history shorter than it was, so never slice
+	// past the end.
+	if state.persistedUpTo > len(state.messages) {
+		state.persistedUpTo = len(state.messages)
+	}
+	pending := state.messages[state.persistedUpTo:]
+	if len(pending) == 0 {
+		return
+	}
+	// Copy: the loop keeps appending to this backing array, and the session
+	// writes asynchronously enough that a shared slice would be a race.
+	batch := append([]llm.Message(nil), pending...)
+	if err := r.persist(batch); err != nil {
+		r.writer.Error(fmt.Sprintf("Failed to record messages: %v", err))
+		return
+	}
+	state.persistedUpTo = len(state.messages)
+}
+
+// SetPersist installs the hooks that record what the loop produces and what it
+// takes back. Passing nil for both turns recording off, which is what a
+// benchmark run wants.
+func (r *Runner) SetPersist(persist func([]llm.Message) error, rollback func(int) error) {
+	r.persist = persist
+	r.rollback = rollback
+}
+
+// discard tells the session that messages written a moment ago are no longer
+// part of the conversation, because the loop backtracked over them.
+func (r *Runner) discard(state *runState, to int) {
+	if r.persist == nil || state.persistedUpTo <= to {
+		state.persistedUpTo = min(state.persistedUpTo, to)
+		return
+	}
+	dropped := state.persistedUpTo - to
+	state.persistedUpTo = to
+	if r.rollback == nil {
+		return
+	}
+	if err := r.rollback(dropped); err != nil {
+		r.writer.Error(fmt.Sprintf("Failed to record a discarded attempt: %v", err))
+	}
 }

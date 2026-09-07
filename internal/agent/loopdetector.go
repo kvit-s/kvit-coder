@@ -10,15 +10,15 @@ import (
 
 // LoopDetector tracks tool calls and detects when the LLM is stuck in a loop
 type LoopDetector struct {
-	mu        sync.Mutex
-	history   []callRecord
+	mu         sync.Mutex
+	history    []callRecord
 	maxHistory int
 }
 
 type callRecord struct {
-	hash      string // hash of tool+args+error
-	toolName  string
-	isError   bool
+	hash     string // hash of tool+args+error
+	toolName string
+	isError  bool
 }
 
 // LoopInfo contains information about a detected loop
@@ -137,10 +137,10 @@ func (ld *LoopDetector) DetectLoop(threshold int) *LoopInfo {
 	}
 
 	return &LoopInfo{
-		ToolName:   firstTool,
-		Count:      threshold,
-		IsError:    allErrors,
-		IsSuccess:  allSuccesses,
+		ToolName:  firstTool,
+		Count:     threshold,
+		IsError:   allErrors,
+		IsSuccess: allSuccesses,
 	}
 }
 

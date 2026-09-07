@@ -38,6 +38,12 @@ type responsesRequest struct {
 
 type responsesEffort struct {
 	Effort string `json:"effort,omitempty"`
+	// Summary asks the provider for readable text describing the model's
+	// thinking. Without it the reasoning items come back with an empty summary
+	// and only encrypted content, which kvit-coder can replay but nobody can
+	// read — so merge_thinking has nothing to merge. Values are the
+	// provider's: auto, concise, detailed.
+	Summary string `json:"summary,omitempty"`
 }
 
 type responsesTool struct {
@@ -128,8 +134,8 @@ func (c *Client) buildResponsesRequest(req ChatRequest) responsesRequest {
 		Include: []string{"reasoning.encrypted_content"},
 		Stream:  false,
 	}
-	if c.reasoningEffort != "" {
-		out.Reasoning = &responsesEffort{Effort: c.reasoningEffort}
+	if c.reasoningEffort != "" || c.reasoningSummary != "" {
+		out.Reasoning = &responsesEffort{Effort: c.reasoningEffort, Summary: c.reasoningSummary}
 	}
 	return out
 }

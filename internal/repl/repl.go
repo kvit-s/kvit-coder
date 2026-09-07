@@ -15,12 +15,15 @@ import (
 )
 
 // RunExec runs one turn: load the session's conversation, put the prompt to
-// the model, and append what the turn produced to the session's history.
+// the model, and append what the turn produces to the session's history.
 //
-// History is appended to rather than rewritten. Messages are written when the
-// turn ends because the loop discards history mid-turn when it backtracks, and
-// an append-only file cannot take that back; the prompt itself is written up
-// front, so a turn that dies leaves a record of what it was asked.
+// History is appended to rather than rewritten, and written as the turn goes
+// rather than at the end of it: the prompt up front, then the model's turn and
+// each tool result as each happens. So a crash costs one message rather than a
+// turn, and "tail -f" on history.jsonl follows a turn while it runs. When the
+// loop backtracks over messages that are already written, the discard is
+// recorded as its own line, which keeps the file append-only and leaves the
+// abandoned attempt visible.
 func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *config.Config, systemPrompt string, promptText string, quietMode bool, sess *session.Session, projectInstructions *ProjectInstructions) {
 	messages := []llm.Message{
 		{Role: llm.RoleSystem, Content: systemPrompt},
@@ -69,8 +72,6 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 	}
 	messages = append(messages, userMsg)
 
-	// Everything up to here is either already in the record or written now.
-	persistedUpTo := len(messages)
 	if sess != nil {
 		meta := sess.Meta()
 		meta.Workspace = cfg.Workspace.Root
@@ -89,6 +90,18 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 		}
 	}
 
+	// Record each message as the loop produces it, and record a discarded
+	// attempt as a discard rather than by rewriting what was already written.
+	if sess != nil {
+		runner.SetPersist(
+			func(batch []llm.Message) error {
+				return sess.AppendMessages(stripProjectInstructions(batch, projectInstructions))
+			},
+			sess.Rollback,
+		)
+		defer runner.SetPersist(nil, nil)
+	}
+
 	// Run agent loop
 	result, err := runner.Run(ctx, agent.RunConfig{
 		Messages:     messages,
@@ -100,14 +113,8 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 		return
 	}
 
-	// Append what this turn added. Backtracking can leave the history shorter
-	// than it was when the turn started, so clamp rather than reslice blindly.
+	// The loop has already written its messages; what is left is why it stopped.
 	if sess != nil {
-		from := min(persistedUpTo, len(result.FinalMessages))
-		produced := stripProjectInstructions(result.FinalMessages[from:], projectInstructions)
-		if err := sess.AppendMessages(produced); err != nil {
-			writer.Error(fmt.Sprintf("Failed to save session: %v", err))
-		}
 		if result.BudgetExhausted {
 			_ = sess.Notice("iteration budget reached without a final answer")
 		}
