@@ -426,3 +426,38 @@ tools:
 		t.Errorf("profile: weak changed the configuration: %+v", cfg.Tools.Edit)
 	}
 }
+
+// TestAllowedPathsSuppressThePrompt: a path the configuration already permits
+// must not be queried every time it is touched. The check consulted only the
+// workspace root, so allowed_read_paths bought nothing here — and once spilled
+// tool output moved into the session directory, which sits outside the
+// workspace, the model was asked to confirm every read of its own output.
+func TestAllowedPathsSuppressThePrompt(t *testing.T) {
+	cfg := &Config{}
+	cfg.Workspace.Root = "/work/project"
+	cfg.Workspace.PathSafetyMode = "block"
+	cfg.Workspace.AllowedReadPaths = []string{"/home/u/.kvit-coder/sessions/s1/tmp"}
+	cfg.Workspace.AllowedPaths = []string{"/srv/shared"}
+	cfg.Tools.SafetyConfirmations = map[string]SafetyConfirmation{}
+
+	// Reading spilled output from the session's own directory is permitted.
+	if err := cfg.CheckPathSafety("read", "/home/u/.kvit-coder/sessions/s1/tmp/shell-123"); err != nil {
+		t.Errorf("reading an allowed_read_paths file was refused: %v", err)
+	}
+	// A read-write allowance covers a writing tool too.
+	if err := cfg.CheckPathSafety("edit", "/srv/shared/notes.txt"); err != nil {
+		t.Errorf("editing an allowed_paths file was refused: %v", err)
+	}
+	// A read-only allowance does not license writing there.
+	if err := cfg.CheckPathSafety("edit", "/home/u/.kvit-coder/sessions/s1/tmp/shell-123"); err == nil {
+		t.Error("a read-only allowance permitted an edit")
+	}
+	// Anything not allowed is still caught.
+	if err := cfg.CheckPathSafety("read", "/etc/shadow"); err == nil {
+		t.Error("a path outside every allowance was permitted")
+	}
+	// And a sibling that merely shares a name prefix is not inside.
+	if err := cfg.CheckPathSafety("read", "/srv/shared-secrets/keys"); err == nil {
+		t.Error("a directory sharing an allowed path's name prefix was permitted")
+	}
+}

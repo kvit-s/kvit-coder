@@ -38,12 +38,17 @@ type Config struct {
 		// provider's (auto, concise, detailed), and "off" suppresses it.
 		// Empty follows merge_thinking, because thinking that is never
 		// requested cannot be merged.
-		ReasoningSummary string  `yaml:"reasoning_summary"`
-		Temperature      float32 `yaml:"temperature"`
-		MaxTokens        int     `yaml:"max_output_tokens"`
-		Context          int     `yaml:"context"`        // Max context size for display (0 = don't show)
-		MergeThinking    bool    `yaml:"merge_thinking"` // Merge reasoning_content into content (default: false, discard thinking)
-		Verbose          int     `yaml:"verbose"`        // 0 = off, >0 = show tool output up to N lines
+		ReasoningSummary string `yaml:"reasoning_summary"`
+		// RequestTimeout bounds one HTTP request to the model, in seconds.
+		// A request that exceeds it is retried, so this times the retry count
+		// is how long a turn can stall on an endpoint that never answers.
+		// Default 600.
+		RequestTimeout int     `yaml:"request_timeout"`
+		Temperature    float32 `yaml:"temperature"`
+		MaxTokens      int     `yaml:"max_output_tokens"`
+		Context        int     `yaml:"context"`        // Max context size for display (0 = don't show)
+		MergeThinking  bool    `yaml:"merge_thinking"` // Merge reasoning_content into content (default: false, discard thinking)
+		Verbose        int     `yaml:"verbose"`        // 0 = off, >0 = show tool output up to N lines
 		// GenerationStats asks the endpoint for per-request cost and native
 		// token counts after each answer. It is an OpenRouter endpoint
 		// (/generation) and returns 404 everywhere else, so it is off by
@@ -772,6 +777,10 @@ func Load(path string) (*Config, error) {
 		cfg.Diagnostics.InterrogateOnAnomaly = false
 	}
 
+	if cfg.LLM.RequestTimeout == 0 {
+		cfg.LLM.RequestTimeout = 600
+	}
+
 	// Set default shell timeouts
 	if cfg.Tools.Shell.DefaultTimeout == 0 {
 		cfg.Tools.Shell.DefaultTimeout = 120
@@ -866,6 +875,36 @@ func (c *Config) IsToolEnabled(toolName string) bool {
 
 // CheckPathSafety performs unified path safety checks for all tools
 // Behavior controlled by tools.safety.path_safety_mode
+// readOnlyTool reports whether a tool only reads, which decides whether
+// allowed_read_paths is enough to permit it.
+func readOnlyTool(toolName string) bool {
+	switch {
+	case strings.HasPrefix(toolName, "read"), toolName == "search", toolName == "glob":
+		return true
+	default:
+		return false
+	}
+}
+
+// pathIsPermitted reports whether the configuration already grants this path,
+// through allowed_paths or — for a tool that only reads — allowed_read_paths.
+func (c *Config) pathIsPermitted(absPath string, readOnly bool) bool {
+	for _, allowed := range c.Workspace.AllowedPaths {
+		if allowedAbs, err := filepath.Abs(expandPath(allowed)); err == nil && pathWithin(allowedAbs, absPath) {
+			return true
+		}
+	}
+	if !readOnly {
+		return false
+	}
+	for _, allowed := range c.Workspace.AllowedReadPaths {
+		if allowedAbs, err := filepath.Abs(expandPath(allowed)); err == nil && pathWithin(allowedAbs, absPath) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *Config) CheckPathSafety(toolName, identifier string) error {
 	// For filesystem tools, check if path is outside workspace
 	if strings.HasPrefix(toolName, "read") || strings.HasPrefix(toolName, "edit") ||
@@ -874,6 +913,15 @@ func (c *Config) CheckPathSafety(toolName, identifier string) error {
 		absPath, outside, err := NormalizeAndValidatePath(c.Workspace.Root, identifier)
 		if err != nil || !outside {
 			return nil // Not outside or invalid path
+		}
+		// A path the configuration already allows does not need asking about.
+		// This check consulted only the workspace root, so allowed_paths and
+		// allowed_read_paths bought nothing here and an explicitly permitted
+		// path was queried every time it was touched — including the session's
+		// own directory, where spilled tool output lives and which the model is
+		// given paths into.
+		if c.pathIsPermitted(absPath, readOnlyTool(toolName)) {
+			return nil
 		}
 		identifier = absPath // Use absolute path for key
 	}

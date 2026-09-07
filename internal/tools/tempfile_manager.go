@@ -9,7 +9,6 @@ import (
 )
 
 const (
-	tempDirName    = ".kvit-coder/tmp"
 	tempFilePrefix = "shell-"
 	tempFileMaxAge = 24 * time.Hour // Clean files older than this on startup
 )
@@ -22,12 +21,14 @@ type TempFileManager struct {
 	files         map[string]bool // track created temp files
 }
 
-// NewTempFileManager creates a new temp file manager in the workspace directory
-func NewTempFileManager(workspaceRoot string) *TempFileManager {
-	tempDir := filepath.Join(workspaceRoot, tempDirName)
-
+// NewTempFileManager creates a manager that spills large tool output into the
+// given directory. The directory is used as given: it is the session's tmp/,
+// which already exists for the purpose. It used to append ".kvit-coder/tmp" to
+// whatever it was handed, which after the move into the session produced paths
+// like <session>/tmp/.kvit-coder/tmp/shell-123.
+func NewTempFileManager(tempDir string) *TempFileManager {
 	mgr := &TempFileManager{
-		workspaceRoot: workspaceRoot,
+		workspaceRoot: tempDir,
 		tempDir:       tempDir,
 		files:         make(map[string]bool),
 	}
@@ -70,9 +71,9 @@ func (m *TempFileManager) CleanupAll() {
 		delete(m.files, path)
 	}
 
-	// Try to remove temp dir if empty
+	// Try to remove the directory if it is now empty. Its parent is the
+	// session, which outlives this process and is never removed here.
 	os.Remove(m.tempDir)
-	os.Remove(filepath.Dir(m.tempDir)) // .kvit-coder dir
 }
 
 // cleanupStaleFiles removes temp files from previous sessions

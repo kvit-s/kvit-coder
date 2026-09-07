@@ -17,6 +17,12 @@ llm:
     - "x-opencode-session=kvit-coder-${KVIT_RUN_ID}"
   context: 1048576
   merge_thinking: true  # true = merge reasoning into content, false = discard
+  # Ask a reasoning model for readable text describing its thinking. Only the
+  # "responses" backend sends it, and it is the only part of the reasoning
+  # anyone can read — the rest comes back encrypted, to be replayed rather than
+  # understood. Unset follows merge_thinking; "off" suppresses it.
+  # reasoning_summary: auto
+  request_timeout: 600   # seconds for one request to the model before it is retried
   verbose: 0             # 0 = off, >0 = show tool output up to N lines
   # Ask the endpoint for per-request cost and native token counts. This is
   # OpenRouter's /generation endpoint and 404s elsewhere, so it is off by

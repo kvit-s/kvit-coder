@@ -10,6 +10,11 @@ import (
 	"github.com/kvit-s/kvit-coder/internal/llm"
 )
 
+// slowRequestNotice is how often to say how long a model request has been
+// running. Long enough not to chatter during ordinary thinking, short enough
+// that a stalled request is obvious well before the timeout.
+const slowRequestNotice = 90 * time.Second
+
 // callLLM makes an LLM API call with progress indicator and handles errors.
 // It returns the response and metadata about what action to take next.
 func (r *Runner) callLLM(ctx context.Context, state *runState) (*llmCallResult, error) {
@@ -21,11 +26,20 @@ func (r *Runner) callLLM(ctx context.Context, state *runState) (*llmCallResult, 
 	go func() {
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
+		// A row of dots says something is happening but not for how long, and
+		// a request that stalls for half an hour looks like one that is
+		// thinking hard. Say the elapsed time now and then so the difference
+		// is visible without counting dots.
+		notice := time.NewTicker(slowRequestNotice)
+		defer notice.Stop()
 		for {
 			select {
 			case <-ticker.C:
 				r.writer.ToolProgress(".")
 				llmDotCount++
+			case <-notice.C:
+				r.writer.Warn(fmt.Sprintf("still waiting for the model after %s",
+					time.Since(startTime).Round(time.Second)))
 			case <-llmDone:
 				return
 			}

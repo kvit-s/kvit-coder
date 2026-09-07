@@ -35,6 +35,18 @@ type Client struct {
 	headers          map[string]string
 	reasoningEffort  string
 	reasoningSummary string
+	// onRetry, when set, is told that a request failed and is about to be
+	// tried again. Without it a failing endpoint is indistinguishable from a
+	// slow one: the caller's progress indicator ticks on either way, and a
+	// request that times out and retries silently can hold a turn for the
+	// timeout times the retry count.
+	onRetry func(attempt, maxAttempts int, delay time.Duration, reason error)
+}
+
+// WithRetryNotice installs a callback told about each failed attempt, so a
+// caller can say so rather than leaving a stalled turn looking like a slow one.
+func WithRetryNotice(fn func(attempt, maxAttempts int, delay time.Duration, reason error)) Option {
+	return func(c *Client) { c.onRetry = fn }
 }
 
 // Option adjusts a Client at construction time.
@@ -218,6 +230,13 @@ func (c *Client) postJSON(ctx context.Context, path string, body []byte) ([]byte
 			delay := baseDelay * time.Duration(1<<(attempt-1)) // 1s, 2s, 4s, 8s, 16s
 			if delay > maxDelay {
 				delay = maxDelay
+			}
+			if c.onRetry != nil {
+				reason := lastErr
+				if reason == nil && lastStatusCode != 0 {
+					reason = fmt.Errorf("API error %d", lastStatusCode)
+				}
+				c.onRetry(attempt, maxRetries, delay, reason)
 			}
 			select {
 			case <-ctx.Done():

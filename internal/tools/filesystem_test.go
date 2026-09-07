@@ -18,11 +18,11 @@ func TestStreamReadLines(t *testing.T) {
 	}
 
 	tests := []struct {
-		name       string
-		startLine  int
-		endLine    int
-		wantLines  []string
-		wantTotal  int
+		name      string
+		startLine int
+		endLine   int
+		wantLines []string
+		wantTotal int
 	}{
 		{
 			name:      "read first 3 lines",
@@ -321,5 +321,29 @@ func TestStreamReadLinesReturnsHints(t *testing.T) {
 	}
 	if result.TotalLines != 0 {
 		t.Errorf("expected totalLines=0 for empty file, got %d", result.TotalLines)
+	}
+}
+
+// TestTempFilesLandInTheDirectoryGiven: the manager is handed the session's
+// tmp/ and must use it as given. It used to append ".kvit-coder/tmp" to
+// whatever it received, which after temp files moved into the session produced
+// paths like <session>/tmp/.kvit-coder/tmp/shell-123.
+func TestTempFilesLandInTheDirectoryGiven(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewTempFileManager(dir)
+	defer mgr.CleanupAll()
+
+	f, err := mgr.CreateTempFile()
+	if err != nil {
+		t.Fatalf("CreateTempFile: %v", err)
+	}
+	defer f.Close()
+
+	got := filepath.Dir(f.Name())
+	if got != dir {
+		t.Errorf("temp file was created in %s, want the directory given (%s)", got, dir)
+	}
+	if strings.Contains(f.Name(), ".kvit-coder") {
+		t.Errorf("the temp path has a directory appended to it: %s", f.Name())
 	}
 }

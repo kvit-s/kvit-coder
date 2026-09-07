@@ -314,7 +314,15 @@ func main() {
 		llm.WithBackend(cfg.LLM.APIBackend),
 		llm.WithHeaders(cfg.LLMHeaders()),
 		llm.WithReasoningEffort(cfg.LLM.ReasoningEffort),
-		llm.WithReasoningSummary(cfg.ReasoningSummaryOrDefault()))
+		llm.WithReasoningSummary(cfg.ReasoningSummaryOrDefault()),
+		llm.WithTimeout(time.Duration(cfg.LLM.RequestTimeout)*time.Second),
+		llm.WithRetryNotice(func(attempt, maxAttempts int, delay time.Duration, reason error) {
+			// Say it out loud. A failed request that is quietly retried looks
+			// exactly like a slow one from the progress indicator, and the
+			// turn can sit there for the timeout times the retry count.
+			writer.Warn(fmt.Sprintf("model request failed (attempt %d of %d), retrying in %s: %v",
+				attempt, maxAttempts, delay.Round(time.Second), reason))
+		}))
 
 	// Resolve the session before anything that keeps state, because everything
 	// that outlives a turn now lives in the session directory: the checkpoint
