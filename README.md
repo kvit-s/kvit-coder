@@ -155,6 +155,33 @@ Without `-s` it delivers to the one session that has a turn running, and says
 so if there is none or more than one. The message arrives as a user message
 tagged `<user-steering>` at the model's next iteration.
 
+### Command permissions
+
+Whether a shell command may run is decided from its syntax tree, not from
+matching its text. Every simple command in the line is found and judged on its
+own, so `git diff && rm -rf /` is refused for its second command, `ps aux | awk
+'{print $2}'` runs, and a word like `shutdown` in a grep pattern is an argument
+rather than a program.
+
+Refused outright: `sudo`, `su`, `chroot`, package managers, `shutdown`/`reboot`,
+`mkfs`, deleting `/` or your home directory, and `sed -i` when the Edit tool is
+available. Deleting anything *under* those directories is ordinary cleanup and
+is allowed.
+
+Needing permission — dangerous in general, ordinary in context — are `curl`,
+`wget`, `nc`, `dd`, `eval` and interpreter one-liners such as `python -c`. At a
+terminal you are asked, with four answers: just this once, for the rest of this
+session, always for this project, or always everywhere. The last three are
+written to permission files under `~/.kvit-coder/permissions/` and the session
+directory — never inside the workspace, where the agent could edit them. With
+no terminal the command is refused and the model is told which pattern to add
+to `tools.shell.allowed_commands`.
+
+`allowed_commands` and `disallowed_commands` still work, now as patterns
+matched against each command in the line rather than as a prefix of the whole
+string. Setting `allowed_commands` still makes everything else a denial, and a
+grant can never open something that is refused outright.
+
 ### Background processes
 
 With `tools.procs.enabled`, a command can outlive the turn that started it:

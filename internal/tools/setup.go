@@ -136,10 +136,12 @@ func SetupRegistry(sc SetupConfig) *Registry {
 	if cfg.Tools.Shell.Enabled && sc.TempFileMgr != nil {
 		shellTimeout := time.Duration(cfg.Tools.Shell.DefaultTimeout) * time.Second
 		shellTool := NewShellTool(cfg, shellTimeout, sc.TempFileMgr)
+		shellTool.SetToolContext(toolCtx)
 		registry.Enable(shellTool)
 		debug(fmt.Sprintf("Enabled tool: %s", shellTool.Name()))
 
 		shellAdvancedTool := NewShellAdvancedTool(cfg, shellTimeout, sc.TempFileMgr)
+		shellAdvancedTool.SetToolContext(toolCtx)
 		registry.Enable(shellAdvancedTool)
 		debug(fmt.Sprintf("Enabled tool: %s", shellAdvancedTool.Name()))
 	}

@@ -14,63 +14,9 @@ import (
 	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/config"
+	"github.com/kvit-s/kvit-coder/internal/permissions"
 	"github.com/kvit-s/kvit-coder/internal/safety"
 )
-
-// cmdBlock is a dangerous binary blocked only when it appears in COMMAND
-// POSITION — at the start of the command line or immediately after a shell
-// separator (; | & ( ) { } < > newline or backtick), optionally with a path
-// prefix (/usr/bin/curl, ./curl). Matching command position rather than a bare
-// substring avoids the false-positive class where the word is a grep pattern, an
-// echo string, a filename, or part of another word: "grep -r shutdown .",
-// "man curl", `echo "adapt the layer"` (contains "apt "), "Hebrew" (contains
-// "brew "), `grep reboot /var/log`. A plain space does NOT start a command, so an
-// argument like the second token in "grep nc" is never matched.
-type cmdBlock struct {
-	name string
-	re   *regexp.Regexp
-}
-
-func buildCmdBlocks(names ...string) []cmdBlock {
-	const sep = "(?:^|[;|&(){}<>`\n])\\s*"   // start, or a shell separator + optional whitespace
-	const pathPrefix = `(?:[\w./-]*/)?`       // optional /usr/bin/ or ./ prefix
-	const trail = "(?:$|[\\s;|&(){}<>`\n])"   // token boundary: end or separator/whitespace
-	out := make([]cmdBlock, len(names))
-	for i, n := range names {
-		out[i] = cmdBlock{
-			name: n,
-			re:   regexp.MustCompile(sep + pathPrefix + regexp.QuoteMeta(n) + trail),
-		}
-	}
-	return out
-}
-
-// cmdBlockedAlways blocks privilege-escalation, package-manager, system-control,
-// and network binaries — but only when actually invoked as a command (see
-// cmdBlock). su/nc/ncat live here too; they were previously matched as standalone
-// words, which still falsely blocked them as arguments ("find . -name nc").
-var cmdBlockedAlways = buildCmdBlocks(
-	"sudo", "chroot", "su", // privilege escalation
-	"apt", "apt-get", "yum", "brew", // package managers (modify system)
-	"shutdown", "reboot", // system control
-	"curl", "wget", "netcat", "nc", "ncat", // network (data exfiltration)
-)
-
-// cmdBlockedEval blocks the `eval` shell builtin (in command position). Lifted
-// when AllowInterpreters is set (thinkbench/benchmarks): inside that hard OS
-// sandbox `eval` grants nothing beyond the already-allowed interpreter
-// one-liners, while the token legitimately appears in coding tasks. Default
-// keeps it blocked.
-var cmdBlockedEval = buildCmdBlocks("eval")
-
-// rmRootRe / rmHomeRe block `rm -rf /` and `rm -rf ~` ONLY when the target is
-// the filesystem root or the bare home dir — i.e. `/`, `/*`, `~`, or root/home
-// followed by a command terminator. A plain substring match blocked every
-// absolute path (`rm -rf /testbed/foo` starts with "rm -rf /"), a false positive
-// for ordinary recursive deletes. Deleting an actual system-critical path is
-// still caught by safety.RmRule (IsSystemCritical covers /, /usr, $HOME, ...).
-var rmRootRe = regexp.MustCompile(`rm\s+-rf\s+/(\s|;|&|\||\)|\*|$)`)
-var rmHomeRe = regexp.MustCompile(`rm\s+-rf\s+~(\s|;|&|\||\)|$)`)
 
 // ShellTool - simple string-only interface, translates to Shell.advanced internally
 type ShellTool struct {
@@ -112,6 +58,10 @@ type ShellAdvancedTool struct {
 	timeout       time.Duration
 	tempFileMgr   *TempFileManager
 	safetyChecker *safety.Checker
+	// toolCtx carries the grants made so far and the inbox a permission
+	// question is answered through. Nil in a test, which leaves only the
+	// builtin and config rules in force.
+	toolCtx *ToolContext
 }
 
 func NewShellAdvancedTool(cfg *config.Config, timeout time.Duration, tempFileMgr *TempFileManager) *ShellAdvancedTool {
@@ -466,7 +416,6 @@ func (t *ShellAdvancedTool) killProcessGroup(cmd *exec.Cmd) {
 // validateCommand validates a shell command for safety
 // baseDir is the effective working directory for resolving relative paths
 func (t *ShellAdvancedTool) validateCommand(cmd string, baseDir string) error {
-	cmdLower := strings.ToLower(cmd)
 	cmdTrimmed := strings.TrimSpace(cmd)
 
 	// Effective directory starts with baseDir, may be modified by cd
@@ -519,90 +468,12 @@ func (t *ShellAdvancedTool) validateCommand(cmd string, baseDir string) error {
 		}
 	}
 
-	// Block dangerous commands. Privilege-escalation, package-manager,
-	// system-control, and network binaries are matched in command position via
-	// cmdBlockedAlways below (not here) to avoid substring false positives.
-	// These two stay as substrings: they are specific arg patterns, not bare
-	// binary names, and rarely collide with innocent text.
-	blocked := []string{
-		"mkfs", "dd if=", // disk formatting/writing (root/home rm handled by rmRootRe/rmHomeRe below)
-	}
-
-	// Interpreter one-liners (python -c, node -e, ...) are blocked by default to
-	// keep the agent from bypassing the Edit tool, but the thinkbench harness
-	// enables them: its tasks are interpreter-driven and run inside a hard OS
-	// sandbox + isolated uv env, where `python3 -c` is the natural way to verify.
-	if !t.cfg.Tools.Shell.AllowInterpreters {
-		blocked = append(blocked,
-			"python -c", "python2 -c", "python3 -c",
-			"perl -e", "perl -E",
-			"ruby -e",
-			"node -e", "node --eval",
-			"php -r",
-		)
-	}
-
-	// Block file edit commands - only when Edit tool is available as an alternative
-	if t.cfg.Tools.Edit.Enabled {
-		if strings.Contains(cmdLower, "sed -i") {
-			return fmt.Errorf("STOP: Do not use Shell to edit files. Call the Edit tool with {\"path\": \"<filepath>\", \"start_line\": N, \"end_line\": N, \"new_text\": \"<replacement>\"}")
-		}
-
-		if strings.Contains(cmdLower, "awk ") {
-			return fmt.Errorf("STOP: Do not use awk. Call Read to read files, or Edit to modify files")
-		}
-	}
-
-	// Block `rm -rf /` (root) and `rm -rf ~` (home) only when the target is
-	// root/home itself, not a subdirectory like /testbed/foo or ~/.cache.
-	if rmRootRe.MatchString(cmdLower) {
-		return fmt.Errorf("blocked dangerous command containing 'rm -rf /'. If you need to run this command, explain why it's necessary and provide the exact command as a one-liner for the user to run manually")
-	}
-	if rmHomeRe.MatchString(cmdLower) {
-		return fmt.Errorf("blocked dangerous command containing 'rm -rf ~'. If you need to run this command, explain why it's necessary and provide the exact command as a one-liner for the user to run manually")
-	}
-
-	for _, danger := range blocked {
-		if strings.Contains(cmdLower, danger) {
-			dangerName := strings.TrimSpace(danger)
-			return fmt.Errorf("blocked dangerous command containing '%s'. If you need to run this command, explain why it's necessary and provide the exact command as a one-liner for the user to run manually", dangerName)
-		}
-	}
-
-	// Privilege/network/system binaries are blocked only in command position
-	// (sudo, curl, nc, eval, ...) — not as substrings — so grep patterns, echo
-	// strings, filenames, and words like "shutdown"/"reboot"/"adapt" pass through.
-	cmdBlocks := cmdBlockedAlways
-	if !t.cfg.Tools.Shell.AllowInterpreters {
-		cmdBlocks = append(append([]cmdBlock{}, cmdBlockedAlways...), cmdBlockedEval...)
-	}
-	for _, cb := range cmdBlocks {
-		if cb.re.MatchString(cmdLower) {
-			return fmt.Errorf("blocked dangerous command containing '%s'. If you need to run this command, explain why it's necessary and provide the exact command as a one-liner for the user to run manually", cb.name)
-		}
-	}
-
-	// Check allowlist if configured
-	if len(t.cfg.Tools.Shell.AllowedCommands) > 0 {
-		allowed := false
-		for _, allowedCmd := range t.cfg.Tools.Shell.AllowedCommands {
-			if strings.HasPrefix(cmd, allowedCmd) {
-				allowed = true
-				break
-			}
-		}
-		if !allowed {
-			return fmt.Errorf("command not in allowlist: %s", cmd)
-		}
-	}
-
-	// Check blocklist if configured
-	if len(t.cfg.Tools.Shell.DisallowedCommands) > 0 {
-		for _, disallowedCmd := range t.cfg.Tools.Shell.DisallowedCommands {
-			if strings.HasPrefix(cmd, disallowedCmd) {
-				return fmt.Errorf("command in blocklist: %s", disallowedCmd)
-			}
-		}
+	// Decide from the command's syntax tree what it actually wants to do, and
+	// judge each simple command in it on its own. "git diff && rm -rf /" has
+	// two commands and the second one is the problem; a check that looked at
+	// the line as text never saw it.
+	if err := t.checkPermissions(cmd); err != nil {
+		return err
 	}
 
 	// Check for paths outside workspace using effective working directory
@@ -644,41 +515,34 @@ func (t *ShellAdvancedTool) resolveCdPath(cdTarget, baseDir string) (string, err
 	return filepath.Clean(path), nil
 }
 
-// extractPaths extracts potential file paths from a command
-func (t *ShellAdvancedTool) extractPaths(cmd string) []string {
-	// Pattern to match potential file paths (both absolute and relative)
-	// Matches: /abs/path, ~/home/path, ../relative, ./file, filename
-	// Fixed: simplified pattern to properly capture paths after whitespace
-	pathPattern := regexp.MustCompile(`(?:^|\s)([~/.][\w\-./~]+|/[\w\-./~]+)`)
-	matches := pathPattern.FindAllStringSubmatch(cmd, -1)
+// SetToolContext gives the tool the grants and the inbox it needs to ask about
+// a command that needs permission.
+func (t *ShellAdvancedTool) SetToolContext(toolCtx *ToolContext) { t.toolCtx = toolCtx }
 
+// SetToolContext passes the context through to the tool that does the work.
+func (t *ShellTool) SetToolContext(toolCtx *ToolContext) { t.advanced.SetToolContext(toolCtx) }
+
+// extractPaths returns the arguments of a command that name a file or a
+// directory, taken from the parsed command rather than by matching the line
+// against a regular expression. A pattern over the raw text cannot tell a path
+// from a flag, a grep pattern, or a word inside a quoted string; the parser
+// knows which word is which.
+func (t *ShellAdvancedTool) extractPaths(cmd string) []string {
+	scopes, err := permissions.Parse(cmd)
+	if err != nil {
+		return nil
+	}
 	var paths []string
-	seen := make(map[string]bool)
-	for _, match := range matches {
-		if len(match) > 1 {
-			path := strings.Trim(match[1], "\"'")
-			// Skip common commands and flags
-			if strings.HasPrefix(path, "-") || isCommonCommand(path) {
-				continue
-			}
-			if !seen[path] {
-				paths = append(paths, path)
-				seen[path] = true
+	seen := map[string]bool{}
+	for _, s := range scopes {
+		for _, p := range s.Paths {
+			if !seen[p] {
+				paths = append(paths, p)
+				seen[p] = true
 			}
 		}
 	}
 	return paths
-}
-
-// isCommonCommand checks if a string is a common Unix command
-func isCommonCommand(s string) bool {
-	commands := map[string]bool{
-		"ls": true, "cat": true, "grep": true, "find": true, "sed": true,
-		"awk": true, "echo": true, "cd": true, "pwd": true, "mkdir": true,
-		"rm": true, "cp": true, "mv": true, "touch": true, "chmod": true,
-		"rg": true, "patch": true, "diff": true, "git": true, "make": true,
-	}
-	return commands[s]
 }
 
 // isPathOutsideWorkspace checks if a path resolves to outside the workspace

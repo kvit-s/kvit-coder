@@ -21,6 +21,7 @@ import (
 	"github.com/kvit-s/kvit-coder/internal/inbox"
 	"github.com/kvit-s/kvit-coder/internal/llm"
 	"github.com/kvit-s/kvit-coder/internal/mcp"
+	"github.com/kvit-s/kvit-coder/internal/permissions"
 	"github.com/kvit-s/kvit-coder/internal/procs"
 	"github.com/kvit-s/kvit-coder/internal/prompt"
 	"github.com/kvit-s/kvit-coder/internal/repl"
@@ -457,6 +458,10 @@ func main() {
 	// Question reads its answer from the same inbox the loop drains, so there
 	// is one input path rather than two contending for stdin.
 	toolCtx.SetInbox(steering)
+	// Permission grants: what has been allowed for this session, this project
+	// and this machine. All three files live under the user's home, never in
+	// the workspace, because a permission file the agent can edit is not one.
+	toolCtx.SetGrantor(openGrants(sess, cfg.Workspace.Root, writer))
 	// A tool that waits for a person must agree with whether one is there.
 	toolCtx.SetInteractive(interactive)
 
@@ -690,4 +695,38 @@ func killBackgroundOnInterrupt(ctx context.Context, registry *procs.Registry, se
 		writer.Info(msg)
 		_ = sess.Notice(msg)
 	}()
+}
+
+// openGrants reads the three permission files that apply to this run. A file
+// that cannot be read is reported and treated as empty: a broken grant file
+// should cost you a prompt, not a run.
+func openGrants(sess *session.Session, workspaceRoot string, writer *ui.Writer) *permissions.Grantor {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		writer.Debug(fmt.Sprintf("Permissions: no home directory, so only this session's grants apply: %v", err))
+		home = ""
+	}
+
+	open := func(path, source string) *permissions.Store {
+		if path == "" {
+			return nil
+		}
+		store, err := permissions.OpenStore(path, source)
+		if err != nil {
+			writer.Warn(fmt.Sprintf("Permissions: %v", err))
+			return nil
+		}
+		return store
+	}
+
+	var project, global *permissions.Store
+	if home != "" {
+		project = open(permissions.ProjectStorePath(home, workspaceRoot), "project")
+		global = open(permissions.GlobalStorePath(home), "global")
+	}
+	return permissions.NewGrantor(
+		open(filepath.Join(sess.Dir(), "permissions.json"), "session"),
+		project,
+		global,
+	)
 }

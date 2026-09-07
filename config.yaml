@@ -76,9 +76,14 @@ tools:
 
   shell:
     enabled: true
-    # Always blocked: sudo, su, apt, yum, brew, shutdown, reboot, chroot, mkfs, dd, sed -i, awk, cd
-    allowed_commands: []        # allowlist (empty = allow all)
-    disallowed_commands: []     # blocklist (checked after allowlist)
+    # Permission comes from the command's syntax tree, one decision per simple
+    # command in the line. Refused outright: sudo, su, chroot, package
+    # managers, shutdown/reboot, mkfs, deleting / or your home directory, and
+    # sed -i (the Edit tool shows the change and can undo it). Needing
+    # permission, which you can grant once, for the session, for this project
+    # or everywhere: curl, wget, nc, dd, eval and interpreter one-liners.
+    allowed_commands: []        # allowlist (empty = allow all; non-empty = deny everything else)
+    disallowed_commands: []     # blocklist
     default_timeout: 120        # seconds a command gets when the call names none
     max_timeout: 600            # ceiling on what a call may ask for
 

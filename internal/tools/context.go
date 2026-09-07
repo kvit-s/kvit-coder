@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/kvit-s/kvit-coder/internal/inbox"
+	"github.com/kvit-s/kvit-coder/internal/permissions"
 )
 
 // ToolContext holds shared mutable state for all tools in a session.
@@ -30,6 +31,11 @@ type ToolContext struct {
 	dismissedMu       sync.Mutex
 	dismissedQuestion map[string]bool
 
+	// grantor holds what has been allowed for this command, this session, this
+	// project and this machine, and can add to it.
+	grantorMu sync.Mutex
+	grantor   *permissions.Grantor
+
 	// interactive says whether someone is at the terminal and able to answer.
 	// It is set once, by whatever started reading stdin, so a tool that waits
 	// for a person and the reader that would feed it never disagree.
@@ -42,6 +48,23 @@ func NewToolContext() *ToolContext {
 	return &ToolContext{
 		ReadTracker: &FileReadTracker{maxEntries: 10},
 	}
+}
+
+// SetGrantor gives tools the permission grants that apply to this run.
+func (tc *ToolContext) SetGrantor(g *permissions.Grantor) {
+	tc.grantorMu.Lock()
+	defer tc.grantorMu.Unlock()
+	tc.grantor = g
+}
+
+// Grantor returns the permission grants that apply to this run, or nil.
+func (tc *ToolContext) Grantor() *permissions.Grantor {
+	if tc == nil {
+		return nil
+	}
+	tc.grantorMu.Lock()
+	defer tc.grantorMu.Unlock()
+	return tc.grantor
 }
 
 // SetInteractive records whether someone is at the terminal to answer a tool
