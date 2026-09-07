@@ -147,12 +147,30 @@ agent:
 | `base_url` | OpenAI-compatible API endpoint |
 | `api_key` / `api_key_env` | API key or env var name |
 | `model` | Model name |
+| `api_backend` | Wire protocol: `chat_completions` (default) or `responses` |
+| `headers` | Extra `Key=Value` request headers (`${VAR}` expanded; `${KVIT_RUN_ID}` = per-process ID) |
+| `reasoning_effort` | Thinking budget for a reasoning model (`responses` backend only) |
 | `temperature` | Sampling temperature |
 | `max_output_tokens` | Max output tokens |
 | `context` | Max context size for display (0 = hide) |
 | `merge_thinking` | Merge `reasoning_content` into `content` |
 | `verbose` | Tool output verbosity (0 = off, N = show up to N lines) |
 | `benchmark_cmd` | External command for benchmarks (`{prompt}` placeholder) |
+
+**Endpoints that only serve `/responses`.** Some hosted models are offered only
+through OpenAI's Responses API and answer `/chat/completions` with an error.
+Setting `api_backend: "responses"` makes kvit-coder speak that protocol
+instead: tool calls and results are translated on the way out and back, and the
+opaque thinking blocks a reasoning model returns are replayed to it on the
+following request so a tool loop keeps its train of thought. `headers` covers
+endpoints that also demand a routing or session header of their own.
+`benchmarks/config-muse-spark.yaml` is a working example.
+
+An endpoint that routes by a session header sends every request carrying the
+same header value to one backend, so two agents sharing a value compete for the
+same prompt cache. `${KVIT_RUN_ID}` in a header expands to an ID unique to the
+kvit-coder process, which keeps concurrent runs apart; setting `KVIT_RUN_ID` in
+the environment pins a value across runs instead.
 
 ### `workspace`
 

@@ -16,6 +16,24 @@ type Message struct {
 	Name             string      `json:"name,omitempty"`
 	ToolCalls        []ToolCall  `json:"tool_calls,omitempty"`
 	ToolCallID       string      `json:"tool_call_id,omitempty"` // For tool role messages
+
+	// ReasoningBlocks holds the opaque thinking blocks a Responses-API model
+	// returned with this assistant turn. The model expects them back verbatim
+	// on the next request of the same tool loop, so they ride along in the
+	// history but are never sent on the wire by the chat-completions path.
+	ReasoningBlocks []ReasoningBlock `json:"-"`
+	// ToolCallItemIDs maps a tool call ID to the Responses-API item ID the
+	// model gave that call, so a replayed function_call keeps its identity.
+	ToolCallItemIDs map[string]string `json:"-"`
+}
+
+// ReasoningBlock is one "reasoning" item from a Responses-API answer. The
+// content is encrypted by the provider: kvit-coder cannot read it, it only
+// stores it and hands it back.
+type ReasoningBlock struct {
+	ID               string `json:"id,omitempty"`
+	EncryptedContent string `json:"encrypted_content,omitempty"`
+	Summary          []any  `json:"summary,omitempty"`
 }
 
 type ToolCall struct {

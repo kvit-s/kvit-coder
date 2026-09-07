@@ -10,22 +10,75 @@ import (
 	"time"
 )
 
+// Backend names the wire protocol the endpoint speaks.
+const (
+	// BackendChatCompletions is OpenAI's /chat/completions, what almost every
+	// local server and gateway offers. It is the default.
+	BackendChatCompletions = "chat_completions"
+	// BackendResponses is OpenAI's /responses. Some hosted models are served
+	// only there and answer /chat/completions with an error.
+	BackendResponses = "responses"
+)
+
 type Client struct {
 	baseURL string
 	apiKey  string
 	client  *http.Client
+
+	backend         string
+	headers         map[string]string
+	reasoningEffort string
 }
 
-func NewClient(baseURL, apiKey string) *Client {
-	return &Client{
+// Option adjusts a Client at construction time.
+type Option func(*Client)
+
+// WithBackend selects the wire protocol. An empty or unknown value leaves the
+// client on chat completions.
+func WithBackend(backend string) Option {
+	return func(c *Client) {
+		if backend == BackendResponses {
+			c.backend = BackendResponses
+		}
+	}
+}
+
+// WithHeaders adds request headers sent with every call, on top of
+// Content-Type and Authorization. Use it for endpoints that demand something
+// extra, such as a routing or session header.
+func WithHeaders(headers map[string]string) Option {
+	return func(c *Client) {
+		for k, v := range headers {
+			if c.headers == nil {
+				c.headers = map[string]string{}
+			}
+			c.headers[k] = v
+		}
+	}
+}
+
+// WithReasoningEffort sets how much thinking a reasoning model should do.
+// Only the Responses backend sends it; the accepted values are the provider's
+// (commonly minimal, low, medium, high).
+func WithReasoningEffort(effort string) Option {
+	return func(c *Client) { c.reasoningEffort = effort }
+}
+
+func NewClient(baseURL, apiKey string, opts ...Option) *Client {
+	c := &Client{
 		baseURL: baseURL,
 		apiKey:  apiKey,
+		backend: BackendChatCompletions,
 		client: &http.Client{
 			Transport: &http.Transport{
 				DisableKeepAlives: true, // Disable connection reuse to avoid EOF issues
 			},
 		},
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
 }
 
 // isRetryableError returns true if the error or status code should trigger a retry
@@ -60,13 +113,58 @@ func isPermanent500Error(respBody []byte) bool {
 	return false
 }
 
+// Chat sends one completion request and returns the model's answer. Which
+// wire protocol it speaks is decided by the backend the client was built with:
+// OpenAI chat completions by default, or the Responses API when the endpoint
+// only serves the model there.
 func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	if c.backend == BackendResponses {
+		return c.chatViaResponses(ctx, req)
+	}
+
 	// Prepare request body
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
 
+	respBody, truncated, err := c.postJSON(ctx, "/chat/completions", body)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse response
+	var chatResp ChatResponse
+	parseErr := json.Unmarshal(respBody, &chatResp)
+
+	// If parse failed and we had a read error, try adding missing closing brace
+	// This works around a llama.cpp bug where Content-Length is incorrect
+	if parseErr != nil && truncated {
+		fixedBody := append(respBody, '}')
+		parseErr = json.Unmarshal(fixedBody, &chatResp)
+	}
+
+	if parseErr != nil {
+		return nil, fmt.Errorf("decode response: %w (body preview: %s)", parseErr, bodyPreview(respBody))
+	}
+
+	return &chatResp, nil
+}
+
+// bodyPreview trims a response body down to something safe to put in an error.
+func bodyPreview(body []byte) string {
+	preview := string(body)
+	if len(preview) > 500 {
+		preview = preview[:500] + "..."
+	}
+	return preview
+}
+
+// postJSON posts body to path under the client's base URL and returns the
+// response body, retrying network failures, 429s and 5xx with exponential
+// backoff. The second return value reports that the body was read only
+// partially, which the caller may want to repair before parsing.
+func (c *Client) postJSON(ctx context.Context, path string, body []byte) ([]byte, bool, error) {
 	// Retry configuration
 	const maxRetries = 10
 	baseDelay := 1 * time.Second
@@ -79,7 +177,7 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		// Check context before attempting
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, false, ctx.Err()
 		}
 
 		// Wait before retry (exponential backoff)
@@ -90,7 +188,7 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 			}
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, false, ctx.Err()
 			case <-time.After(delay):
 			}
 		}
@@ -99,17 +197,20 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 		httpReq, err := http.NewRequestWithContext(
 			ctx,
 			"POST",
-			c.baseURL+"/chat/completions",
+			c.baseURL+path,
 			bytes.NewReader(body),
 		)
 		if err != nil {
-			return nil, fmt.Errorf("create request: %w", err)
+			return nil, false, fmt.Errorf("create request: %w", err)
 		}
 
 		// Set headers
 		httpReq.Header.Set("Content-Type", "application/json")
 		if c.apiKey != "" {
 			httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+		}
+		for k, v := range c.headers {
+			httpReq.Header.Set(k, v)
 		}
 
 		// Execute request
@@ -120,7 +221,7 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 			if isRetryableError(0, err) && attempt < maxRetries {
 				continue // retry
 			}
-			return nil, lastErr
+			return nil, false, lastErr
 		}
 
 		// Read response body (do this once for all paths)
@@ -134,7 +235,7 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 			if isRetryableError(resp.StatusCode, readErr) && attempt < maxRetries {
 				continue // retry
 			}
-			return nil, lastErr
+			return nil, false, lastErr
 		}
 
 		if len(respBody) == 0 {
@@ -142,7 +243,7 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 			if isRetryableError(resp.StatusCode, lastErr) && attempt < maxRetries {
 				continue // retry
 			}
-			return nil, lastErr
+			return nil, false, lastErr
 		}
 
 		lastStatusCode = resp.StatusCode
@@ -153,42 +254,22 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 			lastErr = fmt.Errorf("API error %d: %s", resp.StatusCode, respBody)
 			// Don't retry on permanent 500 errors (validation, template errors)
 			if resp.StatusCode == 500 && isPermanent500Error(respBody) {
-				return nil, lastErr
+				return nil, false, lastErr
 			}
 			if isRetryableError(resp.StatusCode, nil) && attempt < maxRetries {
 				continue // retry
 			}
-			return nil, lastErr
+			return nil, false, lastErr
 		}
 
-		// Parse response
-		var chatResp ChatResponse
-		parseErr := json.Unmarshal(respBody, &chatResp)
-
-		// If parse failed and we had a read error, try adding missing closing brace
-		// This works around a llama.cpp bug where Content-Length is incorrect
-		if parseErr != nil && readErr != nil {
-			fixedBody := append(respBody, '}')
-			parseErr = json.Unmarshal(fixedBody, &chatResp)
-		}
-
-		if parseErr != nil {
-			// Log first 500 chars of response for debugging
-			preview := string(respBody)
-			if len(preview) > 500 {
-				preview = preview[:500] + "..."
-			}
-			return nil, fmt.Errorf("decode response: %w (body preview: %s)", parseErr, preview)
-		}
-
-		return &chatResp, nil
+		return respBody, readErr != nil, nil
 	}
 
 	// All retries exhausted
 	if lastErr != nil {
-		return nil, fmt.Errorf("after %d retries: %w", maxRetries, lastErr)
+		return nil, false, fmt.Errorf("after %d retries: %w", maxRetries, lastErr)
 	}
-	return nil, fmt.Errorf("after %d retries: API error %d: %s", maxRetries, lastStatusCode, lastRespBody)
+	return nil, false, fmt.Errorf("after %d retries: API error %d: %s", maxRetries, lastStatusCode, lastRespBody)
 }
 
 // GetGenerationStats queries the generation statistics for a given generation ID
@@ -207,6 +288,9 @@ func (c *Client) GetGenerationStats(ctx context.Context, generationID string) (*
 	// Set headers
 	if c.apiKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	for k, v := range c.headers {
+		httpReq.Header.Set(k, v)
 	}
 
 	// Execute request

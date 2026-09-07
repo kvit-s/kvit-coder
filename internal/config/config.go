@@ -2,10 +2,14 @@ package config
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -13,16 +17,28 @@ import (
 
 type Config struct {
 	LLM struct {
-		BaseURL       string  `yaml:"base_url"`
-		APIKey        string  `yaml:"api_key"`
-		APIKeyEnv     string  `yaml:"api_key_env"`
-		Model         string  `yaml:"model"`
-		Temperature   float32 `yaml:"temperature"`
-		MaxTokens     int     `yaml:"max_output_tokens"`
-		Context       int     `yaml:"context"`        // Max context size for display (0 = don't show)
-		MergeThinking bool    `yaml:"merge_thinking"` // Merge reasoning_content into content (default: false, discard thinking)
-		Verbose       int     `yaml:"verbose"`        // 0 = off, >0 = show tool output up to N lines
-		BenchmarkCmd  string  `yaml:"benchmark_cmd"`  // External command for benchmarks (use {prompt} placeholder)
+		BaseURL   string `yaml:"base_url"`
+		APIKey    string `yaml:"api_key"`
+		APIKeyEnv string `yaml:"api_key_env"`
+		Model     string `yaml:"model"`
+		// APIBackend picks the wire protocol: "chat_completions" (default) or
+		// "responses". Some hosted models are served only on /responses and
+		// return an error on /chat/completions.
+		APIBackend string `yaml:"api_backend"`
+		// Headers are extra "Key=Value" request headers sent with every call
+		// (supports ${VAR}). Needed by endpoints that demand a routing or
+		// session header of their own.
+		Headers []string `yaml:"headers"`
+		// ReasoningEffort asks a reasoning model for more or less thinking.
+		// Only the "responses" backend sends it; values are the provider's
+		// (commonly minimal, low, medium, high).
+		ReasoningEffort string  `yaml:"reasoning_effort"`
+		Temperature     float32 `yaml:"temperature"`
+		MaxTokens       int     `yaml:"max_output_tokens"`
+		Context         int     `yaml:"context"`        // Max context size for display (0 = don't show)
+		MergeThinking   bool    `yaml:"merge_thinking"` // Merge reasoning_content into content (default: false, discard thinking)
+		Verbose         int     `yaml:"verbose"`        // 0 = off, >0 = show tool output up to N lines
+		BenchmarkCmd    string  `yaml:"benchmark_cmd"`  // External command for benchmarks (use {prompt} placeholder)
 	} `yaml:"llm"`
 
 	Workspace struct {
@@ -384,6 +400,53 @@ type SafetyConfirmation struct {
 	ToolName  string    `yaml:"-"`
 	Path      string    `yaml:"-"`
 	Timestamp time.Time `yaml:"-"`
+}
+
+// runIDVar is the environment variable llm.headers can reference as
+// ${KVIT_RUN_ID} to get a value unique to this kvit-coder process.
+const runIDVar = "KVIT_RUN_ID"
+
+var runIDOnce sync.Once
+
+// ensureRunID gives this process an ID that no other kvit-coder running at the
+// same time will have. Endpoints that route by a session header put every
+// request with the same header value on one backend, so two agents sharing an
+// ID compete for the same prompt cache instead of each keeping their own. An
+// ID already in the environment is left alone, which lets a caller pin one
+// across several runs on purpose.
+func ensureRunID() {
+	runIDOnce.Do(func() {
+		if os.Getenv(runIDVar) != "" {
+			return
+		}
+		var buf [6]byte
+		if _, err := rand.Read(buf[:]); err != nil {
+			os.Setenv(runIDVar, strconv.FormatInt(time.Now().UnixNano(), 36))
+			return
+		}
+		os.Setenv(runIDVar, hex.EncodeToString(buf[:]))
+	})
+}
+
+// LLMHeaders parses llm.headers into the header map the LLM client wants,
+// expanding ${VAR} references against the environment so a session or routing
+// header can come from a secret the config does not contain. ${KVIT_RUN_ID}
+// expands to an ID unique to this process unless the environment already sets
+// one.
+func (c *Config) LLMHeaders() map[string]string {
+	if len(c.LLM.Headers) == 0 {
+		return nil
+	}
+	ensureRunID()
+	headers := make(map[string]string, len(c.LLM.Headers))
+	for _, h := range c.LLM.Headers {
+		k, v, ok := strings.Cut(h, "=")
+		if !ok {
+			continue
+		}
+		headers[strings.TrimSpace(k)] = os.ExpandEnv(strings.TrimSpace(v))
+	}
+	return headers
 }
 
 func Load(path string) (*Config, error) {

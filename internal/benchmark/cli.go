@@ -336,7 +336,10 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 	defer csvWriter.Close()
 
 	// Create LLM client
-	llmClient := llm.NewClient(cfg.LLM.BaseURL, cfg.LLM.APIKey)
+	llmClient := llm.NewClient(cfg.LLM.BaseURL, cfg.LLM.APIKey,
+		llm.WithBackend(cfg.LLM.APIBackend),
+		llm.WithHeaders(cfg.LLMHeaders()),
+		llm.WithReasoningEffort(cfg.LLM.ReasoningEffort))
 
 	// Simple system prompt - no agent behavior, just Q&A
 	systemPrompt := "You are a helpful assistant. Answer questions about the provided source code concisely and accurately."

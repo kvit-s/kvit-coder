@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -212,5 +213,51 @@ func TestDiagnosticsTriggerEnabled(t *testing.T) {
 	}
 	if subset.TriggerEnabled("duplicate_call") {
 		t.Error("duplicate_call should be disabled when not in subset")
+	}
+}
+
+func TestLLMHeadersExpansion(t *testing.T) {
+	t.Setenv("SESSION_SECRET", "s3cret")
+
+	cfg := &Config{}
+	cfg.LLM.Headers = []string{
+		"x-opencode-session=kvit-coder-${KVIT_RUN_ID}",
+		"x-token = ${SESSION_SECRET} ",
+		"malformed-no-equals",
+	}
+
+	headers := cfg.LLMHeaders()
+
+	if got := headers["x-token"]; got != "s3cret" {
+		t.Errorf("x-token = %q, want s3cret", got)
+	}
+	if _, ok := headers["malformed-no-equals"]; ok {
+		t.Error("entry without = should be skipped")
+	}
+
+	// The run ID has to be a real value, not an empty expansion, or the
+	// endpoint sees a header it will reject.
+	session := headers["x-opencode-session"]
+	if session == "kvit-coder-" || !strings.HasPrefix(session, "kvit-coder-") {
+		t.Errorf("x-opencode-session = %q, want a non-empty run ID suffix", session)
+	}
+
+	// It must stay the same for the life of the process, so every request of
+	// one run routes together.
+	if again := cfg.LLMHeaders()["x-opencode-session"]; again != session {
+		t.Errorf("run ID changed between calls: %q then %q", session, again)
+	}
+}
+
+// A run ID already in the environment is honored, so a caller can pin one
+// across several runs.
+func TestLLMHeadersRunIDFromEnv(t *testing.T) {
+	t.Setenv("KVIT_RUN_ID", "pinned")
+
+	cfg := &Config{}
+	cfg.LLM.Headers = []string{"x-opencode-session=${KVIT_RUN_ID}"}
+
+	if got := cfg.LLMHeaders()["x-opencode-session"]; got != "pinned" {
+		t.Errorf("x-opencode-session = %q, want pinned", got)
 	}
 }

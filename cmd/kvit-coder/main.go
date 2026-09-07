@@ -273,7 +273,10 @@ func main() {
 	defer workspaceLock.Release()
 
 	// Initialize LLM client
-	llmClient := llm.NewClient(cfg.LLM.BaseURL, cfg.LLM.APIKey)
+	llmClient := llm.NewClient(cfg.LLM.BaseURL, cfg.LLM.APIKey,
+		llm.WithBackend(cfg.LLM.APIBackend),
+		llm.WithHeaders(cfg.LLMHeaders()),
+		llm.WithReasoningEffort(cfg.LLM.ReasoningEffort))
 
 	// Initialize temp file manager for shell command outputs
 	tempFileMgr := tools.NewTempFileManager(cfg.Workspace.Root)
