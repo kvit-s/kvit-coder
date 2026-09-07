@@ -15,24 +15,40 @@ a 1M-token context, spoken to over OpenAI's Responses API. That model needs
 almost none of the compensation, and it needs several things the current program
 has never had.
 
-The design below is shaped by four requirements, in order of how much they
+The design below is shaped by five requirements, in order of how much they
 constrain the architecture:
 
-1. **Steering.** You must be able to type a message while a step is executing
-   and have the model see it, without killing the turn.
+1. **Steering.** You must be able to type a message while a turn is in
+   progress and have the model see it, without killing the turn.
 2. **Long-running and observed commands.** Test suites, builds, dev servers and
    log watchers must be startable, watchable, and able to report back. The
    current 3-minute ceiling and the run-to-completion-then-report model do not
    cover this.
-3. **A thin interactive shell.** The interactive process must not hold agent
-   state, manage turn cancellation, or reimplement the loop. That constraint is
-   deliberate and is preserved.
-4. **No weak-model tax.** The recovery machinery built for local models should
+3. **One process per turn.** The agent runs a turn and exits; the driver spawns
+   it again for the next one. Headless is the common case, the driver holds no
+   agent state, and a wedged turn ends when its process does. Everything with a
+   longer life belongs in the session directory rather than in memory.
+4. **A durable session.** A session is a record you can open months later and
+   read, not a runtime artefact.
+5. **No weak-model tax.** The recovery machinery built for local models should
    not run when it is not needed.
 
 Nothing here requires changing the tool interface, the registry, prompt
 generation, the MCP client, the transport layer, or the benchmark harness.
 Section 15 lists what stays untouched.
+
+### Two words, fixed
+
+- A **turn** is one whole request: everything from an instruction of yours to
+  the model's final answer. A turn can contain many model calls and dozens of
+  tool calls.
+- An **iteration** is one model call inside a turn: a request goes out, an
+  answer comes back, and whatever tools it asked for are executed. The code
+  already uses this name — `runner_iteration.go`, `iterCtx` — so the document
+  keeps it.
+
+The inbox is drained once per iteration. A turn is also one process, so
+"per turn" and "per process" mean the same thing below.
 
 ## 2. The organizing idea: one input channel
 
@@ -46,128 +62,200 @@ The redesign gives the agent a single **inbox** that three producers write to:
 - events from background processes and observers
 - system notices the runner already generates (loop detection, plan state)
 
-Every write carries a `wake` flag. A message written with `wake=false` sits in
-the queue and is picked up by whatever turn happens next, costing nothing extra.
-A message written with `wake=true` also rouses an agent that is sitting idle.
+Every message carries its **kind** — `user_line`, `process_event`, `notice`.
 The queue is bounded and drops its oldest entry when full, so no producer ever
-blocks on a slow or idle agent.
+blocks on a busy agent.
 
-Every message also carries its **kind** — `user_line`, `process_event`,
-`notice` — because one consumer has to tell them apart. A pending question
-(section 6) takes its answer from something you typed and must never take it
-from a build that happened to finish while you were deciding.
+Your lines reach it two ways, and nothing downstream can tell them apart.
+**Stdin** covers the case where a terminal is attached, which includes a plain
+`kvit-coder -p "..."` typed at a prompt. **The session inbox directory**
+(section 3) covers a run started from a script, backgrounded, or watched from
+another window. Both push `user_line`, so the drain and the question reader
+behave identically whichever side the text came from.
 
-The loop drains the inbox at the top of every iteration and turns whatever it
-finds into messages. When the model answers without asking for a tool, the agent
-does not exit — it blocks on the inbox and returns when something with `wake`
-set arrives.
+**Draining takes everything.** Once per iteration, immediately before the model
+call, the loop empties the queue and appends what it found to the history. It
+inspects nothing and decides nothing; the model sorts out what the messages
+mean. Once per iteration is not a tuning choice: history can only be appended
+where it is well-formed, meaning every tool call already has its result, and
+that point falls between iterations. Draining less often means draining once per
+turn, which is exactly what would leave a steering line queued until a
+fifteen-iteration turn finished.
 
-That flag is the whole cost-control policy. A dev server logging a request
-writes `wake=false` and the model learns about it, free, the next time it takes
-a turn for some other reason. A test run going red writes `wake=true` and gets
-a turn of its own. Deciding which is which happens at the write site, where the
-producer knows what the event means, rather than in a rule the loop has to
-consult. The design is taken from maki's `SessionMailbox`
-(`github.com/tontinton/maki`, `maki-agent/src/mailbox.rs`), which splits the
-same queue into `drain()` and `claim_wake()`.
+Nothing waits for a scheduled moment. A line arriving during a blocking tool
+makes that tool return, and the drain and the next request follow immediately;
+the arrival is what produces the iteration. The ceiling on how long "typed" is
+from "seen" is whatever single operation is in flight — a model call that has
+to come back, or a tool that has to return — and for a tool watching the inbox
+that ceiling is zero. That is the argument for the inbox exposing a signal
+channel any long-running tool can select on, rather than special-casing the
+waiting tools.
 
-That single change collapses three features into one mechanism. Steering is an
-inbox write while the loop is running. Prompting for the next turn is an inbox
-read while the loop is idle. Waking the agent because a build finished is an
-inbox write from a process watcher. There is no separate REPL, no separate
-notification path, and no event loop beyond "read the inbox."
+The one decision the agent does make is how an item is **represented**. A
+`user_line` becomes a user message, because it came from you. A `process_event`
+does not: telling the model "the user said: bg1 exited 1" attributes a machine
+event to a person and invites a reply rather than an action, so an event is
+appended to the last tool result as a `<system-reminder>`, the mechanism loop
+detection already uses (`internal/agent/runner_iteration.go:100`).
+
+**Between turns there is no agent.** The process exits when the turn ends
+(section 3), so anything arriving in the meantime — a line you type, a detached
+process exiting — waits in the session directory and is read when the next turn
+starts. There is no idle loop to wake and no notification path to build.
+
+That leaves one mechanism doing two jobs inside a turn. Steering is an inbox
+write while the loop runs; a question (section 6) is an inbox read that accepts
+only `user_line`. Holding the prompt between turns is the driver's job, not the
+agent's.
+
+The queue is modelled on maki's `SessionMailbox` (`github.com/tontinton/maki`,
+`maki-agent/src/mailbox.rs`), minus its per-message `wake` flag. maki needs that
+flag to tell an idle session which messages deserve a turn. Here there is no
+idle session to wake: within a turn every message goes to the model at the next
+iteration, and between turns nothing is running to be woken.
 
 ## 3. Process model
 
-Two binaries stay, with their responsibilities sharpened.
+**`kvit-coder` is one process per turn.** It reads the session, runs the turn to
+a final answer, appends what happened, and exits. Everything with a lifetime
+longer than a turn lives in the session directory rather than in memory.
 
-**`kvit-coder` — the agent.** Owns everything with a lifetime: the conversation,
-the checkpoint repository, MCP server connections, temp files, background
-processes, and the terminal for as long as it runs. It reads steering lines from
-stdin, writes output to stdout and stderr, and saves the session after every
-answer. It runs for a whole working session rather than a single turn.
+**The driver** — `kvit-coder-ui`, a shell script, or anything else — spawns the
+agent once per turn with `-s <session>` and waits. It holds no message history,
+manages no cancellation, and knows nothing about iterations.
 
-**`kvit-coder-ui` — the launcher.** Picks the config, resolves or creates the
-session name, pins `KVIT_RUN_ID` in the environment so every child shares one
-prompt-cache identity, spawns the agent with stdin, stdout and stderr inherited,
-and waits. It handles session listing, switching and deletion between agent
-runs, and restarts the agent if it exits and you want to continue.
+Headless is the common case and the reason this shape is worth keeping: no UI
+process, a simpler startup path, a smaller resident footprint, and a wedged turn
+that ends when its process does rather than needing a way out.
 
-The launcher never sees a turn, never holds message history, and has no
-cancellation logic. That is the property worth protecting, and moving from
-"spawn per turn" to "spawn per session" preserves it while removing everything
-that per-turn spawning throws away: checkpoints that only reach inside one turn,
-path approvals re-asked every turn, MCP servers respawned every turn at up to 20
-seconds each, temp files deleted while the model still holds their paths, and
-background processes that cannot exist at all.
+Per-turn processes work because the state is in the right place, which is the
+part the current code gets wrong. The conversation goes to an append-only
+`history.jsonl`; the checkpoint shadow repository is keyed on the session
+instead of `time.Now().UnixNano()`; session-scoped permission grants and spilled
+tool output live in the session directory instead of process memory; and
+`KVIT_RUN_ID` is pinned by the driver so every turn shares one prompt-cache
+identity. Section 13 gives the layout.
 
-Headless use is the same binary with the interactive behaviour off:
-`kvit-coder -p "prompt"` runs one conversation, kills any background processes it
-started, and exits. Benchmarks are unaffected.
+Two things do cost something, and both are bounded:
+
+- **MCP servers reconnect every turn.** Connections are made concurrently, so
+  the cost is the slowest server rather than the sum — a second or two for a
+  stdio server, and the 20-second figure in the config is a timeout, not a
+  typical time. It is a reason to prefer HTTP MCP servers where you have the
+  choice.
+- **A process only outlives its turn if it is detached.** See section 7: a child
+  of the agent dies with the turn, which is right for a test run and wrong for a
+  dev server, so the two get separate tools.
+
+### The session directory
+
+Steering has to work for a headless run, and stdin cannot always provide it: a
+run started from a script, backgrounded, or watched from another window has no
+terminal to type into. The answer is a directory rather than a listener, because
+**the drain is already a poll** — the inbox is consumed at iteration boundaries
+and nowhere else, so a socket would deliver nothing sooner than a directory scan
+does.
+
+A producer writes to a temporary name inside `inbox/` and `rename()`s it into
+place, which is atomic on one filesystem, so the agent never reads a
+half-written message. Names carry a monotonic prefix so they sort into arrival
+order. At each drain the agent reads what is there, appends it as `user_line`,
+and unlinks. The file disappearing is the acknowledgement.
+
+```
+kvit-coder steer -s my-feature "also update the tests"
+kvit-coder steer "also update the tests"     # no -s: the only running turn
+echo "also update the tests" > ~/.kvit-coder/sessions/my-feature/inbox/$(date +%s%N)
+```
+
+`steer` is a convenience that gets the naming and the atomic rename right, not a
+second mechanism — the shell redirect below it does the same job when the binary
+is not to hand. That openness is the point: a script, an editor macro, a cron
+job, another agent, or a container with the directory bind-mounted can all reach
+a running turn without a client or a protocol. A line written while no turn is
+running is read at the start of the next one.
+
+The `-s`-less form matters more than it looks. A headless run auto-generates its
+session name, so requiring `-s` would mean looking the name up before you could
+say anything. Targeting the single running turn, and erroring when there is more
+than one, makes steering something you can type without preparation.
+
+**Watching needs no protocol.** With the conversation appended to
+`history.jsonl` as it happens (section 13), looking in on a long turn from
+another terminal is `tail -f` on that file, and answering is a file dropped in
+`inbox/`. There is no subscriber list, no streaming format, and no listener to
+maintain.
+
+Anything able to write your home directory can inject instructions into a
+running turn, which would be equally true of a socket owned by the same user.
+Mode 0700 on the directory, a size cap on what is read, and a log line for
+anything oversized.
 
 ### Failure and exit
 
-- First Ctrl-C aborts the current step and returns the agent to the inbox. What
-  that means precisely is set out in section 5.
-- Second Ctrl-C within a few seconds exits the agent.
-- If the agent exits unexpectedly, the launcher reports the exit code and offers
-  to restart with the same session, which reloads the saved history.
+- The turn ends when the model answers without asking for a tool. The agent
+  appends the answer, releases what it owns, and exits; the driver returns to
+  its prompt.
+- Ctrl-C aborts the current iteration and ends the turn early. What "abort"
+  does precisely is set out in section 5; the process then exits as it would
+  after any other turn.
+- A crash leaves `history.jsonl` intact up to the last thing that happened, so
+  the next turn resumes from there. Stale pidfiles and a non-empty `inbox/` are
+  the only cleanup, and both are handled at the start of the next turn.
 
 ## 4. The turn loop
 
 ```
-run(session):
-    for {
-        msgs := inbox.drain()            // steering, process events, notices
-        if msgs.empty && idle {
-            msgs = inbox.wait()          // block; this is the prompt
+turn(session):
+    history := session.load()            // history.jsonl, replayed
+    history.append(inbox.drain())        // anything left since the last turn
+    history.append(user_prompt)          // the -p argument
+
+    for i := 0; i < iteration_budget; i++ {
+        history.append(inbox.drain())    // steering lands here
+
+        resp := model.call(history)
+        if resp.no_tool_calls {
+            print(resp.text)
+            session.append(resp)
+            return                       // turn over, process exits
         }
-        history.append(msgs)
 
-        budget := iteration_budget       // per user message, not per process
-
-        for i := 0; i < budget; i++ {
-            history.append(inbox.drain())    // steering lands here mid-turn
-
-            resp := model.call(history)
-            if resp.no_tool_calls {
-                print(resp.text)
-                session.save(history)
-                idle = true
-                break                    // back to the outer wait
-            }
-
-            for tc := range resp.tool_calls {
-                history.append(execute(tc))
-            }
-            history.append(watchers.poll())  // process events as reminders
+        for tc := range resp.tool_calls {
+            session.append(execute(tc))
         }
+        session.append(watchers.poll())  // detached-process events as reminders
     }
+    report("iteration budget reached")
 ```
 
-Three points about this shape:
+One loop, not two. A turn is one process and one pass through this; the driver
+supplies the next turn by starting another.
 
-**The drain sits at the top of the iteration**, immediately before the model
+**The drain sits at the top of each iteration**, immediately before the model
 call, at the place where `internal/agent/runner.go:196` currently reads messages
 for file-first mode. Every tool call from the previous iteration already has its
 result appended by then, so the history is well-formed for both wire protocols
 and a user message can be appended safely.
 
-**The iteration budget is per user message, not per process.** The current
-`max_tool_iterations` counts for the life of the process; once the process is
-the whole session, that becomes meaningless. Reset the counter each time a user
-message enters the history. A value around 200 is a sane ceiling for one
-instruction.
+**The iteration budget is per turn**, which is now the same as per process. The
+current `max_tool_iterations` already reads that way; what changes is that a
+value like 200 becomes a ceiling on one instruction rather than on a session.
 
 **Reaching the budget is reported, not silent.** The current loop ends without
-printing anything when the cap is hit. The agent should say so, save, and go
-idle with the history intact so you can steer it onward.
+printing anything when the cap is hit. Say so, append it to the history, and
+exit, so the next turn starts with the fact that the last one ran out rather
+than with an unexplained gap.
+
+**Appending happens as it goes**, not at the end. Each message is written to
+`history.jsonl` when it occurs, so a crash costs one message rather than a turn,
+and `tail -f` has something to follow.
 
 ## 5. Steering
 
 Mechanically this is small, because the agent already owns the terminal.
 
-- The launcher passes `os.Stdin` to the child instead of `nil`
+- The driver passes `os.Stdin` to the agent instead of `nil`
   (`internal/tui/ui.go:281` today sets it to nil).
 - The agent starts a goroutine running a line scanner over stdin, appending each
   line to the inbox and echoing `→ queued` so you know it was received.
@@ -182,12 +270,12 @@ Typing a line queues it. Ctrl-C aborts. They are separate mechanisms with
 separate semantics, and both are cheap because neither tries to resume anything.
 
 **A queued line** is picked up at the next iteration boundary, which is at most
-one model call and one tool batch away. Nothing is cancelled and the step runs
-to its natural end. This is the common case: a correction, an extra constraint,
+one model call and one tool batch away. Nothing is cancelled and the turn
+continues uninterrupted. This is the common case: a correction, an extra constraint,
 a "also update the tests."
 
-**Ctrl-C aborts the step.** It does not attempt to salvage the half-finished
-turn, and that is what makes it simple:
+**Ctrl-C aborts the iteration and ends the turn.** It does not attempt to
+salvage the half-finished turn, and that is what makes it simple:
 
 1. Cancel the iteration context, which stops the in-flight model call and any
    running tool.
@@ -198,20 +286,19 @@ turn, and that is what makes it simple:
    never reached; a note naming the background processes that were killed; and,
    when the model call itself was cut off, a marker that the assistant turn was
    abandoned.
-4. Save the session and go idle at the inbox.
+4. Exit. The driver returns to its prompt.
 
-The next thing you type continues a conversation whose history explains exactly
-what stopped and where, so the model does not re-plan from a state it thinks
-still holds.
+The next turn starts from a history that explains exactly what stopped and
+where, so the model does not re-plan from a state it thinks still holds.
 
-Most of step 3 already exists. `handlePostIteration` appends
+Most of item 3 already exists. `handlePostIteration` appends
 `Error: Cancelled by user` for unexecuted tool calls, `handleLLMError` appends
 `[Operation cancelled by user]` when a model call is cancelled mid-tool-loop,
 and both `executeTools` and `executeToolWithTimeout` already check
 `ctx.Done()` at the right points. What is missing is a SIGINT handler that
 cancels the iteration context rather than calling `os.Exit(130)`
-(`internal/workspace/lock.go:55`), the process kill in step 2, and going idle
-instead of exiting.
+(`internal/workspace/lock.go:55`) — the exit is right, the abrupt exit before
+anything is written down is not — plus the process kill in item 2.
 
 Two rough edges to accept initially. The terminal echoes what you type
 interleaved with agent output, which is untidy until the agent draws its own
@@ -228,19 +315,19 @@ question is a tool call whose result comes from a person rather than from the
 machine, so it needs no new input path. It reads from the inbox, like everything
 else.
 
-### One reader, three display states
+### One reader, two modes
 
-The line reader from section 5 is always running. What changes is what is drawn
-above it and how the agent reads the next line:
+The line reader from section 5 runs for the length of the turn. What changes is
+what is drawn above it and how the agent reads the next line:
 
-| Agent state | Prompt shows | The next line is |
+| Agent state | Shows | The next line is |
 |---|---|---|
-| idle | bare prompt | a new instruction |
-| step running, no question | bare prompt | steering |
+| turn running, no question | nothing in particular | steering |
 | question pending | the question and its numbered options | the answer |
 
-One input surface in three modes, rather than two interfaces contending for
-stdin. The hint on the input line (`[1-2, or type]`) says which mode you are in.
+One input surface, not two interfaces contending for stdin. The hint on the
+input line (`[1-2, or type]`) says which mode you are in. Between turns the
+agent is not running at all and the prompt belongs to the driver.
 
 ### Tool shape
 
@@ -277,7 +364,7 @@ background work.
 
 ### What keeps running while a question waits
 
-Blocking the step costs nothing, because background processes are not in the
+Blocking the turn costs nothing, because background processes are not in the
 loop. They are OS processes with their own process groups: a build started in an
 earlier turn keeps building while you decide, its output keeps teeing to your
 terminal, and its exit event lands in the inbox on its own schedule. The only
@@ -299,18 +386,24 @@ Use the existing retry wrapper, or write a new one?
 
 ### Blocking, dismissal, and the headless fallback
 
-Interactive: block indefinitely. A long-lived agent that waits costs nothing,
-and a timeout firing while you are away is worse than waiting.
+Interactive: block indefinitely. A turn that waits costs nothing, and a
+timeout firing while you are away is worse than waiting.
 
-No controlling terminal: return at once with "no one available to answer; use
-your judgement and state what you assumed." This is the fallback the MCP confirm
-policy already uses, where `ask_*` degrades to `block` rather than hanging. Skip
-it and every thinkbench task that asks a question hangs until its budget
-expires.
+No terminal: write the question where a watcher can see it, wait up to
+`question_timeout` for an answer to appear in the session inbox, then return
+"no one answered; use your judgement and state what you assumed." Default the
+timeout to zero, so benchmarks and scripted runs fall back at once — the
+behaviour the MCP confirm policy already has, where `ask_*` degrades to `block`
+rather than hanging. A supervised headless run sets it to a few minutes.
+
+A timeout rather than a presence check is what makes this work without a
+listener. Nothing has to know whether a person is watching the session
+directory: waiting briefly and proceeding is the same answer either way, and it
+needs no heartbeat, no subscriber list, and no client to be running.
 
 Ctrl-C is dismissal and follows section 5's abort semantics: record "question
-dismissed by user" as the tool result, stop the step, go idle. The question and
-its dismissal are both in history, which is what stops the model asking again.
+dismissed by user" as the tool result and end the turn. The question and its
+dismissal are both in history, which is what stops the model asking again.
 
 Typing free text rather than an option number is the graceful escape. If the
 build failed and the choice has gone stale, a sentence returns as the answer and
@@ -338,93 +431,144 @@ one call.
 
 ### How much this adds
 
-Once the agent goes idle after an answer instead of exiting (section 3), most of
-this is already available: the model can end its turn with a question, you
-reply, and the history is all still there. What the tool adds is narrower than
-it first appears — the turn keeps its momentum instead of ending in a wrap-up
-the model then resumes from, the options come back machine-readable instead of
-parsed out of your prose, and the answer is bound to its question in history
-rather than floating as a loose user message. That is worth a tool, but it is a
-smaller gap than it would be in an agent that exits after every answer, so
-shipping the long-lived loop first and seeing whether asking-by-stopping annoys
-you is a defensible order.
+A model can already ask by ending its turn: it says "which of these two?", the
+driver prompts, and you reply as the next turn. What the tool adds is that the
+turn keeps its plan rather than ending in a wrap-up the next turn has to resume
+from, the options come back machine-readable instead of parsed out of your
+prose, and the answer is bound to its question in the record rather than
+floating as a loose user message. The first of those is the real one, and it is
+worth more here than it would be in an agent that never exits, because ending a
+turn also ends the process.
 
 ## 7. Background processes and observers
+
+### Two lifetimes
+
+A process only outlives its turn if it is not a child of the agent, so the two
+cases get separate tools rather than a flag:
+
+- **Turn-scoped** (`Shell.run`) — a child of the agent, killed when the turn
+  ends. Test suites, builds, anything the model waits on and acts upon inside
+  one turn.
+- **Session-scoped** (`Shell.start`) — started detached with `setsid`, its
+  output to `proc/<id>.log` and its pid to `proc/<id>.pid` in the session
+  directory. The OS keeps it alive; the filesystem keeps the metadata. A later
+  turn reads the directory and knows exactly what is running, and can tail it,
+  poll it, or kill it.
+
+That is what lets background work span turns without a supervisor or a daemon,
+and it is why per-turn processes cost nothing here.
 
 ### Tool surface
 
 ```
-Shell.start   {command, cwd, name}                → {id}
+Shell.run     {command, cwd, timeout}             → runs to completion, dies with the turn
+Shell.start   {command, cwd, name}                → {id}   detached, survives the turn
 Shell.output  {id, cursor}                        → {output, cursor, running}
 Shell.status  {id}                                → running | exited(code)
 Shell.list    {}                                  → [{id, name, running, age}]
-Shell.wait    {id, until_regex, timeout}          → blocks; output + why it returned
 Shell.kill    {id}
-Observe.add   {command, every, report_when}       → {id}   periodic probe
+Observe.wait  {id, poll, report, until, max_wait} → blocks; output + why it returned
+Observe.add   {command, every, report}            → {id}   periodic probe
 Observe.remove{id}
 ```
 
 `Shell.start` returns immediately, so the 3-minute ceiling on synchronous
-commands stops being the binding constraint. `Shell.wait` opts out of the
+commands stops being the binding constraint. `Observe.wait` opts out of the
 hardcoded 15-second per-tool timeout through the existing `SelfTimeoutTool`
 interface (`internal/tools/tool.go:46`), which MCP tools already use for the
 same reason.
 
-An `Observe` entry is a background process that produces output on a timer — a
-health probe, a `git status`, a queue depth. It shares the registry and the
-reporting policy with `Shell.start`, so there is one mechanism with two
-producers.
+An `Observe.add` entry is a process that produces output on a timer — a health
+probe, a `git status`, a queue depth. It shares the registry and the reporting
+rules with `Shell.start`, so there is one mechanism with two producers.
+
+### Watching, and who decides what
+
+`Observe.wait` blocks and returns when something is worth a turn. The model's
+next call is the decision about what to do next, so the agent needs no state
+machine: waiting longer is calling `wait` again, changing the cadence is calling
+it with a different `poll`, giving up is calling `Shell.kill`.
+
+```
+iteration N:   Observe.wait {id: bg1, poll: 60s, report: changed, max_wait: 30m}
+               blocks, waking on its own timer, process exit, a matched
+               pattern, or a user_line arriving
+               → returns what it has and why it returned
+iteration N+1: the model reads the report and decides
+```
+
+**How often the tool looks and how often the model is told are separate
+settings.** `poll` is the tool's cadence; `report` decides when it returns —
+`changed`, `match`, `exit`, or `always`. Default to something other than
+`always`, because a model writing "check every minute" usually means "tell me
+when something happens" and a tick is the easiest way to say it. `max_wait` is
+the heartbeat ceiling, so the model gets a turn eventually even when nothing
+happens.
+
+This is guidance rather than a limit — no floor on how often the model may look.
+The prompt side of a poll is largely cached, so the cost is not the replayed
+conversation; it is the output, and at high reasoning effort every report buys a
+fresh reasoning pass measured in thousands of tokens and tens of seconds. On a
+subscription that is rate limit and wall clock rather than money. Make it
+visible instead of capping it: have the return say how long it waited and how
+many ticks produced nothing, so both you and the model can see when polling is
+not paying.
+
+Cached prefixes cut the other way and are worth knowing about. Providers
+typically hold them for a few minutes of inactivity, so a thirty-minute silent
+wait can cost a full cold prefill on the far side while a sixty-second poll
+keeps the cache warm throughout. The TTL on the opencode.ai endpoint is unknown
+and worth measuring, since it sets the natural upper bound on how long a wait
+should go silent.
+
+The model is not obliged to block at all. With other work to do it does that
+work and calls `Shell.output` between pieces of it, using the same tools without
+waiting.
 
 ### Output handling
 
 Each process gets a bounded ring buffer in memory plus a full log file under the
-session's temp directory. Two consumers read from it independently:
+session directory. Two consumers read from it independently:
 
 - **The terminal**, live, so you can watch a build scroll past. This costs
   nothing and is where most of the value of "observing" actually lands, because
   watching progress is a human need.
-- **The model**, only when it asks (`Shell.output`, `Shell.wait`) or when a
-  registered condition fires.
-
-Keeping those separate matters because every model wake-up replays the entire
-conversation — the Responses requests set `Store: false`
-(`internal/llm/responses.go:127`), so nothing is held server-side — and at high
-reasoning effort a "still compiling" poll is an expensive way to learn nothing.
+- **The model**, only when it asks (`Shell.output`, `Observe.wait`) or when a
+  condition it registered fires.
 
 ### When the model is told
 
-After each tool batch, the runner polls the watcher registry and appends notes
-to the last tool result as `<system-reminder>` text, reusing the mechanism loop
+After each tool batch, the runner polls the registry and appends notes to the
+last tool result as `<system-reminder>` text, reusing the mechanism loop
 detection already uses (`internal/agent/runner_iteration.go:100`). Three
-conditions produce a note:
+conditions produce a note: a session-scoped process exited, a regex the model
+registered matched new output, or an observer's output changed since the last
+report. Nothing is reported on a timer, and unwatched output never reaches the
+model.
 
-- a process exited, with its code and last output
-- a regex the model registered matched new output
-- an observer's output changed since the last report
+Between turns nobody is listening, so an event that arrives then waits in the
+session directory and is read at the start of the next turn (section 2). There
+is no idle agent to wake.
 
-Nothing is reported on a timer, and unwatched output never reaches the model.
-Cost stays proportional to events rather than to elapsed time.
+### Interrupt and exit
 
-**Waking an idle agent** needs no separate mechanism, only the `wake` flag from
-section 2. A process exiting non-zero, or a pattern the model asked to be told
-about, writes `wake=true` and gets a turn. Everything else writes `wake=false`
-and rides along with the next turn for nothing. The registration API decides the
-flag: `Shell.wait` and an explicit `until` pattern imply `wake=true`, while
-`Observe.add` defaults to `wake=false` unless asked otherwise.
+Turn-scoped processes die when the turn ends, whether it ended by answering or
+by Ctrl-C. Session-scoped processes survive a turn ending normally and are
+killed by Ctrl-C, both through the existing `killProcessGroup` path
+(`internal/tools/shell.go:417`), and the kill is written into the history so the
+model knows the dev server it started is gone rather than assuming it is still
+answering on port 3000.
 
-### Lifetime
+Tying session-scoped death to interrupt is deliberate: an interrupt usually
+means the approach was wrong, and leaving a test watcher and a stale server
+running from an abandoned approach is worse than restarting them. If a
+long-lived server turns out to be worth keeping across an abort, the narrow fix
+is a `keep_on_interrupt` flag on `Shell.start` rather than a change to the
+default.
 
-Processes belong to the agent process. They survive turns, because the agent
-survives turns. They die on Ctrl-C and on exit, both through the existing
-`killProcessGroup` path (`internal/tools/shell.go:417`), and both are reported
-into the history so the model knows the dev server it started is gone rather
-than assuming it is still answering on port 3000.
-
-Tying process death to interrupt is deliberate: an interrupt usually means the
-approach was wrong, and leaving a test watcher and a stale server running from
-an abandoned approach is worse than restarting them. If a long-lived server
-turns out to be worth keeping across an abort, the narrow fix is a
-`keep_on_interrupt` flag on `Shell.start` rather than a change to the default.
+The start of every turn reconciles the registry against reality: a pidfile whose
+process is gone becomes an exit event, and its log is available to read.
 
 ## 8. Live output for foreground commands
 
@@ -473,8 +617,9 @@ first one. Rules live in three tiers, evaluated denies-first:
 **Granting.** Four answers to a prompt: once, for this session, always in this
 project, always everywhere. The last two append a rule to the config file, which
 is what `UpdateConfigFile` currently claims to do while writing nothing
-(`internal/agent/permissions.go:60`). With a long-lived agent a session grant now
-means something — it lasts the working session rather than one turn.
+(`internal/agent/permissions.go:60`). Session grants go to the session
+directory rather than process memory, so they last the session rather than the
+turn that made them.
 
 **What this buys.** The unconditional bans become default deny rules you can
 override. `awk` in a pipeline is a scope you allow once and forget. `curl` is a
@@ -506,8 +651,8 @@ are safe to run at once. Edit, Write and Shell serialize, because they mutate th
 workspace and share the pending-edit state. A batch mixing both runs its
 read-only calls concurrently and its mutating calls in order.
 
-This does nothing for genuinely dependent chains, where step two needs step one's
-output. That is what appendix A.2 addresses, and it is the reason to build this
+This does nothing for dependent chains, where the second call needs the first
+call's output. That is what appendix A.2 addresses, and it is the reason to build this
 one first: `Batch` is an afternoon and covers the common case.
 
 ## 11. Model profiles
@@ -539,69 +684,205 @@ on scores rather than on argument.
 
 ## 12. Context management
 
-With one process per session and a 1M-token window, the conversation will grow
-for hours. Three pieces are needed.
+With a 1M-token window this may never become urgent, so the plan is one piece
+built now and one deferred until it does.
 
-**Accounting.** Track prompt tokens against `llm.context` after every response.
-It is currently used only to render a display string. Warn at a threshold, and
-expose the number in the status line.
+**Token accounting, now.** Track prompt tokens against `llm.context` after every
+response — it is currently used only to render a display string — and show
+context used against the window in the status line. That is what turns "will I
+ever need compaction" from a guess into an observation after a week of use.
 
-**Compaction.** At a configurable fraction of the window, summarize the older
-part of the conversation into a single message, keep the most recent N turns
-verbatim, and replace superseded tool outputs — a file read whose file was later
-edited, a directory listing from an hour ago — with a one-line placeholder.
-Expose it as a command as well, so you can compact deliberately before starting
-something long.
+**Compaction, later, as a command.** When it is needed, compacting **ends the
+session and starts a new one** rather than editing the current one. The old
+session stays a complete, immutable record; the new one opens with a handoff and
+a `parent` reference back. Everything else shuts down at the boundary — detached
+processes are killed and named in the handoff, so nothing is left running that
+no session owns.
 
-One correctness constraint governs the implementation. Compaction must operate
-on whole groups of an assistant turn plus all of its tool results. Dropping a
-`function_call` while keeping its `function_call_output`, or the reverse,
-produces an item list the Responses API will reject. Group first, then decide
-what to keep.
+That shape avoids the one hazard in-place compaction has. Pruning a live history
+must remove whole groups of an assistant turn plus all of its tool results, or
+the Responses item list comes back malformed with a `function_call` whose output
+is gone. A new session opens with plain text and no tool items, so there is
+nothing to pair and nothing to orphan. It also fits per-turn processes: the
+agent writes the summary, records the successor and exits, and the next turn
+starts from a different file. `kvit-coder compact -s my-feature` can be a
+standalone command that makes one model call, uses no tools, and touches nothing
+in the loop.
 
-**Honest 400 handling.** Today any HTTP 400 is assumed to be context overflow;
-the handler rewrites every trailing tool result to a placeholder and retries
-(`internal/agent/runner_llm.go:110`). With real token accounting, overflow is
-predicted rather than discovered, and a 400 can be surfaced as what it usually
-is — a malformed request — instead of corrupting the transcript.
+What the new session opens with is deliberately not settled here. A prose
+summary is the obvious answer and probably the weakest; what the next session
+needs is a handoff — the original goal, what is done, what is in flight, which
+files were touched, the current plan, the open questions. That deserves the same
+care as the system prompt and can be designed when the tool is.
+
+**What has to be true now so that nothing needs redesigning then**, all of it
+worth having anyway:
+
+- history is append-only, so a session is a record rather than a snapshot
+- `meta.json` has `parent` and `succeeded_by` fields from the start, unwritten
+  until compaction exists — adding fields later is a migration
+- session name resolution goes through `meta.json` even when the chain is one
+  long, so `-s my-feature` is already an indirection rather than a folder lookup
+
+With those three, compaction is a command that writes a file and sets a field.
+
+**Honest 400 handling** belongs here too. Today any HTTP 400 is assumed to be
+context overflow; the handler rewrites every trailing tool result to a
+placeholder and retries (`internal/agent/runner_llm.go:110`). With real token
+accounting, overflow is predicted rather than discovered, and a 400 can be
+surfaced as what it usually is — a malformed request — instead of corrupting the
+transcript.
 
 ## 13. Session persistence
 
-The session file is the only thing that survives an agent restart, so what it
-drops matters.
+A session is a durable record, not a runtime artefact. Months later you should
+be able to open one and read what happened, which the current format does not
+support: one flat file rewritten in full after every answer
+(`internal/session/manager.go:87`), holding marshalled `llm.Message` values with
+no timestamps.
 
-- **Persist `ReasoningBlocks` and `ToolCallItemIDs`.** Both are tagged
-  `json:"-"` today (`internal/llm/types.go:24,27`), so a resumed session replays
-  `function_call` items whose matching `reasoning` items are gone. Test whether
-  the endpoint tolerates this before deciding whether persisting them is
-  required or merely better.
-- **Save after every answer**, not only at the end of the process, and save on
-  cancellation. Ctrl-C currently discards the whole conversation because the
-  only signal handler cleans up the workspace lock and calls `os.Exit(130)`
-  (`internal/workspace/lock.go:55`).
-- **Record compaction as an event** so a reloaded session does not lose the
-  summary or silently re-expand.
+### Layout
+
+```
+~/.kvit-coder/sessions/<name>/
+    history.jsonl     the record, append-only, never rewritten
+    meta.json         created, updated, workspace, model, first prompt,
+                      summary, parent, succeeded_by
+    checkpoints/      shadow git repo, keyed on the session
+    proc/             pidfiles and logs for session-scoped processes
+    inbox/            drop files here
+    tmp/              spilled tool output
+```
+
+`history.jsonl`, `meta.json` and `checkpoints/` are the record and stay for as
+long as the session does. `inbox/`, `proc/` and `tmp/` are runtime and are the
+only parts safe to clean. Existing flat `<name>.jsonl` files migrate by becoming
+the `history.jsonl` of a folder with the same name.
+
+Keying the checkpoint repository on the session rather than on
+`time.Now().UnixNano()`, and leaving it in place rather than deleting it at
+process exit, is what makes a months-old session answerable about what actually
+changed rather than only about what was said.
+
+### The record
+
+One timestamped event per line, appended when it happens: user messages,
+assistant messages, each tool call and result with its duration, notices,
+interrupts, and the settings in force. Appending as it goes means a crash costs
+one message instead of a turn, and it is what makes `tail -f` a working way to
+watch a headless run.
+
+Two things the current format drops, for different reasons:
+
+- **`ReasoningContent`** is already persisted when it survives, and whether it
+  survives is the `merge_thinking` experiment: on a turn with tool calls it is
+  either folded into `Content` or discarded (`internal/llm/middleware.go:57`).
+  Keep that switch — it is the point of the experiment — and record which
+  setting was in force for the turn, so a session opened next spring answers
+  "why is there no reasoning here" with "because it was configured off" rather
+  than leaving you to guess.
+- **`ReasoningBlocks` and `ToolCallItemIDs`** are `json:"-"`, and for the record
+  that costs nothing: the blocks are encrypted by the provider and unreadable by
+  anyone in six months. What it may cost is resume correctness, because a
+  reloaded session replays `function_call` items whose `reasoning` items are
+  gone. That is independent of the experiment — it bites even when reasoning is
+  being replayed — and section 17 keeps it as the question to answer first.
+
+### Reading one back
+
+`meta.json` is what makes a listing useful at a distance: created and updated
+times, workspace, model, the first prompt, and a one-line summary. A `session
+show` command renders `history.jsonl` as a transcript; the raw file stays
+readable on its own, which is the property worth protecting when choosing how
+much structure to put in each line.
 
 ## 14. The system prompt
 
-The generated prompt is currently a role line, a capability list, a four-step
-workflow, one editing example, three guidelines, and the tool documentation
-(`internal/prompt/prompt.go:201`). For a strong model this is the cheapest lever
-available and it needs three additions:
+### What it costs today
+
+Generated from the current config — Read, Edit, Search, Shell, Write — the
+system prompt is 5,593 characters, roughly 1,400 tokens, plus about 500 tokens
+of tool schemas and descriptions in the request itself. Turning on Plan and
+Checkpoint takes it to 6,661 characters, roughly 1,665 tokens. Against a 1M
+window that is under two tenths of one percent, and it is the cached prefix, so
+once `KVIT_RUN_ID` is pinned (stage 1) it costs almost nothing per request after
+the first.
+
+Trimming it is therefore not a context saving, and should not be sold as one.
+The reason to rewrite it is that its content is *instructions*, and a capable
+model follows instructions — including the ones written for a model that could
+not count lines.
+
+### What is in there for a weaker model
+
+The generated prompt is a role line, a capability list, a four-step workflow, one
+editing example, three guidelines, and the tool documentation
+(`internal/prompt/prompt.go:201`). Four things in it work against the target
+model:
+
+- **A fixed procedure.** `# WORKFLOW` numbers the steps: search, then read, then
+  edit, then run something to verify. A model that plans better than the
+  procedure is told to follow the procedure.
+- **A worked example, tuned to the edit mode.** `# EXAMPLE` spends twenty lines
+  on an invented Python file, ending in `VERIFY: check diff and after_edit ...
+  (no orphaned braces, missing closures, or structural issues)`. That is
+  line-mode anxiety, and it is generated per mode — so when config and prompt
+  drift, the example instructs the model to call `Edit.confirm` and
+  `Edit.cancel` that may not be registered.
+- **Rules restating the schema.** `new_text replaces lines start_line through
+  end_line EXACTLY`, `ALWAYS read the file before editing to get correct line
+  numbers` — the first is the schema, the second is false in searchreplace mode.
+- **Narration and non-rules.** `Briefly explain what you're doing when calling a
+  tool` shapes output style by accident; `Only use the tools listed below`
+  forbids something that is not possible.
+
+### The rule to write against
+
+**The schema is the API documentation. A prompt section carries only what the
+schema cannot express**: failure modes, invariants, and interactions between
+tools. Applying that to the current sections leaves a short list per tool —
+
+- `Read`: output stops at 150 lines or 24 KB, so a large file arrives in pieces
+  and the model should know it did.
+- `Edit`: the search text must match byte for byte; multiple matches return an
+  error rather than editing the first; an empty search creates a file.
+- `Shell`: the shell is stateless, so `cd` does not persist between calls;
+  output above the limit is written to a temp file whose path comes back in the
+  result.
+- `Search`: results degrade to `file:line:match` above 20 matches and spill to a
+  temp file above 100.
+
+Everything else — usage lines, parameter lists, examples, "always read before
+editing" — comes out.
+
+### What goes in its place
 
 - **An environment block**: operating system, shell, working directory, date,
-  git branch and short status, and a top-level directory listing. Regenerate it
-  per session, not per turn, so the prompt prefix stays stable for caching.
-- **Working guidance**: verify changes by running something, prefer the tools
-  over shell equivalents where both exist, say what was left undone.
+  git branch and short status, and a top-level directory listing. Generate it
+  per session rather than per turn, so the prefix stays stable for caching.
 - **The new mechanisms**: what a `<user-steering>` message means, that
-  background processes exist and how to watch one, what a process-event reminder
-  looks like when it arrives, and when to use `Question` — the guidance in
-  section 6 belongs here rather than in the tool description, because it is
+  background processes exist and how to park on one, what a process-event
+  reminder looks like when it arrives, and when to use `Question` — the guidance
+  in section 6 belongs here rather than in the tool description, because it is
   about judgement rather than syntax.
+- **Working guidance, kept short**: verify by running something, prefer a tool
+  over its shell equivalent where both exist, say what was left undone.
 
-Keep generation driven by the enabled tool set, as it is now. The prompt should
-still shrink when tools are disabled.
+Net size is roughly a wash: perhaps 600 tokens come out of the tool docs and the
+environment block puts a few hundred back. The point is what the model is being
+told, not how much.
+
+### How to do it without losing the weak-model version
+
+The template system already exists — `prompts.use_templates`, with templates
+embedded under `internal/prompt/prompts/` and overridable from disk. Have the
+profile from section 11 select the variant, so `weak` keeps the verbose prompts
+and stays benchmarkable while `strong` gets the short ones. Keep generation
+driven by the enabled tool set either way, so the prompt still shrinks when
+tools are disabled.
+
+Measure the trim with thinkbench rather than by reading it. A prompt that got
+shorter and scored worse is a prompt that was doing something.
 
 ## 15. What stays as it is
 
@@ -623,53 +904,61 @@ still shrink when tools are disabled.
 Each stage leaves a working program and is independently useful.
 
 **Stage 1 — fixes that stand alone (hours).** Persist the session name from the
-launcher so continuity works at all; pin `KVIT_RUN_ID` so the prompt cache
-survives; derive the temp and checkpoint directories from the session name; drop
-the duplicate `GetGenerationStats` calls and give the HTTP client a timeout;
-remove the stray `DEBUG:` line at `internal/tools/tempfile_manager.go:28`; fix
-the stale interrogation test. None of these depend on the redesign, and they are
-worth doing whether or not it proceeds.
+driver so continuity works at all; pin `KVIT_RUN_ID` so the prompt cache
+survives across turns; drop the duplicate `GetGenerationStats` calls and give
+the HTTP client a timeout; remove the stray `DEBUG:` line at
+`internal/tools/tempfile_manager.go:28`; fix the stale interrogation test. None
+of these depend on the redesign, and they are worth doing whether or not it
+proceeds.
 
-**Stage 2 — the inbox and steering.** Add the inbox with its bounded queue and
-`wake` flag, move the drain into the loop, pass `os.Stdin` to the child, add the
-reader goroutine and the tty guard. At the end of this stage the agent still
-exits after its answer; you can steer a multi-step turn but nothing more. This
-is the smallest change that proves the mechanism.
+**Stage 2 — the session directory (section 13).** Move the session from a flat
+file to a folder: append-only `history.jsonl`, `meta.json` with its `parent` and
+`succeeded_by` fields, the checkpoint repo keyed on the session, and `tmp/` and
+`proc/` in place of the process-scoped temp dir. Name resolution goes through
+`meta.json`. This is what makes per-turn processes lose nothing, and everything
+after it assumes the folder exists.
 
-**Stage 3 — the long-lived agent.** Make the agent block on the inbox after an
-answer instead of exiting, reset the iteration budget per user message, replace
-the lock's `os.Exit(130)` handler with abort-the-step semantics, save after
-every answer, and reduce the launcher to spawn-once-per-session. Checkpoints, approvals and MCP connections
-start persisting as a side effect.
+**Stage 3 — the inbox and steering.** Add the inbox with its bounded queue and
+message kinds, move the drain into the loop, pass `os.Stdin` to the agent, add
+the reader goroutine and the tty guard, and add `inbox/` with the `steer` client
+— headless runs need steering as much as interactive ones, and both producers
+land in the same queue.
 
-**Stage 4 — questions (section 6).** Add message kinds to the inbox, the
-`Question` tool, the three display states, the after-the-question ordering rule,
-and the no-tty fallback. Small, and it depends only on stage 2's inbox — the
-part that shows process events beside a pending question can wait for stage 5.
+**Stage 4 — abort semantics.** Replace the lock's `os.Exit(130)` with cancelling
+the iteration, writing down what stopped, and exiting cleanly. Report the
+iteration budget being reached rather than ending silently.
 
-**Stage 5 — background processes.** Registry, the `Shell.*` and `Observe.*`
-tools, the terminal tee, and the watcher poll after each tool batch. Idle
-wake-up falls out of the `wake` flag rather than needing its own design.
+**Stage 5 — questions (section 6).** The `Question` tool, the two display modes,
+the after-the-question ordering rule, and the `question_timeout` fallback for a
+run with no terminal.
 
-**Stage 6 — permissions (section 9).** Swap the regex blocklist for scopes
+**Stage 6 — background processes (section 7).** Split `Shell.run` from
+`Shell.start`, add the detached process registry under `proc/`, the reconcile
+pass at turn start, `Observe.wait` with its `poll`/`report` split, the terminal
+tee, and the registry poll after each tool batch.
+
+**Stage 7 — permissions (section 9).** Swap the regex blocklist for scopes
 derived from the bash syntax tree, add the three rule tiers and the four grant
-answers, and persist always-grants to config. Independent of everything above,
-so it can move earlier if the current blocklist starts costing you time. The
-existing shell tests give you a ready-made corpus: every command they assert on
-should reach the same verdict through the new path.
+answers, and persist always-grants to config and session grants to the session
+directory. Independent of everything above, so it can move earlier if the
+current blocklist starts costing you time. The existing shell tests give you a
+ready-made corpus: every command they assert on should reach the same verdict
+through the new path.
 
-**Stage 7 — `Batch` (section 10).** An afternoon, once the tool registry is
+**Stage 8 — `Batch` (section 10).** An afternoon, once the tool registry is
 otherwise settled.
 
-**Stage 8 — profiles and context.** Split `strong` and `weak`, measure with
-thinkbench, then add token accounting and compaction.
+**Stage 9 — profiles and accounting.** Split `strong` and `weak`, measure with
+thinkbench, then add token accounting and the context display. Compaction waits
+until the accounting says it is needed.
 
-**Stage 9 — the prompt.** Rewrite it once the mechanisms it must describe exist.
+**Stage 10 — the prompt (section 14).** Rewrite it once the mechanisms it must
+describe exist.
 
-Before stage 2, write a table-driven test that drives `Runner.Run` against a
+Before stage 3, write a table-driven test that drives `Runner.Run` against a
 scripted fake model client and asserts on the resulting message history. The
-loop is about to grow an inbox, a watcher poll, and an idle state, and there is
-currently no test that exercises it at all.
+loop is about to grow an inbox, a registry poll and new abort semantics, and
+there is currently no test that exercises it at all.
 
 ## 17. Open questions
 
@@ -684,14 +973,13 @@ currently no test that exercises it at all.
   write-down-what-stopped semantics.
 - **Should any process survive an abort?** The default is that none do. A dev
   server you restart on every interrupt may argue for `keep_on_interrupt`.
-- **What should `Observe.add` default its `wake` flag to?** Reporting every
-  change without waking is the conservative default, but an observer you set up
-  precisely because you want to be interrupted argues the other way. Use will
-  settle it; the flag makes either answer a one-line change.
-- **Does `Question` earn its place next to asking by stopping?** Once the agent
-  goes idle after an answer, ending a turn with a question already works. Build
-  the loop first, then judge whether the tool is adding anything beyond momentum
-  and machine-readable options.
+- **Does killing session-scoped processes on Ctrl-C bite?** It is what you
+  asked for, and an interrupt usually means the approach was wrong. If losing a
+  dev server on every interrupt turns out to be the common case rather than the
+  rare one, `keep_on_interrupt` on `Shell.start` is the narrow fix.
+- **Does `Question` earn its place next to asking by ending the turn?** A model
+  can already ask by answering. Build the rest first, then judge whether keeping
+  the turn's plan alive is worth a tool.
 - **How much does `Batch` actually get used?** A model that plans well will
   batch; one that works step by step will not, whatever the prompt says. If it
   goes unused, that is evidence for appendix A.2 rather than against batching.
@@ -699,9 +987,9 @@ currently no test that exercises it at all.
   is large enough that dropping stale tool outputs is sufficient and
   summarization is unnecessary. Accounting comes first; compaction may turn out
   to be a smaller job than section 12 implies.
-- **Should the launcher survive at all?** Once the agent is long-lived, the
-  launcher does three things: pick a session, pin an environment variable, and
-  restart on crash. That may be a shell script.
+- **Should the driver be a Go binary at all?** It picks a session, pins an
+  environment variable, spawns per turn and reads a line. That may be a shell
+  script, with `kvit-coder-ui` kept only for the input editing it already does.
 
 ## Appendix A — deferred ideas from maki
 
@@ -792,6 +1080,6 @@ lines and gives continuity that survives both compaction and a new session.
   payoff.
 - **A high-frame-rate TUI.** maki runs ratatui at 60 FPS with SIMD-accelerated
   animation. That belongs to a program whose interactive process owns the agent;
-  the launcher here is deliberately thin.
+  the driver here is deliberately thin.
 - **Streaming.** Worth noting only because maki's `streaming.rs` sits beside
   `compaction.rs` in the same module. It is not a requirement here.
