@@ -140,6 +140,12 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		debug(fmt.Sprintf("Enabled tool: %s", shellAdvancedTool.Name()))
 	}
 
+	if cfg.Tools.Question.Enabled {
+		questionTool := NewQuestionTool(cfg, toolCtx)
+		registry.Enable(questionTool)
+		debug(fmt.Sprintf("Enabled tool: %s", questionTool.Name()))
+	}
+
 	// Tasks.* tools - mutually exclusive with Plan.* and Checkpoint.* tools
 	if cfg.Tools.Tasks.Enabled && sc.ContextMgr != nil {
 		tasksStartTool := NewTasksStartTool(sc.ContextMgr)

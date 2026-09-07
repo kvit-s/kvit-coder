@@ -373,7 +373,7 @@ func main() {
 	// once per iteration.
 	steering := inbox.New(sess.InboxDir())
 	steering.Log = func(msg string) { writer.Warn(msg) }
-	startStdinReader(steering, writer)
+	interactive := startStdinReader(steering, writer)
 
 	// Initialize temp file manager for shell command outputs. Its files are not
 	// removed at exit: the model may have been given a path to read next turn.
@@ -443,6 +443,11 @@ func main() {
 
 	// Create shared tool context for this session
 	toolCtx := tools.NewToolContext()
+	// Question reads its answer from the same inbox the loop drains, so there
+	// is one input path rather than two contending for stdin.
+	toolCtx.SetInbox(steering)
+	// A tool that waits for a person must agree with whether one is there.
+	toolCtx.SetInteractive(interactive)
 
 	// Setup tool registry using the new setup function
 	registry := tools.SetupRegistry(tools.SetupConfig{
@@ -596,13 +601,13 @@ func main() {
 }
 
 // startStdinReader queues each line typed at the terminal for the running
-// turn. It starts only when stdin is a terminal: a piped run and the benchmark
-// harness have a stdin that is not a person, and reading it would consume
-// input meant for something else. The goroutine ends with the process.
-func startStdinReader(steering *inbox.Inbox, writer *ui.Writer) {
-	info, err := os.Stdin.Stat()
-	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
-		return
+// turn, and reports whether it started. It starts only when stdin is a
+// terminal: a piped run and the benchmark harness have a stdin that is not a
+// person, and reading it would consume input meant for something else. The
+// goroutine ends with the process.
+func startStdinReader(steering *inbox.Inbox, writer *ui.Writer) bool {
+	if !stdinIsATerminal() {
+		return false
 	}
 	go func() {
 		scanner := bufio.NewScanner(os.Stdin)
@@ -616,6 +621,22 @@ func startStdinReader(steering *inbox.Inbox, writer *ui.Writer) {
 			writer.Info("→ queued")
 		}
 	}()
+	return true
+}
+
+// stdinIsATerminal reports whether there is a person on the other end of
+// stdin. /dev/null is a character device like a terminal is, and a run
+// redirected from it — which is how a script or a CI job starts one — has
+// nobody to type an answer.
+func stdinIsATerminal() bool {
+	info, err := os.Stdin.Stat()
+	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	if devNull, err := os.Stat(os.DevNull); err == nil && os.SameFile(info, devNull) {
+		return false
+	}
+	return true
 }
 
 // installInterruptHandler makes ctrl-c end the turn rather than end the

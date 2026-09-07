@@ -155,6 +155,32 @@ Without `-s` it delivers to the one session that has a turn running, and says
 so if there is none or more than one. The message arrives as a user message
 tagged `<user-steering>` at the model's next iteration.
 
+### Questions
+
+With `tools.question.enabled`, the model can ask you something and wait for the
+answer, which comes back as the tool's result:
+
+```
+── retry strategy ──
+Reuse the existing retry wrapper, or write a new one?
+  1) Reuse internal/http.Retry  — same backoff, already tested
+  2) New wrapper in this package  — no shared state
+  [1-2, or type]
+```
+
+A bare number chooses, `1,3` chooses several, and anything else comes back as
+free text — so answering and steering are the same keystrokes and you never
+have to decide which you are doing before you type. A line typed before the
+question appeared is treated as steering rather than silently taken as the
+answer. Ctrl-C dismisses the question and ends the turn; the model is refused
+if it asks the same question again.
+
+With a terminal the call waits as long as it takes. With no terminal it waits
+`tools.question.timeout` seconds for an answer dropped in the session inbox
+(`kvit-coder steer` writes there), then tells the model to proceed on its own
+judgement and say what it assumed. The default of zero falls back at once, so a
+benchmark or scripted run never hangs on a question.
+
 ## Agent File
 
 Append custom instructions to the system prompt without modifying config:
@@ -309,6 +335,8 @@ Each tool group has `enabled: true/false` plus tool-specific options:
 - **`edit.read_before_edit_msgs`** — Require a read within N messages before editing
 - **`shell.allowed_commands`** / **`shell.disallowed_commands`** — Command allow/blocklists
 - **`shell.default_timeout`** / **`shell.max_timeout`** — Seconds a command gets, and the ceiling a call may ask for (default 120 and 600)
+- **`question.enabled`** — Let the model ask you a question and wait for the answer
+- **`question.timeout`** — Seconds a run with no terminal waits for an answer (default 0: fall back at once)
 - **`checkpoint.max_turns`** — Max checkpoints before rotating (default: 100)
 - **`tasks.collapse`** — Enable context collapsing (stage 2)
 - **`tasks.plan`** — Enable plan-based task tools (stage 3)

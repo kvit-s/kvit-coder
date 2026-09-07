@@ -82,6 +82,13 @@ tools:
     default_timeout: 120        # seconds a command gets when the call names none
     max_timeout: 600            # ceiling on what a call may ask for
 
+  question:
+    enabled: true
+    # Seconds a run with no terminal waits for an answer dropped in the session
+    # inbox. 0 falls back at once, so a scripted or benchmark run never hangs.
+    # With a terminal the tool waits as long as it takes.
+    timeout: 0
+
   plan:
     enabled: false              # group toggle for all plan.* tools
     injection_mode: "none"      # "none" or "every_step" - inject plan state after tool calls

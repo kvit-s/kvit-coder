@@ -396,6 +396,7 @@ type ToolsConfig struct {
 	RestoreFile RestoreFileToolConfig `yaml:"restore_file"`
 	Search      SearchToolConfig      `yaml:"search"`
 	Shell       ShellToolConfig       `yaml:"shell"`
+	Question    QuestionToolConfig    `yaml:"question"`
 	Plan        PlanToolsConfig       `yaml:"plan"`
 	Checkpoint  CheckpointToolsConfig `yaml:"checkpoint"`
 	Tasks       TasksToolsConfig      `yaml:"tasks"`
@@ -456,6 +457,17 @@ type SearchToolConfig struct {
 	MaxSnippetResults int  `yaml:"max_snippet_results"` // Show full snippets up to this many (default: 20)
 	MaxCompactResults int  `yaml:"max_compact_results"` // Show file:line:char up to this many (default: 100)
 	// Above max_compact_results: save to temp file, show truncated
+}
+
+// QuestionToolConfig configures the Question tool, which asks the person
+// running kvit-coder something and waits for the answer.
+type QuestionToolConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// Timeout is how long a run with no terminal waits for an answer to appear
+	// in the session inbox, in seconds. Zero, the default, falls back at once,
+	// so a benchmark or scripted run never hangs on a question. A supervised
+	// headless run sets it to a few minutes.
+	Timeout int `yaml:"timeout"`
 }
 
 // ShellToolConfig configures the shell tool
@@ -731,6 +743,8 @@ func (c *Config) IsToolEnabled(toolName string) bool {
 		return c.Tools.Search.Enabled
 	case "shell":
 		return c.Tools.Shell.Enabled
+	case "question", "Question":
+		return c.Tools.Question.Enabled
 	case "plan.write", "Plan.write":
 		// Default full-list rewrite tool; disabled when Tasks tools are enabled
 		return c.Tools.Plan.Enabled && !c.Tools.Tasks.Enabled && c.Tools.Plan.GetPlanMode() == "write"

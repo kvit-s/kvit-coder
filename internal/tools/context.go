@@ -1,6 +1,11 @@
 package tools
 
-import "sync"
+import (
+	"strings"
+	"sync"
+
+	"github.com/kvit-s/kvit-coder/internal/inbox"
+)
 
 // ToolContext holds shared mutable state for all tools in a session.
 // This replaces the global variables (globalReadTracker, globalPendingEdit, globalPendingWrite)
@@ -13,6 +18,23 @@ type ToolContext struct {
 
 	pendingWriteMu sync.Mutex
 	pendingWrite   *pendingWrite
+
+	// inbox is where a tool that waits for a person reads the answer. It is
+	// the same inbox the loop drains between iterations, so there is one input
+	// path rather than two contending for stdin.
+	inboxMu sync.Mutex
+	inbox   *inbox.Inbox
+
+	// dismissedQuestions remembers questions the person ended the turn on
+	// rather than answering, so the model cannot ask the same one again.
+	dismissedMu       sync.Mutex
+	dismissedQuestion map[string]bool
+
+	// interactive says whether someone is at the terminal and able to answer.
+	// It is set once, by whatever started reading stdin, so a tool that waits
+	// for a person and the reader that would feed it never disagree.
+	interactiveMu sync.Mutex
+	interactive   bool
 }
 
 // NewToolContext creates a new ToolContext with initialized state.
@@ -20,6 +42,69 @@ func NewToolContext() *ToolContext {
 	return &ToolContext{
 		ReadTracker: &FileReadTracker{maxEntries: 10},
 	}
+}
+
+// SetInteractive records whether someone is at the terminal to answer a tool
+// that asks. It is set by whatever started reading stdin.
+func (tc *ToolContext) SetInteractive(interactive bool) {
+	tc.interactiveMu.Lock()
+	defer tc.interactiveMu.Unlock()
+	tc.interactive = interactive
+}
+
+// Interactive reports whether a tool that waits for a person can expect one.
+func (tc *ToolContext) Interactive() bool {
+	if tc == nil {
+		return false
+	}
+	tc.interactiveMu.Lock()
+	defer tc.interactiveMu.Unlock()
+	return tc.interactive
+}
+
+// SetInbox gives tools access to the turn's inbox.
+func (tc *ToolContext) SetInbox(box *inbox.Inbox) {
+	tc.inboxMu.Lock()
+	defer tc.inboxMu.Unlock()
+	tc.inbox = box
+}
+
+// Inbox returns the turn's inbox, or nil when there is none.
+func (tc *ToolContext) Inbox() *inbox.Inbox {
+	if tc == nil {
+		return nil
+	}
+	tc.inboxMu.Lock()
+	defer tc.inboxMu.Unlock()
+	return tc.inbox
+}
+
+// RecordDismissedQuestion notes that a question was put and not answered.
+func (tc *ToolContext) RecordDismissedQuestion(question string) {
+	if tc == nil {
+		return
+	}
+	tc.dismissedMu.Lock()
+	defer tc.dismissedMu.Unlock()
+	if tc.dismissedQuestion == nil {
+		tc.dismissedQuestion = map[string]bool{}
+	}
+	tc.dismissedQuestion[normalizeQuestion(question)] = true
+}
+
+// WasQuestionDismissed reports whether this exact question was already put and
+// dismissed.
+func (tc *ToolContext) WasQuestionDismissed(question string) bool {
+	if tc == nil {
+		return false
+	}
+	tc.dismissedMu.Lock()
+	defer tc.dismissedMu.Unlock()
+	return tc.dismissedQuestion[normalizeQuestion(question)]
+}
+
+func normalizeQuestion(q string) string {
+	return strings.ToLower(strings.Join(strings.Fields(q), " "))
 }
 
 // SetPendingEdit stores a pending edit operation.

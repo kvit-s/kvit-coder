@@ -35,6 +35,7 @@ func (r *Runner) executeTools(
 	}
 
 	state.totalToolCalls += len(toolCalls)
+	toolCalls = questionsLast(r.registry, toolCalls)
 
 	for idx, tc := range toolCalls {
 		// Check for context cancellation
@@ -447,4 +448,29 @@ func (r *Runner) executeToolWithTimeout(
 	}
 
 	return
+}
+
+// questionsLast moves any Question call to the end of the batch, keeping the
+// order of everything else. Asking blocks the turn, so a batch of
+// "Shell.start the build" plus "Question" should start the build and then ask
+// while it runs; question-first is the only arrangement in which asking holds
+// up work that could have been going on meanwhile.
+func questionsLast(registry *tools.Registry, calls []llm.ToolCall) []llm.ToolCall {
+	var questions []llm.ToolCall
+	for _, tc := range calls {
+		if registry.InternalName(tc.Function.Name) == "Question" {
+			questions = append(questions, tc)
+		}
+	}
+	if len(questions) == 0 || len(questions) == len(calls) {
+		return calls
+	}
+
+	ordered := make([]llm.ToolCall, 0, len(calls))
+	for _, tc := range calls {
+		if registry.InternalName(tc.Function.Name) != "Question" {
+			ordered = append(ordered, tc)
+		}
+	}
+	return append(ordered, questions...)
 }

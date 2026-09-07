@@ -539,3 +539,60 @@ func TestCancellationLeavesACompleteRecord(t *testing.T) {
 		t.Errorf("the cancelled result is for call %q, want c2", never.ToolCallID)
 	}
 }
+
+// TestQuestionRunsLastInABatch: asking blocks the turn, so a batch that both
+// starts work and asks about it must start the work first. Anything else is
+// the one arrangement where asking holds up work that could have been running.
+func TestQuestionRunsLastInABatch(t *testing.T) {
+	var order []string
+
+	client := newFakeClient(
+		calls(
+			toolCall("c1", "Question", map[string]any{
+				"questions": []map[string]any{{"question": "which one?"}},
+			}),
+			toolCall("c2", "echo", map[string]string{"arg": "a"}),
+			toolCall("c3", "echo", map[string]string{"arg": "b"}),
+		),
+		answer("done"),
+	)
+	record := func(name string) func(context.Context, json.RawMessage) (any, error) {
+		return func(context.Context, json.RawMessage) (any, error) {
+			order = append(order, name)
+			return map[string]any{"ok": true}, nil
+		}
+	}
+	runner, _ := newTestRunner(t, testConfig(), client,
+		&scriptedTool{name: "Question", call: record("Question")},
+		&scriptedTool{name: "echo", call: record("echo")},
+	)
+
+	res, err := runner.Run(context.Background(), RunConfig{Messages: userStart("go")})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	want := []string{"echo", "echo", "Question"}
+	if len(order) != len(want) {
+		t.Fatalf("ran %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("ran %v, want %v", order, want)
+		}
+	}
+
+	// Reordering execution must not reorder the results: every tool call still
+	// gets its result, and each is tied to its own call ID.
+	ids := map[string]bool{}
+	for _, m := range res.FinalMessages {
+		if m.Role == llm.RoleTool {
+			ids[m.ToolCallID] = true
+		}
+	}
+	for _, id := range []string{"c1", "c2", "c3"} {
+		if !ids[id] {
+			t.Errorf("tool call %s has no result", id)
+		}
+	}
+}
