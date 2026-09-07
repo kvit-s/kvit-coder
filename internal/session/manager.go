@@ -1,24 +1,23 @@
-// Package session provides session management for persisting conversation history.
+// Package session stores a conversation and everything else that outlives one
+// turn: the checkpoint repository, spilled tool output, the steering inbox and
+// the record of background processes. See session.go for the directory layout.
 package session
 
 import (
-	"bufio"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/llm"
 )
 
-// Manager handles session storage and retrieval.
+// Manager owns the directory sessions live in.
 type Manager struct {
 	baseDir string // ~/.kvit-coder/sessions/
 }
@@ -45,90 +44,27 @@ func NewManager() (*Manager, error) {
 	return &Manager{baseDir: baseDir}, nil
 }
 
-// SessionExists checks if a session with the given name exists.
+// BaseDir is the directory sessions live in.
+func (m *Manager) BaseDir() string { return m.baseDir }
+
+// SessionExists reports whether the named session has any history, either as a
+// session directory or as a flat file from before sessions were directories.
 func (m *Manager) SessionExists(name string) bool {
-	path := m.sessionPath(name)
-	_, err := os.Stat(path)
-	return err == nil
+	if _, err := os.Stat(filepath.Join(m.baseDir, name, historyFile)); err == nil {
+		return true
+	}
+	fi, err := os.Stat(filepath.Join(m.baseDir, name+".jsonl"))
+	return err == nil && fi.Mode().IsRegular()
 }
 
-// LoadSession loads messages from a session file.
+// LoadSession returns a session's conversation without opening or migrating
+// it, for listing and display.
 func (m *Manager) LoadSession(name string) ([]llm.Message, error) {
-	path := m.sessionPath(name)
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open session file: %w", err)
+	dirHistory := filepath.Join(m.baseDir, name, historyFile)
+	if _, err := os.Stat(dirHistory); err == nil {
+		return readHistory(dirHistory)
 	}
-	defer file.Close()
-
-	var messages []llm.Message
-	scanner := bufio.NewScanner(file)
-	// Increase buffer size for large messages
-	buf := make([]byte, 0, 64*1024)
-	scanner.Buffer(buf, 10*1024*1024) // 10MB max
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-
-		var msg llm.Message
-		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			return nil, fmt.Errorf("failed to parse message: %w", err)
-		}
-		messages = append(messages, msg)
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("failed to read session file: %w", err)
-	}
-
-	return messages, nil
-}
-
-// SaveSession saves messages to a session file, replacing any existing content.
-func (m *Manager) SaveSession(name string, messages []llm.Message) error {
-	path := m.sessionPath(name)
-	file, err := os.Create(path)
-	if err != nil {
-		return fmt.Errorf("failed to create session file: %w", err)
-	}
-	defer file.Close()
-
-	for _, msg := range messages {
-		data, err := json.Marshal(msg)
-		if err != nil {
-			return fmt.Errorf("failed to marshal message: %w", err)
-		}
-		if _, err := file.Write(append(data, '\n')); err != nil {
-			return fmt.Errorf("failed to write message: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// AppendToSession appends messages to an existing session file.
-func (m *Manager) AppendToSession(name string, messages []llm.Message) error {
-	path := m.sessionPath(name)
-	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("failed to open session file: %w", err)
-	}
-	defer file.Close()
-
-	for _, msg := range messages {
-		data, err := json.Marshal(msg)
-		if err != nil {
-			return fmt.Errorf("failed to marshal message: %w", err)
-		}
-		if _, err := file.Write(append(data, '\n')); err != nil {
-			return fmt.Errorf("failed to write message: %w", err)
-		}
-	}
-
-	return nil
+	return readHistory(filepath.Join(m.baseDir, name+".jsonl"))
 }
 
 // RunIDVar is the environment variable the LLM client's ${KVIT_RUN_ID} header
@@ -165,7 +101,8 @@ func (m *Manager) GenerateSessionName() string {
 	return fmt.Sprintf("%s-%s", time.Now().Format("2006-01-02"), string(suffix))
 }
 
-// ListSessions returns a list of all sessions with metadata.
+// ListSessions returns a list of all sessions with metadata, newest first.
+// Sessions not yet migrated out of the flat-file layout are listed too.
 func (m *Manager) ListSessions() ([]SessionInfo, error) {
 	entries, err := os.ReadDir(m.baseDir)
 	if err != nil {
@@ -176,21 +113,33 @@ func (m *Manager) ListSessions() ([]SessionInfo, error) {
 	}
 
 	var sessions []SessionInfo
+	seen := map[string]bool{}
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+		var name, historyPath string
+		switch {
+		case entry.IsDir():
+			name = entry.Name()
+			historyPath = filepath.Join(m.baseDir, name, historyFile)
+			if _, err := os.Stat(historyPath); err != nil {
+				continue
+			}
+		case strings.HasSuffix(entry.Name(), ".jsonl"):
+			name = strings.TrimSuffix(entry.Name(), ".jsonl")
+			historyPath = filepath.Join(m.baseDir, entry.Name())
+		default:
 			continue
 		}
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
 
-		name := strings.TrimSuffix(entry.Name(), ".jsonl")
-		info, err := entry.Info()
+		info, err := os.Stat(historyPath)
 		if err != nil {
 			continue
 		}
-
-		// Count messages
-		messages, err := m.LoadSession(name)
 		msgCount := 0
-		if err == nil {
+		if messages, err := readHistory(historyPath); err == nil {
 			msgCount = len(messages)
 		}
 
@@ -209,12 +158,23 @@ func (m *Manager) ListSessions() ([]SessionInfo, error) {
 	return sessions, nil
 }
 
-// DeleteSession removes a session file.
+// DeleteSession removes a session and everything it holds: history, metadata,
+// checkpoints, and the temp files whose cleanup now happens here rather than
+// at process exit.
 func (m *Manager) DeleteSession(name string) error {
-	path := m.sessionPath(name)
-	if err := os.Remove(path); err != nil {
+	if !m.SessionExists(name) {
+		return fmt.Errorf("session %q not found", name)
+	}
+
+	if err := os.RemoveAll(filepath.Join(m.baseDir, name)); err != nil {
 		return fmt.Errorf("failed to delete session: %w", err)
 	}
+
+	flat := filepath.Join(m.baseDir, name+".jsonl")
+	if err := os.Remove(flat); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete session: %w", err)
+	}
+	_ = os.Remove(flat + ".migrated")
 	return nil
 }
 
@@ -257,43 +217,8 @@ func (m *Manager) ShowSession(name string) (string, error) {
 	return sb.String(), nil
 }
 
-// AcquireLock attempts to acquire an exclusive lock on a session.
-// Returns a cleanup function that releases the lock, or an error if lock fails.
+// AcquireLock takes an exclusive lock on a session by name. The lock file
+// lives inside the session directory, alongside the history it protects.
 func (m *Manager) AcquireLock(name string) (func(), error) {
-	lockPath := m.lockPath(name)
-
-	// Create lock file
-	lockFile, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create lock file: %w", err)
-	}
-
-	// Try to acquire exclusive lock (non-blocking)
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		lockFile.Close()
-		return nil, fmt.Errorf("session %q is already in use by another process", name)
-	}
-
-	// Write PID to lock file for debugging
-	_ = lockFile.Truncate(0)
-	_, _ = lockFile.Seek(0, 0)
-	fmt.Fprintf(lockFile, "%d\n", os.Getpid())
-
-	cleanup := func() {
-		_ = syscall.Flock(int(lockFile.Fd()), syscall.LOCK_UN)
-		lockFile.Close()
-		os.Remove(lockPath)
-	}
-
-	return cleanup, nil
-}
-
-// sessionPath returns the path to a session file.
-func (m *Manager) sessionPath(name string) string {
-	return filepath.Join(m.baseDir, name+".jsonl")
-}
-
-// lockPath returns the path to a session lock file.
-func (m *Manager) lockPath(name string) string {
-	return filepath.Join(m.baseDir, "."+name+".lock")
+	return acquireLockAt(filepath.Join(m.baseDir, name, lockFile), name)
 }

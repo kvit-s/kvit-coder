@@ -14,38 +14,39 @@ import (
 	"github.com/kvit-s/kvit-coder/internal/ui"
 )
 
-// RunExec runs in exec mode with a single prompt
-func RunExec(runner *agent.Runner, writer *ui.Writer, cfg *config.Config, systemPrompt string, promptText string, quietMode bool, sessionName string, sessionMgr *session.Manager, projectInstructions *ProjectInstructions) {
+// RunExec runs one turn: load the session's conversation, put the prompt to
+// the model, and append what the turn produced to the session's history.
+//
+// History is appended to rather than rewritten. Messages are written when the
+// turn ends because the loop discards history mid-turn when it backtracks, and
+// an append-only file cannot take that back; the prompt itself is written up
+// front, so a turn that dies leaves a record of what it was asked.
+func RunExec(runner *agent.Runner, writer *ui.Writer, cfg *config.Config, systemPrompt string, promptText string, quietMode bool, sess *session.Session, projectInstructions *ProjectInstructions) {
 	messages := []llm.Message{
 		{Role: llm.RoleSystem, Content: systemPrompt},
 	}
 
-	// Determine session name (auto-generate if exec mode without -s)
+	sessionName := ""
 	isNewSession := true
-	if sessionMgr != nil {
-		if sessionName == "" {
-			// Auto-generate session name for exec mode
-			sessionName = sessionMgr.GenerateSessionName()
-		} else if sessionMgr.SessionExists(sessionName) {
-			// Load existing session
-			sessionMessages, err := sessionMgr.LoadSession(sessionName)
-			if err != nil {
-				writer.Error(fmt.Sprintf("Failed to load session: %v", err))
-			} else {
-				// Filter out system messages and prepend fresh system prompt
-				for _, msg := range sessionMessages {
-					if msg.Role != llm.RoleSystem {
-						messages = append(messages, msg)
-					}
-				}
-				isNewSession = false
-				if !quietMode {
-					fmt.Fprintf(os.Stderr, "Continuing session: %s (%d messages)\n\n", sessionName, len(sessionMessages))
-				}
+	if sess != nil {
+		sessionName = sess.Name()
+		previous, err := sess.Load()
+		if err != nil {
+			writer.Error(fmt.Sprintf("Failed to load session: %v", err))
+		}
+		// The system prompt is regenerated each turn (tools and config may have
+		// changed), so any system message in the record is dropped.
+		for _, msg := range previous {
+			if msg.Role != llm.RoleSystem {
+				messages = append(messages, msg)
 			}
-		} else {
-			if !quietMode {
+		}
+		isNewSession = len(messages) == 1
+		if !quietMode {
+			if isNewSession {
 				fmt.Fprintf(os.Stderr, "Starting new session: %s\n\n", sessionName)
+			} else {
+				fmt.Fprintf(os.Stderr, "Continuing session: %s (%d messages)\n\n", sessionName, len(previous))
 			}
 		}
 	}
@@ -68,6 +69,26 @@ func RunExec(runner *agent.Runner, writer *ui.Writer, cfg *config.Config, system
 	}
 	messages = append(messages, userMsg)
 
+	// Everything up to here is either already in the record or written now.
+	persistedUpTo := len(messages)
+	if sess != nil {
+		meta := sess.Meta()
+		meta.Workspace = cfg.Workspace.Root
+		meta.Model = cfg.LLM.Model
+		if meta.FirstPrompt == "" {
+			meta.FirstPrompt = promptText
+		}
+		if err := sess.SaveMeta(); err != nil {
+			writer.Debug(fmt.Sprintf("Failed to write session metadata: %v", err))
+		}
+		if err := sess.Settings(cfg.LLM.Model, cfg.LLM.MergeThinking); err != nil {
+			writer.Debug(fmt.Sprintf("Failed to record session settings: %v", err))
+		}
+		if err := sess.AppendMessages(stripProjectInstructions([]llm.Message{userMsg}, projectInstructions)); err != nil {
+			writer.Error(fmt.Sprintf("Failed to record prompt: %v", err))
+		}
+	}
+
 	// Run agent loop
 	result, err := runner.Run(context.Background(), agent.RunConfig{
 		Messages:     messages,
@@ -79,11 +100,22 @@ func RunExec(runner *agent.Runner, writer *ui.Writer, cfg *config.Config, system
 		return
 	}
 
-	// Save session
-	if sessionMgr != nil && sessionName != "" {
-		sessionMessages := stripProjectInstructions(result.FinalMessages, projectInstructions)
-		if err := sessionMgr.SaveSession(sessionName, sessionMessages); err != nil {
+	// Append what this turn added. Backtracking can leave the history shorter
+	// than it was when the turn started, so clamp rather than reslice blindly.
+	if sess != nil {
+		from := min(persistedUpTo, len(result.FinalMessages))
+		produced := stripProjectInstructions(result.FinalMessages[from:], projectInstructions)
+		if err := sess.AppendMessages(produced); err != nil {
 			writer.Error(fmt.Sprintf("Failed to save session: %v", err))
+		}
+		if result.BudgetExhausted {
+			_ = sess.Notice("iteration budget reached without a final answer")
+		}
+		if result.Cancelled {
+			_ = sess.Notice("cancelled by user")
+		}
+		if result.TimedOut {
+			_ = sess.Notice("time budget for this run expired")
 		}
 	}
 
@@ -106,7 +138,7 @@ func RunExec(runner *agent.Runner, writer *ui.Writer, cfg *config.Config, system
 	}
 
 	// Print session info (skip in JSON mode - it's included in the JSON output)
-	if !writer.IsJSONMode() && sessionMgr != nil && sessionName != "" {
+	if !writer.IsJSONMode() && sessionName != "" {
 		if quietMode {
 			// In quiet mode, print minimal session info to stderr
 			if isNewSession {

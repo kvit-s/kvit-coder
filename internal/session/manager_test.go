@@ -47,11 +47,8 @@ func TestSessionExists(t *testing.T) {
 		t.Error("Expected SessionExists to return false for non-existent session")
 	}
 
-	// Create a session file
-	sessionPath := filepath.Join(mgr.baseDir, "test-session.jsonl")
-	if err := os.WriteFile(sessionPath, []byte("{}"), 0644); err != nil {
-		t.Fatalf("Failed to create test session file: %v", err)
-	}
+	// Create a session
+	writeSession(t, mgr, "test-session", []llm.Message{{Role: llm.RoleUser, Content: "hi"}})
 
 	// Existing session
 	if !mgr.SessionExists("test-session") {
@@ -69,9 +66,7 @@ func TestSaveAndLoadSession(t *testing.T) {
 	}
 
 	// Save session
-	if err := mgr.SaveSession("test-save", messages); err != nil {
-		t.Fatalf("Failed to save session: %v", err)
-	}
+	writeSession(t, mgr, "test-save", messages)
 
 	// Verify file exists
 	if !mgr.SessionExists("test-save") {
@@ -110,10 +105,7 @@ func TestSaveSessionWithToolCalls(t *testing.T) {
 				{
 					ID:   "call_123",
 					Type: "function",
-					Function: struct {
-						Name      string `json:"name"`
-						Arguments string `json:"arguments"`
-					}{
+					Function: llm.ToolCallFunction{
 						Name:      "shell",
 						Arguments: `{"command": "ls -la"}`,
 					},
@@ -129,9 +121,7 @@ func TestSaveSessionWithToolCalls(t *testing.T) {
 	}
 
 	// Save and reload
-	if err := mgr.SaveSession("test-tools", messages); err != nil {
-		t.Fatalf("Failed to save session: %v", err)
-	}
+	writeSession(t, mgr, "test-tools", messages)
 
 	loaded, err := mgr.LoadSession("test-tools")
 	if err != nil {
@@ -159,20 +149,19 @@ func TestSaveSessionWithToolCalls(t *testing.T) {
 func TestAppendToSession(t *testing.T) {
 	mgr := setupTestManager(t)
 
-	// Initial messages
-	initial := []llm.Message{
+	writeSession(t, mgr, "test-append", []llm.Message{
 		{Role: llm.RoleUser, Content: "First message"},
-	}
-	if err := mgr.SaveSession("test-append", initial); err != nil {
-		t.Fatalf("Failed to save initial session: %v", err)
-	}
+	})
 
-	// Append more messages
-	additional := []llm.Message{
+	// A second process opens the same session and appends to it.
+	sess, err := mgr.Open("test-append")
+	if err != nil {
+		t.Fatalf("Failed to open session: %v", err)
+	}
+	if err := sess.AppendMessages([]llm.Message{
 		{Role: llm.RoleAssistant, Content: "Response"},
 		{Role: llm.RoleUser, Content: "Second message"},
-	}
-	if err := mgr.AppendToSession("test-append", additional); err != nil {
+	}); err != nil {
 		t.Fatalf("Failed to append to session: %v", err)
 	}
 
@@ -230,9 +219,9 @@ func TestListSessions(t *testing.T) {
 	}
 
 	// Create some sessions
-	_ = mgr.SaveSession("session-a", []llm.Message{{Role: llm.RoleUser, Content: "a"}})
+	writeSession(t, mgr, "session-a", []llm.Message{{Role: llm.RoleUser, Content: "a"}})
 	time.Sleep(10 * time.Millisecond) // Ensure different mod times
-	_ = mgr.SaveSession("session-b", []llm.Message{
+	writeSession(t, mgr, "session-b", []llm.Message{
 		{Role: llm.RoleUser, Content: "b1"},
 		{Role: llm.RoleAssistant, Content: "b2"},
 	})
@@ -264,7 +253,7 @@ func TestDeleteSession(t *testing.T) {
 	mgr := setupTestManager(t)
 
 	// Create a session
-	_ = mgr.SaveSession("to-delete", []llm.Message{{Role: llm.RoleUser, Content: "test"}})
+	writeSession(t, mgr, "to-delete", []llm.Message{{Role: llm.RoleUser, Content: "test"}})
 
 	if !mgr.SessionExists("to-delete") {
 		t.Fatal("Session was not created")
@@ -293,7 +282,7 @@ func TestShowSession(t *testing.T) {
 		{Role: llm.RoleUser, Content: "Hello there"},
 		{Role: llm.RoleAssistant, Content: "Hi! How can I help?"},
 	}
-	_ = mgr.SaveSession("test-show", messages)
+	writeSession(t, mgr, "test-show", messages)
 
 	content, err := mgr.ShowSession("test-show")
 	if err != nil {
@@ -350,9 +339,14 @@ func TestAcquireLock(t *testing.T) {
 func TestLoadNonExistentSession(t *testing.T) {
 	mgr := setupTestManager(t)
 
-	_, err := mgr.LoadSession("nonexistent")
-	if err == nil {
-		t.Error("Expected error when loading non-existent session")
+	// A session that was never written is empty rather than an error: opening
+	// a name for the first time is how a new conversation starts.
+	msgs, err := mgr.LoadSession("nonexistent")
+	if err != nil {
+		t.Errorf("loading an unknown session returned %v, want no error", err)
+	}
+	if len(msgs) != 0 {
+		t.Errorf("loading an unknown session returned %d messages, want none", len(msgs))
 	}
 }
 
@@ -365,9 +359,7 @@ func TestLargeMessage(t *testing.T) {
 		{Role: llm.RoleUser, Content: largeContent},
 	}
 
-	if err := mgr.SaveSession("large-msg", messages); err != nil {
-		t.Fatalf("Failed to save large message: %v", err)
-	}
+	writeSession(t, mgr, "large-msg", messages)
 
 	loaded, err := mgr.LoadSession("large-msg")
 	if err != nil {
@@ -393,4 +385,18 @@ func setupTestManager(t *testing.T) *Manager {
 	t.Cleanup(func() { os.RemoveAll(tempDir) })
 
 	return &Manager{baseDir: tempDir}
+}
+
+// writeSession creates a session and records the given messages, the way a
+// turn does.
+func writeSession(t *testing.T, mgr *Manager, name string, messages []llm.Message) *Session {
+	t.Helper()
+	sess, err := mgr.Open(name)
+	if err != nil {
+		t.Fatalf("Open(%q): %v", name, err)
+	}
+	if err := sess.AppendMessages(messages); err != nil {
+		t.Fatalf("AppendMessages: %v", err)
+	}
+	return sess
 }

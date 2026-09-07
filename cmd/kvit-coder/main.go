@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/agent"
 	"github.com/kvit-s/kvit-coder/internal/benchmark"
@@ -271,6 +270,19 @@ func main() {
 		}
 	}
 
+	// Require -p or a benchmark mode before anything is created on disk.
+	// kvit-coder is headless; kvit-coder-ui is the interactive front end.
+	if !execMode && !benchmarkEnabled && !thinkbenchEnabled && *benchHaystack == "" {
+		fmt.Fprintln(os.Stderr, "Usage: kvit-coder -p \"prompt\" [options]")
+		fmt.Fprintln(os.Stderr, "       kvit-coder --benchmark [options]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "kvit-coder is a headless agent. Use kvit-coder-ui for interactive mode.")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Options:")
+		flag.PrintDefaults()
+		os.Exit(1)
+	}
+
 	// Acquire workspace lock to prevent multiple instances on same workspace
 	workspaceLock, err := workspace.AcquireLock(cfg.Workspace.Root)
 	if err != nil {
@@ -284,9 +296,57 @@ func main() {
 		llm.WithHeaders(cfg.LLMHeaders()),
 		llm.WithReasoningEffort(cfg.LLM.ReasoningEffort))
 
-	// Initialize temp file manager for shell command outputs
-	tempFileMgr := tools.NewTempFileManager(cfg.Workspace.Root)
-	defer tempFileMgr.CleanupAll()
+	// Resolve the session before anything that keeps state, because everything
+	// that outlives a turn now lives in the session directory: the checkpoint
+	// repository, spilled tool output, and (from here on) the steering inbox
+	// and background-process records.
+	//
+	// A benchmark run has no session to continue, so it gets an ephemeral one
+	// in a fresh temp directory, removed on exit. That is the lifetime the
+	// checkpoint repository had before, and it keeps one code path.
+	var sess *session.Session
+	var sessionMgr *session.Manager
+	if benchmarkEnabled || thinkbenchEnabled || *benchHaystack != "" {
+		runDir, err := os.MkdirTemp("", "kvit-coder-run-")
+		if err != nil {
+			log.Fatalf("Failed to create run directory: %v", err)
+		}
+		defer os.RemoveAll(runDir)
+		if sess, err = session.OpenDir(runDir); err != nil {
+			log.Fatalf("Failed to create run session: %v", err)
+		}
+	} else {
+		sessionMgr, err = session.NewManager()
+		if err != nil {
+			log.Fatalf("Failed to create session manager: %v", err)
+		}
+		name := *sessionName
+		if name == "" {
+			name = sessionMgr.GenerateSessionName()
+		}
+		// Pin the run ID to the session, unless the caller already chose one.
+		// Endpoints that route by a session header then send every turn of
+		// this conversation to the backend that already holds its prompt cache.
+		if os.Getenv(session.RunIDVar) == "" {
+			os.Setenv(session.RunIDVar, session.RunIDFor(name))
+		}
+		if sess, err = sessionMgr.Open(name); err != nil {
+			log.Fatalf("Failed to open session %q: %v", name, err)
+		}
+		sessionUnlock, err := sess.AcquireLock()
+		if err != nil {
+			log.Fatalf("%v", err)
+		}
+		defer sessionUnlock()
+	}
+
+	// Spilled tool output lives in the session, which is outside the
+	// workspace, so the model needs read permission for the paths it is told.
+	cfg.Workspace.AllowedReadPaths = append(cfg.Workspace.AllowedReadPaths, sess.TmpDir())
+
+	// Initialize temp file manager for shell command outputs. Its files are not
+	// removed at exit: the model may have been given a path to read next turn.
+	tempFileMgr := tools.NewTempFileManager(sess.TmpDir())
 
 	// Initialize MCP (Model Context Protocol) client manager. A no-op when
 	// cfg.MCP.Enabled is false or no servers are configured. Servers that fail
@@ -303,10 +363,10 @@ func main() {
 	// Initialize plan manager
 	planManager := tools.NewPlanManager()
 
-	// Initialize checkpoint manager
-	sessionID := fmt.Sprintf("%d", time.Now().UnixNano())
+	// Initialize checkpoint manager. Its shadow git repository lives in the
+	// session, so a checkpoint made in one turn is still there in the next.
 	checkpointMgr, err := checkpoint.NewManager(
-		sessionID,
+		sess.CheckpointsDir(),
 		cfg.Workspace.Root,
 		cfg.Tools.Checkpoint.ExcludedPatterns,
 		cfg.Tools.Checkpoint.MaxFileSizeKB,
@@ -321,7 +381,6 @@ func main() {
 		checkpointMgr.SetEnabled(false)
 	} else {
 		writer.Debug("Checkpoint infrastructure initialized")
-		defer func() { _ = checkpointMgr.Cleanup() }()
 	}
 
 	// Initialize Tasks tools manager (if enabled)
@@ -329,7 +388,7 @@ func main() {
 	var contextMiddleware *ctxtools.Middleware
 	if cfg.Tools.Tasks.Enabled {
 		var err error
-		contextMgr, err = ctxtools.NewManager(sessionID, checkpointMgr)
+		contextMgr, err = ctxtools.NewManager(filepath.Join(sess.Dir(), "tasks"), checkpointMgr)
 		if err != nil {
 			writer.Warn(fmt.Sprintf("Failed to create Tasks manager: %v (continuing without Tasks tools)", err))
 		} else {
@@ -338,7 +397,6 @@ func main() {
 				contextMgr = nil
 			} else {
 				writer.Debug("Tasks tools initialized")
-				defer func() { _ = contextMgr.Cleanup() }()
 
 				// Initialize middleware for turn number injection
 				contextMiddleware = ctxtools.NewMiddleware(contextMgr, ctxtools.RuntimeNoticeConfig{
@@ -484,18 +542,6 @@ func main() {
 		return
 	}
 
-	// Require -p or --benchmark mode (kvit-coder is headless, use kvit-coder-ui for interactive mode)
-	if !execMode {
-		fmt.Fprintln(os.Stderr, "Usage: kvit-coder -p \"prompt\" [options]")
-		fmt.Fprintln(os.Stderr, "       kvit-coder --benchmark [options]")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "kvit-coder is a headless agent. Use kvit-coder-ui for interactive mode.")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Options:")
-		flag.PrintDefaults()
-		os.Exit(1)
-	}
-
 	projectInstructions, err := repl.LoadProjectInstructions(cfg, launchDir)
 	if err != nil {
 		log.Fatalf("Failed to load project instructions: %v", err)
@@ -513,28 +559,6 @@ func main() {
 	}
 	fmt.Println()
 
-	// Initialize session manager
-	sessionMgr, err := session.NewManager()
-	if err != nil {
-		log.Fatalf("Failed to create session manager: %v", err)
-	}
-
-	// Pin the run ID to the session, unless the caller already chose one.
-	// Endpoints that route by a session header then send every turn of this
-	// conversation to the backend that already holds its prompt cache.
-	if *sessionName != "" && os.Getenv(session.RunIDVar) == "" {
-		os.Setenv(session.RunIDVar, session.RunIDFor(*sessionName))
-	}
-
-	// Acquire lock on session if specified
-	if *sessionName != "" {
-		sessionUnlock, err := sessionMgr.AcquireLock(*sessionName)
-		if err != nil {
-			log.Fatalf("%v", err)
-		}
-		defer sessionUnlock()
-	}
-
 	// Run in exec mode (always, since we require -p or --benchmark)
-	repl.RunExec(runner, writer, cfg, systemPrompt, promptText, quietMode, *sessionName, sessionMgr, projectInstructions)
+	repl.RunExec(runner, writer, cfg, systemPrompt, promptText, quietMode, sess, projectInstructions)
 }

@@ -15,7 +15,6 @@ import (
 // Manager handles checkpoint creation and restoration using a shadow git repository
 type Manager struct {
 	mu              sync.RWMutex
-	sessionID       string
 	workdir         string
 	checkpointDir   string
 	currentTurn     int
@@ -38,10 +37,14 @@ type TurnInfo struct {
 	RestoredTo   int      `json:"restored_to,omitempty"`
 }
 
-// NewManager creates a new checkpoint manager
-func NewManager(sessionID, workdir string, excludePatterns []string, maxFileSizeKB int) (*Manager, error) {
-	if sessionID == "" {
-		return nil, fmt.Errorf("sessionID cannot be empty")
+// NewManager creates a checkpoint manager whose shadow git repository lives in
+// checkpointDir. That directory belongs to the session, so a checkpoint made by
+// one turn is still there for the next, and it must sit outside workdir: the
+// repository snapshots workdir with "git add -A", which would otherwise try to
+// snapshot itself.
+func NewManager(checkpointDir, workdir string, excludePatterns []string, maxFileSizeKB int) (*Manager, error) {
+	if checkpointDir == "" {
+		return nil, fmt.Errorf("checkpointDir cannot be empty")
 	}
 	if workdir == "" {
 		var err error
@@ -76,12 +79,14 @@ func NewManager(sessionID, workdir string, excludePatterns []string, maxFileSize
 		maxFileSizeKB = 1024 // 1MB default
 	}
 
-	checkpointDir := filepath.Join(os.TempDir(), fmt.Sprintf("go-coder-checkpoints-%s", sessionID))
+	absCheckpointDir, err := filepath.Abs(checkpointDir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve checkpoint directory: %w", err)
+	}
 
 	m := &Manager{
-		sessionID:       sessionID,
 		workdir:         absWorkdir,
-		checkpointDir:   checkpointDir,
+		checkpointDir:   absCheckpointDir,
 		currentTurn:     0,
 		enabled:         true,
 		excludePatterns: excludePatterns,
@@ -111,14 +116,28 @@ func (m *Manager) Initialize() error {
 		return fmt.Errorf("failed to create external-files directory: %w", err)
 	}
 
-	// Initialize external-files.json
+	// Initialize external-files.json, unless a previous turn already wrote one.
 	mappingFile := filepath.Join(m.checkpointDir, "external-files.json")
-	if err := os.WriteFile(mappingFile, []byte("{}"), 0644); err != nil {
-		return fmt.Errorf("failed to create external-files.json: %w", err)
+	if _, err := os.Stat(mappingFile); os.IsNotExist(err) {
+		if err := os.WriteFile(mappingFile, []byte("{}"), 0644); err != nil {
+			return fmt.Errorf("failed to create external-files.json: %w", err)
+		}
+	}
+
+	// The repository outlives the process now, so a turn that finds one already
+	// there resumes it: re-creating the turn-0 commit and tag would fail, and
+	// would throw away every checkpoint an earlier turn made.
+	gitDir := filepath.Join(m.checkpointDir, ".git")
+	if _, err := os.Stat(filepath.Join(gitDir, "HEAD")); err == nil {
+		turn, err := m.highestTurn()
+		if err != nil {
+			return fmt.Errorf("failed to read existing checkpoints: %w", err)
+		}
+		m.currentTurn = turn
+		return nil
 	}
 
 	// Initialize shadow git repo
-	gitDir := filepath.Join(m.checkpointDir, ".git")
 	cmd := exec.Command("git", "init", "--bare", gitDir)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to init shadow git: %w\nOutput: %s", err, output)
@@ -130,6 +149,24 @@ func (m *Manager) Initialize() error {
 	}
 
 	return nil
+}
+
+// highestTurn reads the turn-N tags of an existing repository and returns the
+// largest N, which is where this turn's numbering continues from.
+func (m *Manager) highestTurn() (int, error) {
+	gitDir := filepath.Join(m.checkpointDir, ".git")
+	out, err := exec.Command("git", "--git-dir="+gitDir, "tag", "--list", "turn-*").Output()
+	if err != nil {
+		return 0, err
+	}
+	highest := 0
+	for _, tag := range strings.Fields(string(out)) {
+		n, err := strconv.Atoi(strings.TrimPrefix(tag, "turn-"))
+		if err == nil && n > highest {
+			highest = n
+		}
+	}
+	return highest, nil
 }
 
 // createInitialCommit creates the turn-0 commit with empty tree

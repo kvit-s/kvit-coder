@@ -14,7 +14,7 @@ func TestNewManager(t *testing.T) {
 	}
 	defer os.RemoveAll(workdir)
 
-	mgr, err := NewManager("test-session", workdir, nil, 0)
+	mgr, err := NewManager(t.TempDir(), workdir, nil, 0)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestManagerInitialize(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	mgr, err := NewManager("test-init", workdir, nil, 0)
+	mgr, err := NewManager(t.TempDir(), workdir, nil, 0)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -57,13 +57,12 @@ func TestManagerInitialize(t *testing.T) {
 	}
 
 	// Check that checkpoint directory was created
-	checkpointDir := filepath.Join(os.TempDir(), "go-coder-checkpoints-test-init")
-	if _, err := os.Stat(checkpointDir); os.IsNotExist(err) {
+	if _, err := os.Stat(mgr.checkpointDir); os.IsNotExist(err) {
 		t.Error("Checkpoint directory was not created")
 	}
 
 	// Check that .git was created
-	gitDir := filepath.Join(checkpointDir, ".git")
+	gitDir := filepath.Join(mgr.checkpointDir, ".git")
 	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
 		t.Error("Git directory was not created")
 	}
@@ -83,7 +82,7 @@ func TestManagerTurnLifecycle(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	mgr, err := NewManager("test-turns", workdir, nil, 0)
+	mgr, err := NewManager(t.TempDir(), workdir, nil, 0)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -145,7 +144,7 @@ func TestManagerRestore(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	mgr, err := NewManager("test-restore", workdir, nil, 0)
+	mgr, err := NewManager(t.TempDir(), workdir, nil, 0)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -216,7 +215,7 @@ func TestManagerDiff(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	mgr, err := NewManager("test-diff", workdir, nil, 0)
+	mgr, err := NewManager(t.TempDir(), workdir, nil, 0)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -266,7 +265,7 @@ func TestManagerList(t *testing.T) {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
-	mgr, err := NewManager("test-list", workdir, nil, 0)
+	mgr, err := NewManager(t.TempDir(), workdir, nil, 0)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -320,7 +319,7 @@ func TestManagerIsExternalPath(t *testing.T) {
 	}
 	defer os.RemoveAll(workdir)
 
-	mgr, err := NewManager("test-external", workdir, nil, 0)
+	mgr, err := NewManager(t.TempDir(), workdir, nil, 0)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -345,7 +344,7 @@ func TestManagerDisabled(t *testing.T) {
 	}
 	defer os.RemoveAll(workdir)
 
-	mgr, err := NewManager("test-disabled", workdir, nil, 0)
+	mgr, err := NewManager(t.TempDir(), workdir, nil, 0)
 	if err != nil {
 		t.Fatalf("Failed to create manager: %v", err)
 	}
@@ -364,5 +363,71 @@ func TestManagerDisabled(t *testing.T) {
 	_, err = mgr.Restore(0)
 	if err == nil {
 		t.Error("Expected Restore to error when disabled")
+	}
+}
+
+// TestCheckpointsSurviveTheProcess: the shadow repository lives in the session
+// directory now, so a checkpoint one turn makes is there for the next. A second
+// Manager over the same directory must resume the numbering rather than
+// re-initialising and losing the history.
+func TestCheckpointsSurviveTheProcess(t *testing.T) {
+	workdir := t.TempDir()
+	checkpointDir := t.TempDir()
+
+	testFile := filepath.Join(workdir, "app.go")
+	if err := os.WriteFile(testFile, []byte("one\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	// First turn: make a checkpoint.
+	first, err := NewManager(checkpointDir, workdir, nil, 0)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if err := first.Initialize(); err != nil {
+		t.Fatalf("Initialize: %v", err)
+	}
+	first.StartTurn()
+	if err := os.WriteFile(testFile, []byte("two\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := first.EndTurn(); err != nil {
+		t.Fatalf("EndTurn: %v", err)
+	}
+	if first.CurrentTurn() != 1 {
+		t.Fatalf("first manager is on turn %d, want 1", first.CurrentTurn())
+	}
+
+	// Second turn, in what would be a new process.
+	second, err := NewManager(checkpointDir, workdir, nil, 0)
+	if err != nil {
+		t.Fatalf("NewManager (second): %v", err)
+	}
+	if err := second.Initialize(); err != nil {
+		t.Fatalf("Initialize (second): %v", err)
+	}
+	if second.CurrentTurn() != 1 {
+		t.Errorf("the second manager starts at turn %d, want 1: it did not find the existing checkpoints",
+			second.CurrentTurn())
+	}
+
+	turns, err := second.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(turns) != 1 {
+		t.Fatalf("the second manager sees %d turns, want the 1 the first made", len(turns))
+	}
+
+	// And the earlier turn can still be restored from here.
+	if _, err := second.Restore(0); err != nil {
+		t.Fatalf("Restore(0): %v", err)
+	}
+	got, err := os.ReadFile(testFile)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(got) != "one\n" {
+		t.Errorf("after restoring turn 0 the file holds %q, want %q", got, "one\n")
 	}
 }

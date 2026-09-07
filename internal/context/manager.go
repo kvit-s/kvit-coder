@@ -45,16 +45,16 @@ type InternalMeta struct {
 	HasChanges   bool   `json:"has_changes,omitempty"`   // true if task made file changes
 }
 
-// NewManager creates a new context tools manager
-func NewManager(sessionID string, checkpointMgr *checkpoint.Manager) (*Manager, error) {
-	if sessionID == "" {
-		return nil, fmt.Errorf("sessionID cannot be empty")
+// NewManager creates a context tools manager whose git repository lives in
+// contextDir. That directory belongs to the session, so a task started in one
+// turn is still open in the next.
+func NewManager(contextDir string, checkpointMgr *checkpoint.Manager) (*Manager, error) {
+	if contextDir == "" {
+		return nil, fmt.Errorf("contextDir cannot be empty")
 	}
 
-	contextDir := filepath.Join(os.TempDir(), fmt.Sprintf("go-coder-context-%s", sessionID))
-
 	m := &Manager{
-		sessionID:     sessionID,
+		sessionID:     filepath.Base(contextDir),
 		contextDir:    contextDir,
 		enabled:       true,
 		branchCounter: 0,
