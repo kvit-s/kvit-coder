@@ -655,8 +655,15 @@ func startStdinReader(steering *inbox.Inbox, writer *ui.Writer) bool {
 			if line == "" {
 				continue
 			}
+			// A prompt waiting for an answer will take this line, so saying it
+			// was queued for the model would be wrong — and reads as the
+			// answer having been swallowed, which is what it looked like
+			// before this check existed.
+			answering := steering.Awaiting()
 			steering.Push(inbox.Message{Kind: inbox.KindUserLine, Text: line})
-			writer.Info("→ queued")
+			if !answering {
+				writer.Info("→ queued")
+			}
 		}
 	}()
 	return true

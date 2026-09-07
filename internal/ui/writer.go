@@ -35,8 +35,8 @@ var (
 
 // JSONOutput represents the structured output for --json mode
 type JSONOutput struct {
-	Content string     `json:"content"`          // The final LLM response
-	Stats   *JSONStats `json:"stats,omitempty"`  // Statistics (tokens, cost, etc.)
+	Content string     `json:"content"`         // The final LLM response
+	Stats   *JSONStats `json:"stats,omitempty"` // Statistics (tokens, cost, etc.)
 }
 
 // JSONStats represents statistics in JSON output
@@ -54,12 +54,21 @@ type JSONStats struct {
 
 // Writer provides formatted output with consistent prefixes and optional colors.
 type Writer struct {
-	verboseLines int  // 0 = not verbose, >0 = verbose with max lines to show
+	verboseLines int // 0 = not verbose, >0 = verbose with max lines to show
 	quiet        bool
-	jsonMode     bool     // Output structured JSON instead of formatted text
-	headless     bool     // Route progress to stderr, final answer to stdout
+	jsonMode     bool      // Output structured JSON instead of formatted text
+	headless     bool      // Route progress to stderr, final answer to stdout
 	stderr       io.Writer // stderr output (defaults to os.Stderr)
 	stdout       io.Writer // stdout output (defaults to os.Stdout)
+	// stderrTTY overrides the check for whether stderr can be redrawn in
+	// place. Tests set it; nil means work it out from the file itself.
+	stderrTTY *bool
+}
+
+// SetStderrIsTerminal overrides the detection of whether stderr can be redrawn
+// in place, so a test can exercise both paths without a pseudo-terminal.
+func (w *Writer) SetStderrIsTerminal(isTTY bool) {
+	w.stderrTTY = &isTTY
 }
 
 // NewWriter creates a new Writer with the specified verbosity level.
@@ -302,6 +311,43 @@ var progressDotCount int
 // maxDotsPerLine is the maximum number of dots before wrapping to a new line
 const maxDotsPerLine = 60
 
+// progressTarget says where a progress indicator should be drawn, and whether
+// to draw it at all.
+//
+// Headless mode sends progress to stderr and the final answer to stdout, which
+// is how the interactive UI runs the agent. It used to skip progress entirely,
+// on the grounds that a headless run has no terminal to redraw — but when the
+// UI spawns the agent, stderr is a terminal. The result was that a command
+// taking two minutes printed nothing whatsoever between its tool line and its
+// result, which is indistinguishable from a hang. So the question is not
+// whether the run is headless but whether stderr can be redrawn.
+func (w *Writer) progressTarget() (io.Writer, bool) {
+	if !w.headless {
+		return nil, true // nil means "the colour package's own stdout"
+	}
+	if w.stderrTTY != nil {
+		return w.stderr, *w.stderrTTY
+	}
+	f, ok := w.stderr.(*os.File)
+	if !ok {
+		return w.stderr, false
+	}
+	info, err := f.Stat()
+	// Piped or redirected: redrawing in place would put control characters in
+	// a log file, so accumulate silently as before.
+	return w.stderr, err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+// drawProgress writes one progress update, either through the colour package
+// (interactive) or to stderr (headless with a terminal).
+func drawProgress(out io.Writer, text string) {
+	if out == nil {
+		grayColor.Print(text)
+		return
+	}
+	fmt.Fprint(out, text)
+}
+
 // ToolProgress prints a progress indicator (dots) for long-running tools.
 func (w *Writer) ToolProgress(dot string) {
 	if w.quiet {
@@ -311,24 +357,14 @@ func (w *Writer) ToolProgress(dot string) {
 	if w.jsonMode {
 		return
 	}
-	// In headless mode, skip animated progress (no terminal control)
-	if w.headless {
-		// Only print the final timing line
-		if strings.Contains(dot, "\n") {
-			progressLine = ""
-			progressDotCount = 0
-		} else if strings.HasPrefix(dot, "✨") {
-			progressLine = ""
-			progressDotCount = 0
-		} else {
-			progressLine += dot
-		}
-		return
-	}
+
+	out, draw := w.progressTarget()
+
 	// If dot contains newline, it's the final output - print full line and reset
 	if strings.Contains(dot, "\n") {
-		fmt.Print("\r")                       // Return to start of line
-		grayColor.Print(progressLine + dot)   // Print accumulated + final
+		if draw {
+			drawProgress(out, "\r"+progressLine+dot)
+		}
 		progressLine = ""
 		progressDotCount = 0
 		return
@@ -345,18 +381,21 @@ func (w *Writer) ToolProgress(dot string) {
 		progressDotCount++
 		// Wrap to new line after maxDotsPerLine dots (1 minute)
 		if progressDotCount > maxDotsPerLine {
-			fmt.Print("\r")                  // Return to start of line
-			grayColor.Println(progressLine)  // Print current line with newline
-			progressLine = "✨ "             // Start new line with sparkle
-			progressDotCount = 1             // Reset counter (this dot counts)
+			if draw {
+				drawProgress(out, "\r"+progressLine+"\n")
+			}
+			progressLine = "✨ "  // Start new line with sparkle
+			progressDotCount = 1 // Reset counter (this dot counts)
 		}
 	}
 
 	// Accumulate and reprint entire line
 	progressLine += dot
-	fmt.Print("\r")                  // Return to start of line
-	grayColor.Print(progressLine)    // Print accumulated content
-	fmt.Print("\n\033[1A")           // Newline (flush) + move up
+	if !draw {
+		return
+	}
+	drawProgress(out, "\r"+progressLine)
+	drawProgress(out, "\n\033[1A") // Newline (flush) + move up
 }
 
 // ToolResult prints a tool result summary in gray.

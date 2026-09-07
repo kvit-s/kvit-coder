@@ -60,6 +60,10 @@ type Inbox struct {
 	mu     sync.Mutex
 	queue  []Message
 	signal chan struct{}
+	// asking counts the prompts currently waiting for an answer. The line
+	// reader consults it so it does not report a prompt's answer as queued
+	// steering, which read as the answer having been swallowed.
+	asking int
 
 	// Log, when set, is called for something worth saying out loud: an inbox
 	// file too large to read, or one that could not be read at all.
@@ -71,6 +75,15 @@ type Inbox struct {
 // benchmark run wants.
 func New(dir string) *Inbox {
 	return &Inbox{dir: dir, signal: make(chan struct{}, 1)}
+}
+
+// Awaiting reports whether a prompt is waiting for someone to type an answer.
+// The next line typed will be taken as that answer rather than reaching the
+// model as steering.
+func (i *Inbox) Awaiting() bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.asking > 0
 }
 
 // Dir is the directory this inbox picks files up from.
@@ -258,8 +271,15 @@ const (
 // held aside and put back for the loop to treat as ordinary steering. A
 // timeout of zero or less waits indefinitely.
 func (i *Inbox) Ask(ctx context.Context, out io.Writer, prompt string, timeout time.Duration) (string, AskOutcome) {
+	i.mu.Lock()
+	i.asking++
+	i.mu.Unlock()
+
 	var notForUs []Message
 	defer func() {
+		i.mu.Lock()
+		i.asking--
+		i.mu.Unlock()
 		for _, m := range notForUs {
 			i.Push(m)
 		}
