@@ -161,6 +161,15 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		}
 	}
 
+	// Batch dispatches through the registry that holds it, so it is registered
+	// first and given the registry once everything else is in.
+	var batchTool *BatchTool
+	if cfg.Tools.Batch.Enabled {
+		batchTool = NewBatchTool(cfg)
+		registry.Enable(batchTool)
+		debug(fmt.Sprintf("Enabled tool: %s", batchTool.Name()))
+	}
+
 	if cfg.Tools.Question.Enabled {
 		questionTool := NewQuestionTool(cfg, toolCtx)
 		registry.Enable(questionTool)
@@ -249,6 +258,11 @@ func SetupRegistry(sc SetupConfig) *Registry {
 	for _, t := range sc.MCPTools {
 		registry.Enable(t)
 		debug(fmt.Sprintf("Enabled MCP tool: %s", t.Name()))
+	}
+
+	// Batch can only dispatch once everything it might call is registered.
+	if batchTool != nil {
+		batchTool.SetRegistry(registry)
 	}
 
 	return registry

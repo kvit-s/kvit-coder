@@ -67,6 +67,9 @@ func NewSearchTool(cfg *config.Config, tempFileMgr *TempFileManager) *SearchTool
 	}
 }
 
+// ParallelSafe says Search can run alongside other reads in a Batch.
+func (t *SearchTool) ParallelSafe() bool { return true }
+
 func (t *SearchTool) Name() string {
 	return "Search"
 }

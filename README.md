@@ -155,6 +155,24 @@ Without `-s` it delivers to the one session that has a turn running, and says
 so if there is none or more than one. The message arrives as a user message
 tagged `<user-steering>` at the model's next iteration.
 
+### Batching calls
+
+With `tools.batch.enabled`, several independent calls go in one request:
+
+```
+Batch({"calls": [
+  {"tool": "Read", "args": {"path": "main.go"}},
+  {"tool": "Read", "args": {"path": "config.go"}},
+  {"tool": "Search", "args": {"pattern": "func main"}}
+]})
+```
+
+One request and one round of thinking instead of one each. Calls that only read
+run at the same time, so four reads take about as long as one; calls that
+change the workspace run afterwards, in order. Each call comes back with its own
+result or its own error, so one failure does not lose the others. At most ten
+calls, and no `Batch` inside a `Batch`.
+
 ### Command permissions
 
 Whether a shell command may run is decided from its syntax tree, not from
@@ -390,6 +408,7 @@ Each tool group has `enabled: true/false` plus tool-specific options:
 - **`edit.read_before_edit_msgs`** — Require a read within N messages before editing
 - **`shell.allowed_commands`** / **`shell.disallowed_commands`** — Command allow/blocklists
 - **`shell.default_timeout`** / **`shell.max_timeout`** — Seconds a command gets, and the ceiling a call may ask for (default 120 and 600)
+- **`batch.enabled`** — Run several independent tool calls in one request
 - **`procs.enabled`** — Background processes that outlive a turn (`Shell.start`, `Observe.wait`, …)
 - **`procs.kill_on_exit`** — Stop everything the session started when a turn is interrupted (default true)
 - **`question.enabled`** — Let the model ask you a question and wait for the answer

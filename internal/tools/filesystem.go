@@ -312,6 +312,10 @@ func NewReadFileTool(cfg *config.Config, toolCtx *ToolContext) *ReadFileTool {
 	}
 }
 
+// ParallelSafe says Read can run alongside other reads in a Batch: it changes
+// nothing, so nothing else in the batch can be affected by when it runs.
+func (t *ReadFileTool) ParallelSafe() bool { return true }
+
 func (t *ReadFileTool) Name() string {
 	return "Read"
 }

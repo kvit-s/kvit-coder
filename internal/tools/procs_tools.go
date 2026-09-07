@@ -125,6 +125,9 @@ func NewShellOutputTool(cfg *config.Config, registry *procs.Registry, toolCtx *T
 	return &ShellOutputTool{procsToolBase{cfg: cfg, registry: registry, toolCtx: toolCtx}}
 }
 
+// ParallelSafe says reading a process's output changes nothing.
+func (t *ShellOutputTool) ParallelSafe() bool { return true }
+
 func (t *ShellOutputTool) Name() string { return "Shell.output" }
 func (t *ShellOutputTool) Description() string {
 	return "Read what a background process has written. Pass the cursor from the previous call " +
@@ -184,6 +187,9 @@ func NewShellStatusTool(cfg *config.Config, registry *procs.Registry, toolCtx *T
 	return &ShellStatusTool{procsToolBase{cfg: cfg, registry: registry, toolCtx: toolCtx}}
 }
 
+// ParallelSafe says asking a process's status changes nothing.
+func (t *ShellStatusTool) ParallelSafe() bool { return true }
+
 func (t *ShellStatusTool) Name() string { return "Shell.status" }
 func (t *ShellStatusTool) Description() string {
 	return "Report whether a background process is still running, and its exit status if not."
@@ -227,6 +233,9 @@ type ShellListTool struct{ procsToolBase }
 func NewShellListTool(cfg *config.Config, registry *procs.Registry, toolCtx *ToolContext) *ShellListTool {
 	return &ShellListTool{procsToolBase{cfg: cfg, registry: registry, toolCtx: toolCtx}}
 }
+
+// ParallelSafe says listing processes changes nothing.
+func (t *ShellListTool) ParallelSafe() bool { return true }
 
 func (t *ShellListTool) Name() string { return "Shell.list" }
 func (t *ShellListTool) Description() string {

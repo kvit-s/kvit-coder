@@ -398,6 +398,7 @@ type ToolsConfig struct {
 	Shell       ShellToolConfig       `yaml:"shell"`
 	Question    QuestionToolConfig    `yaml:"question"`
 	Procs       ProcsToolsConfig      `yaml:"procs"`
+	Batch       BatchToolConfig       `yaml:"batch"`
 	Plan        PlanToolsConfig       `yaml:"plan"`
 	Checkpoint  CheckpointToolsConfig `yaml:"checkpoint"`
 	Tasks       TasksToolsConfig      `yaml:"tasks"`
@@ -469,6 +470,12 @@ type QuestionToolConfig struct {
 	// so a benchmark or scripted run never hangs on a question. A supervised
 	// headless run sets it to a few minutes.
 	Timeout int `yaml:"timeout"`
+}
+
+// BatchToolConfig configures the Batch tool, which runs several independent
+// tool calls in one request.
+type BatchToolConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // ProcsToolsConfig configures the tools for work that outlives a turn:
@@ -763,6 +770,8 @@ func (c *Config) IsToolEnabled(toolName string) bool {
 		return c.Tools.Shell.Enabled
 	case "question", "Question":
 		return c.Tools.Question.Enabled
+	case "batch", "Batch":
+		return c.Tools.Batch.Enabled
 	case "shell.start", "shell.output", "shell.status", "shell.list", "shell.kill",
 		"observe.wait", "observe.add":
 		return c.Tools.Procs.Enabled

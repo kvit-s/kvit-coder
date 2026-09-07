@@ -43,6 +43,16 @@ type Tool interface {
 	PromptTemplateName() string
 }
 
+// ParallelSafeTool is an optional interface a Tool implements to say it can run
+// at the same time as other calls in a Batch. Only a tool that reads is safe:
+// Read, Search and the process-status tools return true, while Edit, Write and
+// Shell do not, because they change the workspace or the pending-edit state
+// that the call after them reads. A tool that says nothing is treated as
+// unsafe, which is the answer that cannot be wrong.
+type ParallelSafeTool interface {
+	ParallelSafe() bool
+}
+
 // SelfTimeoutTool is an optional interface a Tool can implement to opt out of the
 // agent loop's blanket per-tool timeout (15s) and manage its own execution
 // deadline instead. MCP tools implement it: their calls (a web fetch, a database
