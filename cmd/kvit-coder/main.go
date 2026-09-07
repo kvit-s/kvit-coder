@@ -21,6 +21,7 @@ import (
 	"github.com/kvit-s/kvit-coder/internal/inbox"
 	"github.com/kvit-s/kvit-coder/internal/llm"
 	"github.com/kvit-s/kvit-coder/internal/mcp"
+	"github.com/kvit-s/kvit-coder/internal/procs"
 	"github.com/kvit-s/kvit-coder/internal/prompt"
 	"github.com/kvit-s/kvit-coder/internal/repl"
 	"github.com/kvit-s/kvit-coder/internal/session"
@@ -369,6 +370,16 @@ func main() {
 	}
 	defer endTurn()
 
+	// Processes that outlive the turn are recorded in the session, so a dev
+	// server started in one turn is still serving in the next.
+	procRegistry, err := procs.New(sess.ProcDir())
+	if err != nil {
+		log.Fatalf("Failed to open the process registry: %v", err)
+	}
+	if cfg.Tools.Procs.Enabled && cfg.Tools.Procs.ShouldKillOnExit() {
+		killBackgroundOnInterrupt(runCtx, procRegistry, sess, writer)
+	}
+
 	// The inbox is where anything arriving mid-turn waits. The loop drains it
 	// once per iteration.
 	steering := inbox.New(sess.InboxDir())
@@ -459,6 +470,7 @@ func main() {
 		PlanManager:   planManager,
 		ToolCtx:       toolCtx,
 		MCPTools:      mcpMgr.Tools(),
+		ProcRegistry:  procRegistry,
 	})
 
 	// Generate system prompt using the prompt generator
@@ -493,6 +505,7 @@ func main() {
 		PlanManager:       planManager,
 		ToolCtx:           toolCtx,
 		Inbox:             steering,
+		Procs:             procRegistry,
 	})
 
 	// Run benchmark mode if requested
@@ -659,5 +672,22 @@ func installInterruptHandler(cancelRun context.CancelFunc) {
 			fmt.Fprintln(os.Stderr, "\ninterrupted - stopping the turn and saving it; press ctrl-c again to quit now")
 			cancelRun()
 		}
+	}()
+}
+
+// killBackgroundOnInterrupt stops everything this session started when the run
+// is cancelled, and records that it did. An interrupt that silently leaves a
+// dev server holding a port is a surprise you find out about much later.
+func killBackgroundOnInterrupt(ctx context.Context, registry *procs.Registry, sess *session.Session, writer *ui.Writer) {
+	go func() {
+		<-ctx.Done()
+		killed := registry.KillAll()
+		if len(killed) == 0 {
+			return
+		}
+		msg := fmt.Sprintf("stopped %d background process(es) on interrupt: %s",
+			len(killed), strings.Join(killed, ", "))
+		writer.Info(msg)
+		_ = sess.Notice(msg)
 	}()
 }

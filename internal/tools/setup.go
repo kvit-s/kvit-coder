@@ -7,6 +7,7 @@ import (
 	"github.com/kvit-s/kvit-coder/internal/checkpoint"
 	"github.com/kvit-s/kvit-coder/internal/config"
 	ctxtools "github.com/kvit-s/kvit-coder/internal/context"
+	"github.com/kvit-s/kvit-coder/internal/procs"
 )
 
 // DebugLogger is an interface for debug logging to avoid import cycles
@@ -22,7 +23,10 @@ type SetupConfig struct {
 	Logger        DebugLogger // Optional debug logger (can be nil)
 	TempFileMgr   *TempFileManager
 	PlanManager   *PlanManager
-	ToolCtx       *ToolContext // Shared mutable state for tools (created if nil)
+	// ProcRegistry owns the processes that outlive a turn. Nil disables the
+	// Shell.start / Observe.* tools.
+	ProcRegistry *procs.Registry
+	ToolCtx      *ToolContext // Shared mutable state for tools (created if nil)
 
 	// MCPTools are adapters for tools discovered on configured MCP servers,
 	// already built by the MCP manager. Passing built []Tool (rather than the
@@ -138,6 +142,21 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		shellAdvancedTool := NewShellAdvancedTool(cfg, shellTimeout, sc.TempFileMgr)
 		registry.Enable(shellAdvancedTool)
 		debug(fmt.Sprintf("Enabled tool: %s", shellAdvancedTool.Name()))
+	}
+
+	if cfg.Tools.Procs.Enabled && sc.ProcRegistry != nil {
+		for _, tool := range []Tool{
+			NewShellStartTool(cfg, sc.ProcRegistry, toolCtx),
+			NewShellOutputTool(cfg, sc.ProcRegistry, toolCtx),
+			NewShellStatusTool(cfg, sc.ProcRegistry, toolCtx),
+			NewShellListTool(cfg, sc.ProcRegistry, toolCtx),
+			NewShellKillTool(cfg, sc.ProcRegistry, toolCtx),
+			NewObserveWaitTool(cfg, sc.ProcRegistry, toolCtx),
+			NewObserveAddTool(cfg, sc.ProcRegistry, toolCtx),
+		} {
+			registry.Enable(tool)
+			debug(fmt.Sprintf("Enabled tool: %s", tool.Name()))
+		}
 	}
 
 	if cfg.Tools.Question.Enabled {

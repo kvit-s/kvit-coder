@@ -397,6 +397,7 @@ type ToolsConfig struct {
 	Search      SearchToolConfig      `yaml:"search"`
 	Shell       ShellToolConfig       `yaml:"shell"`
 	Question    QuestionToolConfig    `yaml:"question"`
+	Procs       ProcsToolsConfig      `yaml:"procs"`
 	Plan        PlanToolsConfig       `yaml:"plan"`
 	Checkpoint  CheckpointToolsConfig `yaml:"checkpoint"`
 	Tasks       TasksToolsConfig      `yaml:"tasks"`
@@ -468,6 +469,23 @@ type QuestionToolConfig struct {
 	// so a benchmark or scripted run never hangs on a question. A supervised
 	// headless run sets it to a few minutes.
 	Timeout int `yaml:"timeout"`
+}
+
+// ProcsToolsConfig configures the tools for work that outlives a turn:
+// Shell.start, Shell.output, Shell.status, Shell.list, Shell.kill,
+// Observe.wait and Observe.add.
+type ProcsToolsConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// KillOnExit stops everything this session started when the turn is
+	// interrupted. On by default: an interrupt that leaves a dev server
+	// running is a surprise. Turn it off to keep long-lived services alive
+	// across interrupts.
+	KillOnExit *bool `yaml:"kill_on_exit"`
+}
+
+// ShouldKillOnExit reports whether an interrupt stops background processes.
+func (p *ProcsToolsConfig) ShouldKillOnExit() bool {
+	return p.KillOnExit == nil || *p.KillOnExit
 }
 
 // ShellToolConfig configures the shell tool
@@ -745,6 +763,9 @@ func (c *Config) IsToolEnabled(toolName string) bool {
 		return c.Tools.Shell.Enabled
 	case "question", "Question":
 		return c.Tools.Question.Enabled
+	case "shell.start", "shell.output", "shell.status", "shell.list", "shell.kill",
+		"observe.wait", "observe.add":
+		return c.Tools.Procs.Enabled
 	case "plan.write", "Plan.write":
 		// Default full-list rewrite tool; disabled when Tasks tools are enabled
 		return c.Tools.Plan.Enabled && !c.Tools.Tasks.Enabled && c.Tools.Plan.GetPlanMode() == "write"

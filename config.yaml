@@ -82,6 +82,10 @@ tools:
     default_timeout: 120        # seconds a command gets when the call names none
     max_timeout: 600            # ceiling on what a call may ask for
 
+  procs:
+    enabled: true             # Shell.start / Shell.output / Observe.wait — work that outlives a turn
+    kill_on_exit: true        # stop everything this session started when a turn is interrupted
+
   question:
     enabled: true
     # Seconds a run with no terminal waits for an answer dropped in the session

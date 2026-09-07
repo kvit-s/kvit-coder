@@ -155,6 +155,34 @@ Without `-s` it delivers to the one session that has a turn running, and says
 so if there is none or more than one. The message arrives as a user message
 tagged `<user-steering>` at the model's next iteration.
 
+### Background processes
+
+With `tools.procs.enabled`, a command can outlive the turn that started it:
+
+```
+Shell.start({"command": "npm run dev", "name": "dev server"})   → {"id": "bg1"}
+Observe.wait({"id": "bg1", "until": "Listening on", "report": "match"})
+Shell.output({"id": "bg1", "cursor": 4096})
+Shell.list({}) / Shell.status({"id": "bg1"}) / Shell.kill({"id": "bg1"})
+Observe.add({"command": "git status --short", "every": 60})
+```
+
+`Shell` is unchanged: it runs a command to completion and dies with the turn.
+`Shell.start` detaches into its own session, so a dev server started in one
+turn is still serving in the next, and its output and exit status are recorded
+in `<session>/proc/` where the next turn can read them.
+
+`Observe.wait` blocks until the process ends, prints something matching a
+pattern, or `max_wait` passes — one tool call however long it takes, where
+checking with `Shell.output` in a loop costs a full round of thinking each
+time. It also returns early if you type something, so you are not left waiting
+for a process whose result no longer matters.
+
+Between iterations the agent asks the registry what has happened and tells the
+model about anything that ended, so watching costs nothing until there is
+something to say. Ctrl-C stops everything the session started, unless
+`tools.procs.kill_on_exit` is false.
+
 ### Questions
 
 With `tools.question.enabled`, the model can ask you something and wait for the
@@ -335,6 +363,8 @@ Each tool group has `enabled: true/false` plus tool-specific options:
 - **`edit.read_before_edit_msgs`** — Require a read within N messages before editing
 - **`shell.allowed_commands`** / **`shell.disallowed_commands`** — Command allow/blocklists
 - **`shell.default_timeout`** / **`shell.max_timeout`** — Seconds a command gets, and the ceiling a call may ask for (default 120 and 600)
+- **`procs.enabled`** — Background processes that outlive a turn (`Shell.start`, `Observe.wait`, …)
+- **`procs.kill_on_exit`** — Stop everything the session started when a turn is interrupted (default true)
 - **`question.enabled`** — Let the model ask you a question and wait for the answer
 - **`question.timeout`** — Seconds a run with no terminal waits for an answer (default 0: fall back at once)
 - **`checkpoint.max_turns`** — Max checkpoints before rotating (default: 100)

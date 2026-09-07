@@ -12,6 +12,7 @@ import (
 	ctxtools "github.com/kvit-s/kvit-coder/internal/context"
 	"github.com/kvit-s/kvit-coder/internal/inbox"
 	"github.com/kvit-s/kvit-coder/internal/llm"
+	"github.com/kvit-s/kvit-coder/internal/procs"
 	"github.com/kvit-s/kvit-coder/internal/stats"
 	"github.com/kvit-s/kvit-coder/internal/tools"
 	"github.com/kvit-s/kvit-coder/internal/ui"
@@ -39,6 +40,7 @@ type Runner struct {
 	toolCtx           *tools.ToolContext
 	interrogator      *Interrogator
 	inbox             *inbox.Inbox
+	procs             *procs.Registry
 }
 
 // RunnerOptions contains all dependencies for creating a Runner
@@ -57,6 +59,9 @@ type RunnerOptions struct {
 	// the terminal, a file dropped by "kvit-coder steer", a background
 	// process exiting. The loop drains it once per iteration. Optional.
 	Inbox *inbox.Inbox
+	// Procs owns the processes that outlive a turn. The loop asks it once per
+	// iteration what has happened and puts the answer in the inbox. Optional.
+	Procs *procs.Registry
 }
 
 // RunConfig contains per-run configuration options
@@ -98,6 +103,7 @@ func NewRunner(opts RunnerOptions) *Runner {
 		planManager:       opts.PlanManager,
 		toolCtx:           opts.ToolCtx,
 		inbox:             opts.Inbox,
+		procs:             opts.Procs,
 	}
 	// nil when diagnostics are disabled; all call sites are nil-safe.
 	r.interrogator = NewInterrogator(opts.Cfg, opts.LLMClient, opts.Writer, opts.Logger, runID)
@@ -232,6 +238,11 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 				state.messages = fileMessages
 			}
 		}
+
+		// Ask the background processes what has happened; whatever they say
+		// goes into the inbox, so an exit reaches the model the same way a
+		// typed line does.
+		r.pollProcesses()
 
 		// Anything that arrived since the last iteration goes in before the
 		// rollback point, so backtracking cannot discard it.

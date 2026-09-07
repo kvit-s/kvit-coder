@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -327,8 +328,16 @@ func (t *ShellAdvancedTool) executeCommand(ctx context.Context, command, workDir
 	// Optionally wrap in an OS sandbox (ExecPrefix) and/or override the child
 	// environment (InjectEnv) — used by the thinkbench harness for uv + bwrap.
 	cmd := t.buildCommand(command, workDir)
-	cmd.Stdout = outputBuf
-	cmd.Stderr = outputBuf
+	// Under verbose output the command's stream also goes to the terminal as it
+	// arrives, so a long build is something to watch rather than a cursor that
+	// sits there for two minutes. The buffer still gets everything, so what the
+	// model is told is unchanged.
+	sink := io.Writer(outputBuf)
+	if t.cfg.LLM.Verbose > 0 {
+		sink = io.MultiWriter(outputBuf, os.Stderr)
+	}
+	cmd.Stdout = sink
+	cmd.Stderr = sink
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start command: %w", err)

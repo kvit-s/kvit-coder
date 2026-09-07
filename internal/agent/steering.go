@@ -6,7 +6,20 @@ import (
 
 	"github.com/kvit-s/kvit-coder/internal/inbox"
 	"github.com/kvit-s/kvit-coder/internal/llm"
+	"github.com/kvit-s/kvit-coder/internal/tools"
 )
+
+// pollProcesses brings the background-process records up to date and queues
+// what the model has not been told: a process that ended, or a periodic probe
+// whose output moved on. Doing it here rather than with a model call per tick
+// is the point of the registry — watching something costs nothing until there
+// is something to say.
+func (r *Runner) pollProcesses() {
+	if r.procs == nil || r.inbox == nil {
+		return
+	}
+	tools.ProcessEvents(r.procs, r.inbox)
+}
 
 // drainInbox takes everything that arrived since the last iteration and puts it
 // in front of the model. It runs at the top of an iteration, before the
