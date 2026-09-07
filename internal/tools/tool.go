@@ -43,6 +43,15 @@ type Tool interface {
 	PromptTemplateName() string
 }
 
+// ShortPromptTool is an optional interface a Tool implements to give a briefer
+// version of its documentation, used under the strong agent profile. The short
+// form says only what the schema cannot: the failure modes and the invariants —
+// Read's truncation limits, Edit's byte-exact match, the shell's statelessness.
+// A tool that does not implement it keeps its full section under both profiles.
+type ShortPromptTool interface {
+	ShortPromptSection() string
+}
+
 // ParallelSafeTool is an optional interface a Tool implements to say it can run
 // at the same time as other calls in a Batch. Only a tool that reads is safe:
 // Read, Search and the process-status tools return true, while Edit, Write and

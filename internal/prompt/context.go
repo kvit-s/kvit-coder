@@ -9,8 +9,17 @@ import (
 type PromptContext struct {
 	// Configuration
 	WorkspaceRoot string
-	EditMode      string // "searchreplace", "patch", "lines"
-	PreviewMode   bool
+	// Strong is the agent profile. Under it the prompt says what the schema
+	// cannot and stops there: no numbered workflow, no worked example, and the
+	// short form of each tool's documentation. Under the weak profile the
+	// longer prompts stay, so a run on a weaker model is unchanged.
+	Strong bool
+	// Environment describes where this session is running: platform, shell,
+	// working directory, date, git branch and status, and what is in the
+	// workspace root.
+	Environment string
+	EditMode    string // "searchreplace", "patch", "lines"
+	PreviewMode bool
 
 	// Enabled tools (for conditionals)
 	HasRead       bool
@@ -37,6 +46,8 @@ type PromptContext struct {
 func NewPromptContext(registry RegistryInterface, cfg *config.Config) PromptContext {
 	ctx := PromptContext{
 		WorkspaceRoot: cfg.Workspace.Root,
+		Strong:        cfg.Agent.IsStrong(),
+		Environment:   Environment(cfg.Workspace.Root),
 		Config:        cfg,
 	}
 

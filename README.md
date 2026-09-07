@@ -399,7 +399,14 @@ cache. Setting `KVIT_RUN_ID` in the environment pins a value instead.
 | `project_instructions.enabled` | Load project instructions before `-p` prompts (default true) |
 | `project_instructions.path` | Project instructions file path; relative paths resolve from the launch directory (default `CLAUDE.md`) |
 
-**Profiles.** A lot of the loop exists to catch a model getting confused:
+**Profiles.** The profile also chooses the system prompt. Under `strong` it is
+the environment this session is running in, how the session works (steering,
+background processes, questions, interruption), and each tool's failure modes —
+about 4KB. Under `weak` it keeps the numbered workflow, the worked editing
+example and the long tool documentation, about 7KB. Whether the shorter prompt
+scores better is a measurement: run thinkbench with each.
+
+A lot of the loop exists to catch a model getting confused:
 backtracking away from a bad tool call, ending a turn after three identical
 calls, a confirm handshake before an edit is applied, scraping tool calls out of
 prose, fuzzy matching and indentation repair, asking the model to explain an

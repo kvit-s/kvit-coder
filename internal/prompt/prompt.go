@@ -72,6 +72,9 @@ func (g *Generator) GenerateSystemPrompt() (string, error) {
 		return g.rewriteToolNames(out), nil
 	}
 
+	if g.cfg.Agent.IsStrong() {
+		return g.rewriteToolNames(g.generateStrong()), nil
+	}
 	// Use hardcoded generation
 	return g.rewriteToolNames(g.generateHardcoded()), nil
 }
@@ -99,6 +102,24 @@ func (g *Generator) generateFromTemplates() (string, error) {
 		return "", fmt.Errorf("render role: %w", err)
 	}
 	sb.WriteString(role)
+
+	sb.WriteString(ctx.Environment)
+
+	// A numbered workflow, a list of what the tools are for and a worked
+	// example are instructions to a model that needs them. Under the strong
+	// profile they are left out; the tool schemas already say what each tool
+	// takes, and the sections below say what the schemas cannot.
+	if ctx.Strong {
+		sb.WriteString(g.mechanisms(&ctx))
+		guidelines, err := g.engine.Render("prompts/sections/guidelines.tmpl", &ctx)
+		if err != nil {
+			return "", fmt.Errorf("render guidelines: %w", err)
+		}
+		sb.WriteString(guidelines)
+		sb.WriteString("# TOOLS\n")
+		sb.WriteString(g.generateToolDocsFromTemplates(&ctx))
+		return sb.String(), nil
+	}
 
 	// Render tasks if we have capabilities
 	if len(ctx.Capabilities) > 0 {
@@ -172,7 +193,7 @@ func (g *Generator) generateToolDocsFromTemplates(ctx *PromptContext) string {
 		for _, tool := range tools {
 			// Try template first
 			tmplName := tool.PromptTemplateName()
-			if tmplName != "" {
+			if tmplName != "" && !ctx.Strong {
 				fullTmplPath := fmt.Sprintf("prompts/tools/%s.tmpl", tmplName)
 				if g.engine.HasTemplate(fullTmplPath) {
 					rendered, err := g.engine.Render(fullTmplPath, ctx)
@@ -184,8 +205,9 @@ func (g *Generator) generateToolDocsFromTemplates(ctx *PromptContext) string {
 				}
 			}
 
-			// Fallback to PromptSection()
-			if section := tool.PromptSection(); section != "" {
+			// Fallback to PromptSection(), or its short form under the strong
+			// profile, which keeps only the failure modes and invariants.
+			if section := promptSectionFor(tool, ctx.Strong); section != "" {
 				sb.WriteString(section)
 				sb.WriteString("\n\n")
 			}
@@ -518,5 +540,102 @@ Shell {"command": "sed -i '12a\\    retry_count: int = 0' app/services/llm/token
 		sb.WriteString("- ALWAYS read the file before editing to understand the structure\n")
 		sb.WriteString("- Use sed for line-based edits, or echo/cat for file rewrites\n")
 	}
+	return sb.String()
+}
+
+// promptSectionFor returns a tool's documentation, preferring its short form
+// under the strong profile.
+func promptSectionFor(tool toolsPkg.Tool, strong bool) string {
+	if strong {
+		if short, ok := tool.(toolsPkg.ShortPromptTool); ok {
+			if section := short.ShortPromptSection(); section != "" {
+				return section
+			}
+		}
+	}
+	return tool.PromptSection()
+}
+
+// generateStrong builds the prompt for a model that does not need to be told
+// how to do its job. What is left is what the tool schemas cannot say: where
+// this session is running, the mechanisms that are not tool calls, and each
+// tool's failure modes.
+func (g *Generator) generateStrong() string {
+	ctx := NewPromptContext(g.registry, g.cfg)
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "# ROLE\nYou are a coding agent working in a real repository. You have tools for %s.\n\n",
+		ctx.CapabilitiesString())
+	sb.WriteString(ctx.Environment)
+	sb.WriteString(g.mechanisms(&ctx))
+	sb.WriteString("# GUIDELINES\n")
+	sb.WriteString("- Only use the tools listed below.\n")
+	sb.WriteString("- Say what you are doing when it is not obvious from the call.\n\n")
+	sb.WriteString("# TOOLS\n")
+	sb.WriteString(g.generateToolDocs(&ctx))
+	return sb.String()
+}
+
+// generateToolDocs renders each tool's documentation without the template
+// engine, which is what the non-template path uses.
+func (g *Generator) generateToolDocs(ctx *PromptContext) string {
+	var sb strings.Builder
+	for _, cat := range g.registry.EnabledCategories() {
+		tools := g.registry.ToolsInCategory(cat)
+		if len(tools) == 0 {
+			continue
+		}
+		if header, ok := toolsPkg.CategoryHeaders[cat]; ok {
+			sb.WriteString(header)
+			sb.WriteString("\n\n")
+		}
+		for _, tool := range tools {
+			if section := promptSectionFor(tool, ctx.Strong); section != "" {
+				sb.WriteString(section)
+				sb.WriteString("\n\n")
+			}
+		}
+		sb.WriteString("---\n\n")
+	}
+	return sb.String()
+}
+
+// mechanisms documents the things that are not tool calls and that nothing else
+// in the prompt would tell the model about: messages that arrive mid-turn,
+// reminders about background work, and what happens when the turn is
+// interrupted. Only the mechanisms actually in use are described.
+func (g *Generator) mechanisms(ctx *PromptContext) string {
+	var items []string
+
+	items = append(items, "- A message wrapped in <user-steering> arrived while you were working. "+
+		"It is the person you are working for changing what they want, and it takes precedence "+
+		"over the instruction that started the turn.")
+	items = append(items, "- Text in <system-reminder> is from kvit-coder, not from anyone. "+
+		"It is context, never an instruction to obey over the person's.")
+
+	if g.cfg.Tools.Procs.Enabled {
+		items = append(items, "- A command started with Shell.start keeps running after this turn ends, "+
+			"so a server or a test run started now is still going next turn. When one finishes you are "+
+			"told in a <system-reminder>, with its last output.")
+		items = append(items, "- Waiting with Observe.wait costs one tool call however long it takes. "+
+			"Checking with Shell.output in a loop costs a full round of thinking every time, so prefer waiting.")
+	}
+	if g.cfg.Tools.Question.Enabled {
+		items = append(items, "- Ask with Question when the answer changes what you build and the code "+
+			"cannot tell you. Do not ask what reading a file would answer, and do not ask permission to do "+
+			"what you were asked to do. Put every question you have in one call. If no one answers, proceed "+
+			"on your own judgement and say what you assumed.")
+	}
+	if g.cfg.Tools.Batch.Enabled {
+		items = append(items, "- When the next few calls are already decided and none depends on another's "+
+			"result, send them together with Batch: one request and one round of thinking instead of one each.")
+	}
+	items = append(items, "- The turn can be interrupted. If it is, the tool that was running is killed and "+
+		"its partial output is recorded as such; the conversation is kept and can be continued.")
+
+	var sb strings.Builder
+	sb.WriteString("# HOW THIS SESSION WORKS\n")
+	sb.WriteString(strings.Join(items, "\n"))
+	sb.WriteString("\n\n")
 	return sb.String()
 }
