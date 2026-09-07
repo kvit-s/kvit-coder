@@ -40,7 +40,7 @@ is present today; the design in Section 2 builds on it.
 
 ### 1.1 The `Tool` interface
 
-Every tool implements [internal/tools/tool.go](internal/tools/tool.go), a nine-method
+Every tool implements [internal/tools/tool.go](../../internal/tools/tool.go), a nine-method
 interface. The methods divide into three groups:
 
 - **Identity and schema**, read when building the request to the model:
@@ -57,15 +57,15 @@ the function's parameter schema. This matters: an MCP server already hands us it
 
 ### 1.2 The registry and how tools reach the model
 
-`Registry` ([internal/tools/registry.go](internal/tools/registry.go)) is a
+`Registry` ([internal/tools/registry.go](../../internal/tools/registry.go)) is a
 `map[string]Tool` keyed by tool name. Two methods are central:
 
-- `Specs()` ([registry.go:65](internal/tools/registry.go#L65)) sorts the tool names and emits
+- `Specs()` ([registry.go:65](../../internal/tools/registry.go#L65)) sorts the tool names and emits
   one `llm.ToolSpec` per tool, copying `Name()`, `Description()`, and `JSONSchema()` into the
   spec. The sorted order exists to keep the request body byte-stable for prompt caching on the
   model server. The resulting `[]llm.ToolSpec` becomes `ChatRequest.Tools`
-  ([internal/llm/types.go:66](internal/llm/types.go#L66)).
-- `Get(name)` ([registry.go:60](internal/tools/registry.go#L60)) is how the agent loop finds
+  ([internal/llm/types.go:66](../../internal/llm/types.go#L66)).
+- `Get(name)` ([registry.go:60](../../internal/tools/registry.go#L60)) is how the agent loop finds
   the tool to run for a given call.
 
 The registry also owns text-fallback parsing for models that emit tool calls as prose
@@ -74,54 +74,54 @@ tool names, so any registered MCP tool is automatically covered.
 
 ### 1.3 How the agent loop dispatches a call
 
-The loop lives in [internal/agent/runner_tools.go](internal/tools). For each tool call in an
+The loop lives in [internal/agent/runner_tools.go](../../internal/tools). For each tool call in an
 assistant message, `executeSingleTool`
-([runner_tools.go:74](internal/agent/runner_tools.go#L74)):
+([runner_tools.go:74](../../internal/agent/runner_tools.go#L74)):
 
 1. looks the tool up with `r.registry.Get(tc.Function.Name)`; an unknown name produces a
    backtrackable "Unknown tool" semantic error;
 2. checks pending-edit state (irrelevant to MCP tools, which set none);
 3. normalizes arguments with `tools.NormalizeToolCallArguments(tool, args)`
-   ([internal/tools/argument_normalizer.go:70](internal/tools/argument_normalizer.go#L70)),
+   ([internal/tools/argument_normalizer.go:70](../../internal/tools/argument_normalizer.go#L70)),
    which is schema-driven and is a safe pass-through for schemas it does not recognize;
 4. runs `tool.Check(ctx, args)`;
 5. detects an immediate duplicate call (same name + same arguments as the previous call) and,
    past a threshold, aborts the run to break infinite loops;
 6. runs the tool through `executeToolWithTimeout`
-   ([runner_tools.go:338](internal/agent/runner_tools.go#L338)), appends the result as a
+   ([runner_tools.go:338](../../internal/agent/runner_tools.go#L338)), appends the result as a
    `tool`-role message, and records it for loop detection.
 
 Two details in step 6 directly constrain the MCP design:
 
 - **A hard 15-second timeout is applied to every tool except `Shell` and `Shell.advanced`**
-  ([runner_tools.go:364](internal/agent/runner_tools.go#L364)). MCP tool calls (a web fetch, a
+  ([runner_tools.go:364](../../internal/agent/runner_tools.go#L364)). MCP tool calls (a web fetch, a
   database query, a browser action) routinely exceed this. MCP tools must be exempted from
   this blanket timeout and given their own configurable per-call deadline.
 - **The result is serialized with `json.MarshalIndent`**
-  ([runner_tools.go:406](internal/agent/runner_tools.go#L406)) and a one-line summary is
+  ([runner_tools.go:406](../../internal/agent/runner_tools.go#L406)) and a one-line summary is
   produced by `ui.GetResultSummary`. Whatever the adapter's `Call` returns must serialize to
   something the model can read.
 
 Error handling distinguishes *backtrackable* (recoverable, model-misuse) errors from fatal
 ones via `tools.IsBacktrackable` / `tools.SemanticErrorf` / `tools.WrapAsSemantic`
-([internal/tools/errors.go](internal/tools/errors.go)). The success/error string convention
+([internal/tools/errors.go](../../internal/tools/errors.go)). The success/error string convention
 the loop recognizes is a leading `Error:` or a `"success": false` field
-([runner_tools.go:299](internal/agent/runner_tools.go#L299)).
+([runner_tools.go:299](../../internal/agent/runner_tools.go#L299)).
 
 ### 1.4 How tools are enabled and the prompt is built
 
-`SetupRegistry` ([internal/tools/setup.go:30](internal/tools/setup.go#L30)) is a plain
+`SetupRegistry` ([internal/tools/setup.go:30](../../internal/tools/setup.go#L30)) is a plain
 synchronous function: it reads `cfg.Tools.*`, constructs the enabled built-in tools, and
 returns a populated registry. It is called once in
-[cmd/kvit-coder/main.go:338](cmd/kvit-coder/main.go#L338), alongside the other
+[cmd/kvit-coder/main.go:338](../../cmd/kvit-coder/main.go#L338), alongside the other
 session-scoped managers (`tempFileMgr`, `planManager`, `checkpointMgr`), each of which is
 created in `main`, passed into `SetupConfig`, and cleaned up with a `defer`.
 
 The system prompt's per-tool documentation is generated by category. `GenerateToolPrompt`
-([registry.go:376](internal/tools/registry.go#L376)) and `EnabledCategories`
-([registry.go:440](internal/tools/registry.go#L440)) both iterate a **hardcoded** category
+([registry.go:376](../../internal/tools/registry.go#L376)) and `EnabledCategories`
+([registry.go:440](../../internal/tools/registry.go#L440)) both iterate a **hardcoded** category
 list, `{"filesystem", "shell", "plan", "checkpoint"}`, and `CategoryHeaders`
-([registry.go:31](internal/tools/registry.go#L31)) maps each category to a markdown header.
+([registry.go:31](../../internal/tools/registry.go#L31)) maps each category to a markdown header.
 A new category for MCP tools requires touching these three places.
 
 ### 1.5 The single wiring point
@@ -130,7 +130,7 @@ The `kvit-coder-ui` binary is only a terminal front-end; it launches the headles
 `kvit-coder` binary as a subprocess (see its `-agent-path` flag) and does not build a
 registry itself. The Go wiring that constructs the registry and runner therefore lives in
 exactly two places that share the same code path: `cmd/kvit-coder/main.go` for normal runs,
-and the benchmark executors ([internal/benchmark/executor.go](internal/benchmark),
+and the benchmark executors ([internal/benchmark/executor.go](../../internal/benchmark),
 `thinkbench_executor.go`), which receive the already-built `runner` and `systemPrompt`. MCP
 setup needs to happen once, in `main`, before the registry is handed to the prompt generator
 and runner.
@@ -190,7 +190,7 @@ into `internal/tools`) is the important architectural boundary regardless of whi
 
 ### 2.3 Config
 
-Add an `MCP` section to `Config` ([internal/config/config.go:14](internal/config/config.go#L14))
+Add an `MCP` section to `Config` ([internal/config/config.go:14](../../internal/config/config.go#L14))
 and a matching struct. It is absent by default, so existing configs are unaffected and the
 feature is zero-cost when unused.
 
@@ -238,7 +238,7 @@ type MCPServerConfig struct {
 }
 ```
 
-Apply defaults in `config.Load` ([config.go:398](internal/config/config.go#L398)) the same
+Apply defaults in `config.Load` ([config.go:398](../../internal/config/config.go#L398)) the same
 way the read/edit/checkpoint defaults are applied (`StartupTimeout` → 20, `CallTimeout` → 120,
 `Confirm` → `"ask_once"`). Note: the `enabled` zero value is `false`, so each server and the
 group must be opt-in. This is consistent with the existing "all tools disabled by default"
@@ -256,7 +256,7 @@ mcp.<server>.<tool>      e.g.  mcp.filesystem.read_file
 
 The dotted form matches the convention already used for `Plan.*`, `Tasks.*`, and
 `Shell.advanced`, and the generic branch of `displayToolCall`
-([runner_tools.go:331](internal/agent/runner_tools.go#L331)) renders it correctly without a
+([runner_tools.go:331](../../internal/agent/runner_tools.go#L331)) renders it correctly without a
 special case. The adapter keeps the *raw* tool name internally for the `tools/call` request
 while presenting the namespaced name to the model via `Name()`.
 
@@ -313,7 +313,7 @@ context with that deadline from the (now un-capped) tool context.
   connect or times out is **logged and skipped**, never fatal: a missing MCP server must not
   prevent the agent from running with its built-in tools. This mirrors how `main` degrades
   gracefully when checkpoint init fails
-  ([main.go:298](cmd/kvit-coder/main.go#L298)).
+  ([main.go:298](../../cmd/kvit-coder/main.go#L298)).
 - **Adapters.** `Tools() []tools.Tool` returns one `MCPTool` per discovered tool, after
   applying each server's allow/deny filter.
 - **Shutdown.** `Close()` sends shutdown/closes transports and reaps subprocesses; wired as a
@@ -330,7 +330,7 @@ need their own trust model, configured by `mcp.confirm` (and overridable per ser
   model invoke it);
 - `ask_once` — prompt the user once per distinct tool name, then remember for the session
   (reuse the `/dev/tty` prompt pattern from
-  [config.go:580](internal/config/config.go#L580));
+  [config.go:580](../../internal/config/config.go#L580));
 - `ask_always` — prompt on every call;
 - `trust` — no prompt.
 
@@ -352,7 +352,7 @@ defer mcpMgr.Close()
 ```
 
 Pass the manager into `SetupConfig` and register its adapters at the end of `SetupRegistry`
-([setup.go](internal/tools/setup.go)):
+([setup.go](../../internal/tools/setup.go)):
 
 ```go
 // SetupConfig gains: MCPTools []Tool   // adapters from the manager (nil when disabled)
@@ -365,7 +365,7 @@ for _, t := range sc.MCPTools {
 Passing the already-built `[]tools.Tool` (rather than the manager) keeps `internal/tools`
 free of any dependency on `internal/mcp`, preventing an import cycle (`mcp` depends on
 `tools` for the `Tool` interface, not the reverse). The benchmark CLI paths
-([internal/benchmark/cli.go](internal/benchmark), `thinkbench_cli.go`) build their registry
+([internal/benchmark/cli.go](../../internal/benchmark), `thinkbench_cli.go`) build their registry
 through the same `main` flow, so they inherit MCP tools automatically; confirm they do not
 re-build the registry independently.
 
@@ -373,14 +373,14 @@ re-build the registry independently.
 
 Add `"mcp"` to the category machinery so MCP tools get their own section:
 
-- `CategoryHeaders` ([registry.go:31](internal/tools/registry.go#L31)):
+- `CategoryHeaders` ([registry.go:31](../../internal/tools/registry.go#L31)):
   `"mcp": "## MCP Tools (external servers)"`.
 - the category slice in `GenerateToolPrompt`
-  ([registry.go:381](internal/tools/registry.go#L381)) and `categoryOrder` in
-  `EnabledCategories` ([registry.go:441](internal/tools/registry.go#L441)): append `"mcp"`.
+  ([registry.go:381](../../internal/tools/registry.go#L381)) and `categoryOrder` in
+  `EnabledCategories` ([registry.go:441](../../internal/tools/registry.go#L441)): append `"mcp"`.
 
 The template-based prompt path
-([internal/prompt/prompt.go:132](internal/prompt/prompt.go#L132)) already iterates
+([internal/prompt/prompt.go:132](../../internal/prompt/prompt.go#L132)) already iterates
 `EnabledCategories()` and falls back to `PromptSection()` when a tool has no template, so MCP
 tools render there without new template files. The section should make clear to the model
 that these tools come from external servers and may have side effects outside the workspace.
@@ -397,7 +397,7 @@ in-house and pin the dependency. No behavior yet.
 `tools/call`), the manager (concurrent connect, graceful skip, `Close`), and the `MCPTool`
 adapter. Wire into `main` and `SetupRegistry`. Land the `"mcp"` prompt category. Exempt MCP
 tools from the 15s blanket timeout
-([runner_tools.go:364](internal/agent/runner_tools.go#L364)) and route them through the
+([runner_tools.go:364](../../internal/agent/runner_tools.go#L364)) and route them through the
 per-call deadline. At the end of this phase, a configured stdio server's tools are callable by
 the model.
 
@@ -440,14 +440,14 @@ the headless output and the TUI; show MCP tool calls distinctly in the writer.
 - **Security and trust.** MCP tools bypass workspace path safety entirely and may carry
   secrets in `env`/`headers`. The `confirm` policy is the gate; document clearly that
   enabling a server grants the model whatever that server can do. Never log expanded
-  secrets (the safety audit redactor in [internal/safety](internal/safety) is a reference for
+  secrets (the safety audit redactor in [internal/safety](../../internal/safety) is a reference for
   redaction).
 - **Concurrency in the client.** The agent loop is single-threaded per session, but a stdio
   client still needs a reader goroutine and an id-keyed pending-request map to correlate
   responses, plus handling of server-initiated notifications.
 - **Duplicate-call guard vs. side-effecting tools.** A non-idempotent MCP tool legitimately
   called twice with identical args will trip the duplicate-call abort
-  ([runner_tools.go:191](internal/agent/runner_tools.go#L191)). Acceptable initially; note it,
+  ([runner_tools.go:191](../../internal/agent/runner_tools.go#L191)). Acceptable initially; note it,
   and consider a per-tool opt-out later.
 - **Result size.** Tool results land in the context window verbatim. Cap MCP text results
   (reuse the temp-file spill pattern that `Search`/`Shell` use via `TempFileManager`) and
