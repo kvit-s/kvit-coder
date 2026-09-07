@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kvit-s/kvit-coder/internal/config"
@@ -292,6 +294,26 @@ func (u *UI) runAgent(prompt string) {
 		args = append(args, "-s", u.currentSession)
 	}
 
+	// Ctrl-C at the terminal signals every process in the foreground group,
+	// which is this UI as well as the agent it started. While the agent runs
+	// the interrupt is the agent's to handle — it stops the turn, saves it and
+	// exits — so the UI takes the signal and throws it away, staying at its
+	// prompt. Without this a single ctrl-c ended the whole session, which is
+	// not what "cancel this turn" should mean.
+	//
+	// Catching rather than ignoring matters: an ignored signal stays ignored
+	// across exec, so signal.Ignore here would leave the agent unable to see
+	// ctrl-c at all. A caught one is reset to the default on exec, which is
+	// what lets the agent install its own handler.
+	interrupts := make(chan os.Signal, 4)
+	signal.Notify(interrupts, syscall.SIGINT)
+	defer signal.Stop(interrupts)
+	go func() {
+		for range interrupts {
+			// The agent has it.
+		}
+	}()
+
 	// Create command
 	cmd := exec.Command(u.agentPath, args...)
 	cmd.Stdout = os.Stdout
@@ -304,8 +326,9 @@ func (u *UI) runAgent(prompt string) {
 	// Run and wait for completion
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			if exitErr.ExitCode() == 2 {
-				// User interrupt (SIGINT)
+			// 130 is the shell's convention for "killed by SIGINT"; the agent
+			// exits with it after a second ctrl-c.
+			if code := exitErr.ExitCode(); code == 2 || code == 130 {
 				fmt.Println("[cancelled]")
 			}
 		} else {

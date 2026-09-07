@@ -1,11 +1,11 @@
 package tools
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/inbox"
 	"github.com/kvit-s/kvit-coder/internal/permissions"
@@ -114,16 +114,6 @@ func (t *ShellAdvancedTool) askToGrant(grantor *permissions.Grantor, verdict per
 	box := t.toolCtx.Inbox()
 	out := io.Writer(os.Stderr)
 
-	// Anything typed before the question was asked belongs to the turn, not to
-	// this decision.
-	notForUs := box.Drain()
-	defer func() {
-		for _, m := range notForUs {
-			box.Push(m)
-		}
-	}()
-	askedAt := time.Now()
-
 	var sb strings.Builder
 	sb.WriteString("\n── permission ──\n")
 	sb.WriteString(verdict.Reason() + "\n")
@@ -136,26 +126,16 @@ func (t *ShellAdvancedTool) askToGrant(grantor *permissions.Grantor, verdict per
 		sb.WriteString("\n")
 	}
 	sb.WriteString(fmt.Sprintf("  [1-%d, or anything else to refuse]\n", len(grantChoices)))
-	fmt.Fprint(out, sb.String())
 
-	poll := time.NewTicker(250 * time.Millisecond)
-	defer poll.Stop()
-
-	for {
-		batch := box.Drain()
-		for i, m := range batch {
-			if m.Kind != inbox.KindUserLine || m.At.Before(askedAt) {
-				notForUs = append(notForUs, m)
-				continue
-			}
-			notForUs = append(notForUs, batch[i+1:]...)
-			return t.applyGrant(grantor, verdict, strings.TrimSpace(m.Text), out)
-		}
-		select {
-		case <-box.Signal():
-		case <-poll.C:
-		}
+	// Ask through the inbox, the process's only reader of the terminal. A line
+	// typed before the question was drawn was not answering it, and Ask hands
+	// those back to the loop as ordinary steering.
+	answer, outcome := box.Ask(context.Background(), out, sb.String(), 0)
+	if outcome != inbox.AskAnswered {
+		fmt.Fprintln(out, "  refused")
+		return false, nil
 	}
+	return t.applyGrant(grantor, verdict, answer, out)
 }
 
 func (t *ShellAdvancedTool) applyGrant(grantor *permissions.Grantor, verdict permissions.Verdict, answer string, out io.Writer) (bool, error) {

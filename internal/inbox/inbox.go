@@ -7,8 +7,10 @@
 package inbox
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -230,4 +232,77 @@ func Deliver(dir string, m Message) (string, error) {
 		return "", fmt.Errorf("failed to deliver inbox message: %w", err)
 	}
 	return final, nil
+}
+
+// AskOutcome says why Ask returned.
+type AskOutcome int
+
+const (
+	// AskAnswered means someone typed a line.
+	AskAnswered AskOutcome = iota
+	// AskCancelled means the turn was cancelled before anyone answered.
+	AskCancelled
+	// AskTimedOut means the time allowed ran out.
+	AskTimedOut
+)
+
+// Ask puts a question to whoever is at the terminal and returns the first line
+// typed after it.
+//
+// Every prompt kvit-coder makes goes through here, because two readers of one
+// terminal is a race for each keystroke and the loser waits forever. There is
+// one reader of stdin in the process — the one filling this inbox — and a
+// prompt claims the next line from it rather than opening the terminal again.
+//
+// A line typed before the question was asked was not answering it, so it is
+// held aside and put back for the loop to treat as ordinary steering. A
+// timeout of zero or less waits indefinitely.
+func (i *Inbox) Ask(ctx context.Context, out io.Writer, prompt string, timeout time.Duration) (string, AskOutcome) {
+	var notForUs []Message
+	defer func() {
+		for _, m := range notForUs {
+			i.Push(m)
+		}
+	}()
+	notForUs = append(notForUs, i.Drain()...)
+
+	askedAt := time.Now()
+	if out != nil && prompt != "" {
+		fmt.Fprint(out, prompt)
+	}
+
+	var deadline <-chan time.Time
+	if timeout > 0 {
+		timer := time.NewTimer(timeout)
+		defer timer.Stop()
+		deadline = timer.C
+	}
+
+	// Poll as well as wait on the signal: the signal fires for lines pushed in
+	// this process, while a file dropped in the session inbox is only noticed
+	// by a drain.
+	poll := time.NewTicker(250 * time.Millisecond)
+	defer poll.Stop()
+
+	for {
+		batch := i.Drain()
+		for idx, m := range batch {
+			if m.Kind != KindUserLine || m.At.Before(askedAt) {
+				notForUs = append(notForUs, m)
+				continue
+			}
+			// Whatever came out with the answer is the loop's.
+			notForUs = append(notForUs, batch[idx+1:]...)
+			return strings.TrimSpace(m.Text), AskAnswered
+		}
+
+		select {
+		case <-ctx.Done():
+			return "", AskCancelled
+		case <-deadline:
+			return "", AskTimedOut
+		case <-i.Signal():
+		case <-poll.C:
+		}
+	}
 }

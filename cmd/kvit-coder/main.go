@@ -465,6 +465,26 @@ func main() {
 	// A tool that waits for a person must agree with whether one is there.
 	toolCtx.SetInteractive(interactive)
 
+	// With a line reader running it is the only thing reading the terminal, so
+	// every prompt in the process claims its answer from the inbox rather than
+	// opening the terminal again. Two readers on one terminal is a race for
+	// each keystroke, and the loser waits forever — which is what made a path
+	// confirmation hang while the line you typed was queued as steering.
+	if interactive {
+		ask := func(prompt string) (string, bool) {
+			// runCtx, not the tool's context: waiting for a person is not the
+			// tool being slow, and only an interrupt should end the wait. The
+			// time is recorded so the loop can subtract it from the tool's
+			// own clock.
+			started := time.Now()
+			answer, outcome := steering.Ask(runCtx, os.Stderr, prompt, 0)
+			toolCtx.AddPromptWait(time.Since(started))
+			return answer, outcome == inbox.AskAnswered
+		}
+		config.SetLinePrompter(ask)
+		mcp.SetLinePrompter(ask)
+	}
+
 	// Setup tool registry using the new setup function
 	registry := tools.SetupRegistry(tools.SetupConfig{
 		Cfg:           cfg,

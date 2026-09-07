@@ -892,13 +892,51 @@ func (c *Config) CheckPathSafety(toolName, identifier string) error {
 }
 
 // promptForPathAccess prompts the user to confirm path access
-func (c *Config) promptForPathAccess(toolName, path string) bool {
-	// Print newline to clear any progress dots on the same line
-	fmt.Fprintf(os.Stderr, "\n")
-	fmt.Fprintf(os.Stderr, "⚠️  %s accesses path outside workspace:\n", toolName)
-	fmt.Fprintf(os.Stderr, "   - %s\n", path)
-	fmt.Fprintf(os.Stderr, "\nAllow this access? [y/N]: ")
+// linePrompter, when set, asks whoever is at the terminal a question and
+// returns their answer. cmd/kvit-coder installs one that reads through the
+// session inbox, which is the process's only reader of the terminal. Opening
+// /dev/tty here as well would put two reads on one device, and the keystroke
+// goes to whichever of them the kernel picks — the other waits forever.
+var (
+	linePrompterMu sync.Mutex
+	linePrompter   func(prompt string) (string, bool)
+)
 
+// SetLinePrompter installs the function used to ask the person at the terminal
+// a question. Passing nil restores reading the terminal directly, which is what
+// a run with no line reader does.
+func SetLinePrompter(fn func(prompt string) (string, bool)) {
+	linePrompterMu.Lock()
+	defer linePrompterMu.Unlock()
+	linePrompter = fn
+}
+
+func askLine(prompt string) (string, bool, bool) {
+	linePrompterMu.Lock()
+	fn := linePrompter
+	linePrompterMu.Unlock()
+	if fn == nil {
+		return "", false, false
+	}
+	answer, ok := fn(prompt)
+	return answer, ok, true
+}
+
+func (c *Config) promptForPathAccess(toolName, path string) bool {
+	question := fmt.Sprintf("\n⚠️  %s accesses path outside workspace:\n   - %s\n\nAllow this access? [y/N]: ",
+		toolName, path)
+
+	if answer, ok, handled := askLine(question); handled {
+		if !ok {
+			fmt.Fprintln(os.Stderr, "  no answer; access refused")
+			return false
+		}
+		answer = strings.ToLower(strings.TrimSpace(answer))
+		return answer == "y" || answer == "yes"
+	}
+
+	// No line reader running, so read the terminal directly.
+	fmt.Fprint(os.Stderr, question)
 	tty, err := os.Open("/dev/tty")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to open /dev/tty: %v\n", err)

@@ -229,75 +229,39 @@ func (t *QuestionTool) ask(ctx context.Context, box *inbox.Inbox, spec questionS
 		return answer, nil
 	}
 
-	// Anything typed before the question appeared cannot be answering it, and
-	// neither can a process event. Those belong to the loop, so they are held
-	// aside and put back when this call returns — holding rather than pushing
-	// back immediately also keeps the wait below from waking on its own
-	// pushes. Without this rule a stale steering line is silently taken as the
-	// answer to a question nobody read.
-	var notForUs []inbox.Message
-	defer func() {
-		for _, m := range notForUs {
-			box.Push(m)
-		}
-	}()
-	notForUs = append(notForUs, box.Drain()...)
-
-	askedAt := t.now()
-	t.render(spec)
-
 	// With a person at the terminal, wait as long as it takes: a timeout
 	// firing while you are away is worse than waiting. With no terminal, wait
 	// tools.question.timeout — zero by default, so a scripted or benchmark run
 	// falls back at once rather than hanging.
-	var deadline <-chan time.Time
+	var wait time.Duration
 	if !t.interactive() {
-		wait := time.Duration(t.cfg.Tools.Question.Timeout) * time.Second
+		wait = time.Duration(t.cfg.Tools.Question.Timeout) * time.Second
 		if wait <= 0 {
+			t.render(spec)
 			answer.Unanswered = true
 			t.say(unansweredNote)
 			return answer, nil
 		}
-		timer := time.NewTimer(wait)
-		defer timer.Stop()
-		deadline = timer.C
 	}
 
-	// Poll as well as wait on the signal: the signal fires for lines pushed in
-	// this process, while a file dropped in the session inbox is only noticed
-	// by a drain.
-	poll := time.NewTicker(250 * time.Millisecond)
-	defer poll.Stop()
-
-	for {
-		batch := box.Drain()
-		for i, m := range batch {
-			if m.Kind != inbox.KindUserLine || m.At.Before(askedAt) {
-				notForUs = append(notForUs, m)
-				continue
-			}
-			t.fill(&answer, spec, m.Text)
-			// Whatever else came out with the answer is the loop's.
-			notForUs = append(notForUs, batch[i+1:]...)
-			return answer, nil
-		}
-
-		select {
-		case <-ctx.Done():
-			// Ctrl-C is dismissal. Recording it is what stops the model asking
-			// the same thing on the next turn.
-			answer.Dismissed = true
-			t.toolCtx.RecordDismissedQuestion(spec.Question)
-			t.say("question dismissed")
-			return answer, nil
-		case <-deadline:
-			answer.Unanswered = true
-			t.say(unansweredNote)
-			return answer, nil
-		case <-box.Signal():
-		case <-poll.C:
-		}
+	// Ask through the inbox, which is the process's only reader of the
+	// terminal. A line typed before the question was drawn was not answering
+	// it, and Ask hands those back to the loop as ordinary steering.
+	text, outcome := box.Ask(ctx, t.out, t.renderText(spec), wait)
+	switch outcome {
+	case inbox.AskAnswered:
+		t.fill(&answer, spec, text)
+	case inbox.AskCancelled:
+		// Ctrl-C is dismissal. Recording it is what stops the model asking
+		// the same thing on the next turn.
+		answer.Dismissed = true
+		t.toolCtx.RecordDismissedQuestion(spec.Question)
+		t.say("question dismissed")
+	default:
+		answer.Unanswered = true
+		t.say(unansweredNote)
 	}
+	return answer, nil
 }
 
 // fill turns what was typed into an answer. A bare number picks an option,
@@ -342,6 +306,11 @@ func selectOptions(spec questionSpec, text string) ([]string, bool) {
 
 // render draws the question above the input line.
 func (t *QuestionTool) render(spec questionSpec) {
+	fmt.Fprint(t.out, t.renderText(spec))
+}
+
+// renderText is the question as it appears above the input line.
+func (t *QuestionTool) renderText(spec questionSpec) string {
 	var sb strings.Builder
 	sb.WriteString("\n")
 	if spec.Header != "" {
@@ -356,7 +325,7 @@ func (t *QuestionTool) render(spec questionSpec) {
 		sb.WriteString("\n")
 	}
 	sb.WriteString("  " + inputHint(spec) + "\n")
-	fmt.Fprint(t.out, sb.String())
+	return sb.String()
 }
 
 // inputHint says which mode the input line is in.

@@ -184,6 +184,11 @@ type toolExecutionResult struct {
 	tasksToolExecuted   bool
 }
 
+// blanketToolTimeout bounds a tool that does not manage its own deadline.
+// Time spent waiting for a person to answer a prompt is subtracted before this
+// is applied, so a slow answer is not reported as a slow tool.
+const blanketToolTimeout = 15 * time.Second
+
 // Constants for loop and retry limits
 const (
 	maxConsecutiveDuplicates     = 3

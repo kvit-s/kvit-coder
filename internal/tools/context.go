@@ -3,6 +3,7 @@ package tools
 import (
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/inbox"
 	"github.com/kvit-s/kvit-coder/internal/permissions"
@@ -36,6 +37,13 @@ type ToolContext struct {
 	grantorMu sync.Mutex
 	grantor   *permissions.Grantor
 
+	// promptWait is how long this process has spent, in total, waiting for a
+	// person to answer a prompt. The agent loop subtracts it from a tool's
+	// elapsed time before deciding the tool timed out: a read that waited two
+	// minutes for you to allow a path did not take two minutes.
+	promptWaitMu sync.Mutex
+	promptWait   time.Duration
+
 	// interactive says whether someone is at the terminal and able to answer.
 	// It is set once, by whatever started reading stdin, so a tool that waits
 	// for a person and the reader that would feed it never disagree.
@@ -48,6 +56,26 @@ func NewToolContext() *ToolContext {
 	return &ToolContext{
 		ReadTracker: &FileReadTracker{maxEntries: 10},
 	}
+}
+
+// AddPromptWait records time spent waiting for a person to answer.
+func (tc *ToolContext) AddPromptWait(d time.Duration) {
+	if tc == nil || d <= 0 {
+		return
+	}
+	tc.promptWaitMu.Lock()
+	defer tc.promptWaitMu.Unlock()
+	tc.promptWait += d
+}
+
+// PromptWait is the total time spent waiting for a person so far.
+func (tc *ToolContext) PromptWait() time.Duration {
+	if tc == nil {
+		return 0
+	}
+	tc.promptWaitMu.Lock()
+	defer tc.promptWaitMu.Unlock()
+	return tc.promptWait
 }
 
 // SetGrantor gives tools the permission grants that apply to this run.

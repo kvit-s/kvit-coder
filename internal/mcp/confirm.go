@@ -61,32 +61,64 @@ func (c *confirmer) Confirm(toolName, server, policy, argsPreview string) error 
 	}
 }
 
-// ask prompts the user on the controlling terminal. With no /dev/tty available
-// (headless/CI) it denies the call so the run never blocks.
+// linePrompter, when set, asks whoever is at the terminal a question and
+// returns their answer. cmd/kvit-coder installs one that reads through the
+// session inbox, the process's only reader of the terminal. Opening /dev/tty
+// here as well would put two reads on one device, and the keystroke goes to
+// whichever of them the kernel picks — the other waits forever.
+var (
+	linePrompterMu sync.Mutex
+	linePrompter   func(prompt string) (string, bool)
+)
+
+// SetLinePrompter installs the function used to ask the person at the terminal
+// a question. Passing nil restores reading the terminal directly.
+func SetLinePrompter(fn func(prompt string) (string, bool)) {
+	linePrompterMu.Lock()
+	defer linePrompterMu.Unlock()
+	linePrompter = fn
+}
+
+// ask prompts the user through the process's line reader, or on the controlling
+// terminal when there is none. With neither available (headless/CI) it denies
+// the call so the run never blocks.
 func (c *confirmer) ask(toolName, server, argsPreview string, remember bool) error {
-	tty, err := os.Open("/dev/tty")
-	if err != nil {
-		return fmt.Errorf("MCP tool %s requires confirmation but no terminal is available; "+
-			"set mcp.confirm: trust for trusted servers to run headless", toolName)
-	}
-	defer tty.Close()
-
-	fmt.Fprintf(os.Stderr, "\n")
-	fmt.Fprintf(os.Stderr, "⚠️  The model wants to call an external MCP tool:\n")
-	fmt.Fprintf(os.Stderr, "   tool:   %s (server: %s)\n", toolName, server)
+	var question strings.Builder
+	question.WriteString("\n⚠️  The model wants to call an external MCP tool:\n")
+	fmt.Fprintf(&question, "   tool:   %s (server: %s)\n", toolName, server)
 	if argsPreview != "" {
-		fmt.Fprintf(os.Stderr, "   args:   %s\n", argsPreview)
+		fmt.Fprintf(&question, "   args:   %s\n", argsPreview)
 	}
-	fmt.Fprintf(os.Stderr, "   This runs outside the workspace and may have side effects.\n")
-	fmt.Fprintf(os.Stderr, "\nAllow this call? [y/N]: ")
+	question.WriteString("   This runs outside the workspace and may have side effects.\n")
+	question.WriteString("\nAllow this call? [y/N]: ")
 
-	reader := bufio.NewReader(tty)
-	line, err := reader.ReadString('\n')
-	if err != nil && line == "" {
-		return fmt.Errorf("failed to read confirmation for %s: %w", toolName, err)
+	linePrompterMu.Lock()
+	prompt := linePrompter
+	linePrompterMu.Unlock()
+
+	var resp string
+	if prompt != nil {
+		answer, ok := prompt(question.String())
+		if !ok {
+			return fmt.Errorf("no one answered the confirmation for MCP tool %s; do not retry", toolName)
+		}
+		resp = strings.ToLower(strings.TrimSpace(answer))
+	} else {
+		tty, err := os.Open("/dev/tty")
+		if err != nil {
+			return fmt.Errorf("MCP tool %s requires confirmation but no terminal is available; "+
+				"set mcp.confirm: trust for trusted servers to run headless", toolName)
+		}
+		defer tty.Close()
+
+		fmt.Fprint(os.Stderr, question.String())
+		line, err := bufio.NewReader(tty).ReadString('\n')
+		if err != nil && line == "" {
+			return fmt.Errorf("failed to read confirmation for %s: %w", toolName, err)
+		}
+		resp = strings.ToLower(strings.TrimSpace(line))
+		fmt.Fprintf(os.Stderr, "%s\n", resp)
 	}
-	resp := strings.ToLower(strings.TrimSpace(line))
-	fmt.Fprintf(os.Stderr, "%s\n", resp)
 
 	if resp != "y" && resp != "yes" {
 		return fmt.Errorf("user declined MCP tool %s; do not retry", toolName)

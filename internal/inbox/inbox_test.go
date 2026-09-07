@@ -1,6 +1,7 @@
 package inbox
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -162,5 +163,94 @@ func TestSignalFires(t *testing.T) {
 	case <-in.Signal():
 	case <-time.After(time.Second):
 		t.Fatal("the signal did not fire after a push")
+	}
+}
+
+// TestAskClaimsTheNextLine: a prompt takes the line typed after it, and that
+// line does not also reach the loop as steering. This is the bug that made a
+// path confirmation hang: the terminal's only reader queued the "y" as
+// steering while the prompt waited for a keystroke that had already been read.
+func TestAskClaimsTheNextLine(t *testing.T) {
+	in := New("")
+	var out strings.Builder
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		in.Push(Message{Kind: KindUserLine, Text: "y"})
+	}()
+
+	answer, outcome := in.Ask(context.Background(), &out, "Allow this access? [y/N]: ", 0)
+	if outcome != AskAnswered {
+		t.Fatalf("outcome is %v, want answered", outcome)
+	}
+	if answer != "y" {
+		t.Errorf("answer is %q, want %q", answer, "y")
+	}
+	if !strings.Contains(out.String(), "Allow this access?") {
+		t.Errorf("the prompt was not drawn: %q", out.String())
+	}
+	if left := in.Drain(); len(left) != 0 {
+		t.Errorf("the answer also reached the loop as steering: %+v", left)
+	}
+}
+
+// TestAskDoesNotTakeAnEarlierLine: something typed before the prompt appeared
+// was not answering it, so it stays for the loop and the prompt keeps waiting.
+func TestAskDoesNotTakeAnEarlierLine(t *testing.T) {
+	in := New("")
+	in.Push(Message{Kind: KindUserLine, Text: "check the tests too"})
+
+	go func() {
+		time.Sleep(80 * time.Millisecond)
+		in.Push(Message{Kind: KindUserLine, Text: "y"})
+	}()
+
+	answer, outcome := in.Ask(context.Background(), nil, "", 0)
+	if outcome != AskAnswered || answer != "y" {
+		t.Fatalf("Ask returned (%q, %v), want the line typed after the prompt", answer, outcome)
+	}
+
+	left := in.Drain()
+	if len(left) != 1 || left[0].Text != "check the tests too" {
+		t.Errorf("the inbox holds %+v, want the earlier line left for the loop", left)
+	}
+}
+
+// TestAskLeavesProcessEventsForTheLoop: an event is not an answer.
+func TestAskLeavesProcessEventsForTheLoop(t *testing.T) {
+	in := New("")
+
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		in.Push(Message{Kind: KindProcessEvent, Text: "bg1 exited 0"})
+		time.Sleep(30 * time.Millisecond)
+		in.Push(Message{Kind: KindUserLine, Text: "1"})
+	}()
+
+	answer, outcome := in.Ask(context.Background(), nil, "", 0)
+	if outcome != AskAnswered || answer != "1" {
+		t.Fatalf("Ask returned (%q, %v), want the typed line", answer, outcome)
+	}
+	left := in.Drain()
+	if len(left) != 1 || left[0].Kind != KindProcessEvent {
+		t.Errorf("the inbox holds %+v, want the process event left for the loop", left)
+	}
+}
+
+// TestAskCancelsAndTimesOut: the two ways a prompt ends without an answer.
+func TestAskCancelsAndTimesOut(t *testing.T) {
+	in := New("")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+	if _, outcome := in.Ask(ctx, nil, "", 0); outcome != AskCancelled {
+		t.Errorf("outcome after cancelling is %v, want cancelled", outcome)
+	}
+
+	if _, outcome := in.Ask(context.Background(), nil, "", 100*time.Millisecond); outcome != AskTimedOut {
+		t.Errorf("outcome after the timeout is %v, want timed out", outcome)
 	}
 }

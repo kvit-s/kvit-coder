@@ -377,7 +377,7 @@ func (r *Runner) executeToolWithTimeout(
 	var toolCancel context.CancelFunc
 	applied15s := false
 	if internalName != "Shell" && internalName != "Shell.advanced" && !selfTimeout {
-		toolCtx, toolCancel = context.WithTimeout(ctx, 15*time.Second)
+		toolCtx, toolCancel = context.WithTimeout(ctx, blanketToolTimeout)
 		defer toolCancel()
 		applied15s = true
 	}
@@ -390,10 +390,15 @@ func (r *Runner) executeToolWithTimeout(
 		normalizedArgs = json.RawMessage(tc.Function.Arguments)
 	}
 
+	// Time spent waiting for a person to answer a prompt is not the tool
+	// being slow, so it does not count towards the timeout.
+	promptWaitBefore := r.toolCtx.PromptWait()
 	toolResult, toolErr := tool.Call(toolCtx, normalizedArgs)
+	waitedOnPerson := r.toolCtx.PromptWait() - promptWaitBefore
 
-	if applied15s && toolCtx.Err() == context.DeadlineExceeded {
-		toolErr = fmt.Errorf("tool execution timed out after 15 seconds")
+	if applied15s && toolCtx.Err() == context.DeadlineExceeded &&
+		time.Since(toolStart)-waitedOnPerson >= blanketToolTimeout {
+		toolErr = fmt.Errorf("tool execution timed out after %s", blanketToolTimeout)
 	}
 	duration = time.Since(toolStart)
 	close(progressDone)
