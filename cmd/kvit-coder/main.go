@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/kvit-s/kvit-coder/internal/checkpoint"
 	"github.com/kvit-s/kvit-coder/internal/config"
 	ctxtools "github.com/kvit-s/kvit-coder/internal/context"
+	"github.com/kvit-s/kvit-coder/internal/inbox"
 	"github.com/kvit-s/kvit-coder/internal/llm"
 	"github.com/kvit-s/kvit-coder/internal/mcp"
 	"github.com/kvit-s/kvit-coder/internal/prompt"
@@ -33,6 +35,11 @@ var (
 )
 
 func main() {
+	// Subcommands are intercepted before flag.Parse, which has no notion of them.
+	if len(os.Args) > 1 && os.Args[1] == "steer" {
+		os.Exit(runSteer(os.Args[2:]))
+	}
+
 	// Parse flags
 	configPath := flag.String("config", "config.yaml", "path to config file")
 	model := flag.String("model", "", "override model name")
@@ -344,6 +351,20 @@ func main() {
 	// workspace, so the model needs read permission for the paths it is told.
 	cfg.Workspace.AllowedReadPaths = append(cfg.Workspace.AllowedReadPaths, sess.TmpDir())
 
+	// Say which process is running this session's turn, so "kvit-coder steer"
+	// with no -s can find it.
+	endTurn, err := sess.MarkTurnStart()
+	if err != nil {
+		writer.Debug(fmt.Sprintf("Failed to record turn pid: %v", err))
+	}
+	defer endTurn()
+
+	// The inbox is where anything arriving mid-turn waits. The loop drains it
+	// once per iteration.
+	steering := inbox.New(sess.InboxDir())
+	steering.Log = func(msg string) { writer.Warn(msg) }
+	startStdinReader(steering, writer)
+
 	// Initialize temp file manager for shell command outputs. Its files are not
 	// removed at exit: the model may have been given a path to read next turn.
 	tempFileMgr := tools.NewTempFileManager(sess.TmpDir())
@@ -456,6 +477,7 @@ func main() {
 		ContextMiddleware: contextMiddleware,
 		PlanManager:       planManager,
 		ToolCtx:           toolCtx,
+		Inbox:             steering,
 	})
 
 	// Run benchmark mode if requested
@@ -561,4 +583,27 @@ func main() {
 
 	// Run in exec mode (always, since we require -p or --benchmark)
 	repl.RunExec(runner, writer, cfg, systemPrompt, promptText, quietMode, sess, projectInstructions)
+}
+
+// startStdinReader queues each line typed at the terminal for the running
+// turn. It starts only when stdin is a terminal: a piped run and the benchmark
+// harness have a stdin that is not a person, and reading it would consume
+// input meant for something else. The goroutine ends with the process.
+func startStdinReader(steering *inbox.Inbox, writer *ui.Writer) {
+	info, err := os.Stdin.Stat()
+	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		return
+	}
+	go func() {
+		scanner := bufio.NewScanner(os.Stdin)
+		scanner.Buffer(make([]byte, 0, 4096), 1024*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			steering.Push(inbox.Message{Kind: inbox.KindUserLine, Text: line})
+			writer.Info("→ queued")
+		}
+	}()
 }

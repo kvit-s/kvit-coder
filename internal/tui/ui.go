@@ -296,7 +296,10 @@ func (u *UI) runAgent(prompt string) {
 	cmd := exec.Command(u.agentPath, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Stdin = nil // No stdin for the agent
+	// The agent reads stdin for steering: a line typed while a turn is running
+	// reaches the model at its next iteration. The UI is not reading stdin
+	// while it waits for the agent, so there is no contest for it.
+	cmd.Stdin = os.Stdin
 
 	// Run and wait for completion
 	if err := cmd.Run(); err != nil {

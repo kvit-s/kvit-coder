@@ -10,6 +10,7 @@ import (
 	"github.com/kvit-s/kvit-coder/internal/checkpoint"
 	"github.com/kvit-s/kvit-coder/internal/config"
 	ctxtools "github.com/kvit-s/kvit-coder/internal/context"
+	"github.com/kvit-s/kvit-coder/internal/inbox"
 	"github.com/kvit-s/kvit-coder/internal/llm"
 	"github.com/kvit-s/kvit-coder/internal/stats"
 	"github.com/kvit-s/kvit-coder/internal/tools"
@@ -37,6 +38,7 @@ type Runner struct {
 	planManager       *tools.PlanManager
 	toolCtx           *tools.ToolContext
 	interrogator      *Interrogator
+	inbox             *inbox.Inbox
 }
 
 // RunnerOptions contains all dependencies for creating a Runner
@@ -51,6 +53,10 @@ type RunnerOptions struct {
 	ContextMiddleware *ctxtools.Middleware
 	PlanManager       *tools.PlanManager
 	ToolCtx           *tools.ToolContext
+	// Inbox is where anything that arrives mid-turn waits: a line typed at
+	// the terminal, a file dropped by "kvit-coder steer", a background
+	// process exiting. The loop drains it once per iteration. Optional.
+	Inbox *inbox.Inbox
 }
 
 // RunConfig contains per-run configuration options
@@ -91,6 +97,7 @@ func NewRunner(opts RunnerOptions) *Runner {
 		contextMiddleware: opts.ContextMiddleware,
 		planManager:       opts.PlanManager,
 		toolCtx:           opts.ToolCtx,
+		inbox:             opts.Inbox,
 	}
 	// nil when diagnostics are disabled; all call sites are nil-safe.
 	r.interrogator = NewInterrogator(opts.Cfg, opts.LLMClient, opts.Writer, opts.Logger, runID)
@@ -225,6 +232,10 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 				state.messages = fileMessages
 			}
 		}
+
+		// Anything that arrived since the last iteration goes in before the
+		// rollback point, so backtracking cannot discard it.
+		r.drainInbox(state)
 
 		// Save current history length for potential rollback (backtrack mode)
 		rollbackPoint := len(state.messages)

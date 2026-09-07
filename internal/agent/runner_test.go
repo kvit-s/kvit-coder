@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/kvit-s/kvit-coder/internal/config"
+	"github.com/kvit-s/kvit-coder/internal/inbox"
 	"github.com/kvit-s/kvit-coder/internal/llm"
 	"github.com/kvit-s/kvit-coder/internal/tools"
 	"github.com/kvit-s/kvit-coder/internal/ui"
@@ -361,5 +362,114 @@ func TestProviderErrorGivesUp(t *testing.T) {
 	}
 	if len(res.FinalMessages) == 0 {
 		t.Fatal("history is empty")
+	}
+}
+
+// TestSteeringReachesTheNextRequest: a line pushed into the inbox while the
+// turn is running is in the very next request the loop makes, as a user
+// message the model can tell apart from the prompt that started the turn.
+func TestSteeringReachesTheNextRequest(t *testing.T) {
+	box := inbox.New("")
+
+	client := newFakeClient(
+		// The first answer asks for a tool; the user types while it runs.
+		scriptStep{
+			resp: calls(toolCall("c1", "echo", map[string]string{"arg": "a"})).resp,
+			hook: func() { box.Push(inbox.Message{Kind: inbox.KindUserLine, Text: "actually, stop"}) },
+		},
+		answer("stopping"),
+	)
+	runner, _ := newTestRunner(t, testConfig(), client, &scriptedTool{name: "echo"})
+	runner.inbox = box
+
+	res, err := runner.Run(context.Background(), RunConfig{Messages: userStart("go")})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	assertShape(t, res.FinalMessages,
+		"user",
+		"assistant+tool_calls", "tool:echo",
+		"user", // the steering line
+		"assistant",
+	)
+	steer := res.FinalMessages[3]
+	if !strings.Contains(steer.Content, "<user-steering>") || !strings.Contains(steer.Content, "actually, stop") {
+		t.Errorf("the steering message is %q, want it tagged and carrying the typed text", steer.Content)
+	}
+	// It has to be in the request, not just the history.
+	second := client.requests[1].Messages
+	if len(second) != 4 || second[3].Role != llm.RoleUser {
+		t.Fatalf("the second request has %d messages, want the steering line at the end", len(second))
+	}
+	if !strings.Contains(second[3].Content, "actually, stop") {
+		t.Errorf("the second request does not carry the steering line: %q", second[3].Content)
+	}
+}
+
+// TestProcessEventRidesOnTheLastToolResult: an event that is not conversation
+// is appended to the last tool result rather than added as a message, so the
+// assistant/tool pairing the API requires stays intact.
+func TestProcessEventRidesOnTheLastToolResult(t *testing.T) {
+	box := inbox.New("")
+
+	client := newFakeClient(
+		scriptStep{
+			resp: calls(toolCall("c1", "echo", map[string]string{"arg": "a"})).resp,
+			hook: func() {
+				box.Push(inbox.Message{Kind: inbox.KindProcessEvent, Text: "process 3 (npm test) exited with status 1"})
+			},
+		},
+		answer("the tests failed"),
+	)
+	runner, _ := newTestRunner(t, testConfig(), client, &scriptedTool{name: "echo"})
+	runner.inbox = box
+
+	res, err := runner.Run(context.Background(), RunConfig{Messages: userStart("go")})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	assertShape(t, res.FinalMessages,
+		"user",
+		"assistant+tool_calls", "tool:echo",
+		"assistant",
+	)
+	toolResult := res.FinalMessages[2]
+	if !strings.Contains(toolResult.Content, "<system-reminder>") ||
+		!strings.Contains(toolResult.Content, "exited with status 1") {
+		t.Errorf("the process event was not appended to the tool result: %q", toolResult.Content)
+	}
+}
+
+// TestSteeringSurvivesBacktrack: the drain happens before the rollback point
+// is taken, so a backtrack in the same iteration cannot discard what someone
+// just said.
+func TestSteeringSurvivesBacktrack(t *testing.T) {
+	cfg := testConfig()
+	cfg.Backtrack.Enabled = true
+	cfg.Backtrack.MaxRetries = 5
+
+	box := inbox.New("")
+	box.Push(inbox.Message{Kind: inbox.KindUserLine, Text: "look in internal/ instead"})
+
+	client := newFakeClient(
+		calls(toolCall("c1", "bad", map[string]string{"arg": "x"})),
+		answer("found it"),
+	)
+	bad := &scriptedTool{name: "bad", call: func(context.Context, json.RawMessage) (any, error) {
+		return nil, tools.SemanticErrorf("no such path")
+	}}
+	runner, _ := newTestRunner(t, cfg, client, bad)
+	runner.inbox = box
+
+	res, err := runner.Run(context.Background(), RunConfig{Messages: userStart("go")})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	assertShape(t, res.FinalMessages, "user", "user", "assistant")
+	if !strings.Contains(res.FinalMessages[1].Content, "look in internal/ instead") {
+		t.Errorf("the steering line was discarded by the backtrack: %q", res.FinalMessages[1].Content)
 	}
 }

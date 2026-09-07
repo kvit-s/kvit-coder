@@ -122,7 +122,38 @@ Conversation history persists across runs via named sessions:
 ./kvit-coder --session-delete my-feature # delete
 ```
 
-Sessions are stored as JSON lines in `~/.kvit-coder/sessions/`.
+Each session is a directory under `~/.kvit-coder/sessions/`:
+
+```
+~/.kvit-coder/sessions/my-feature/
+    history.jsonl   append-only transcript, one timestamped event per line
+    meta.json       when it was created and last used, workspace, model, first prompt
+    checkpoints/    the shadow git repository the checkpoint tools commit into
+    proc/           which process is running a turn
+    inbox/          messages waiting for the running turn
+    tmp/            tool output too large to fit in a message
+```
+
+Everything that outlives a turn lives there, so a checkpoint made in one run
+can be restored in the next and a temp file the model was given the path to is
+still readable later. A session left over from when a session was a single
+`<name>.jsonl` file is converted the first time it is opened; the old file is
+kept as `<name>.jsonl.migrated`.
+
+### Steering a running turn
+
+A message can reach the model between iterations of a turn that is already
+running. Type a line at the terminal while the agent works, or send one from
+another terminal:
+
+```bash
+./kvit-coder steer "actually, check the tests first"
+./kvit-coder steer -s my-feature "use the other library"
+```
+
+Without `-s` it delivers to the one session that has a turn running, and says
+so if there is none or more than one. The message arrives as a user message
+tagged `<user-steering>` at the model's next iteration.
 
 ## Agent File
 
@@ -224,13 +255,14 @@ In a headless/benchmark run with no controlling terminal, `ask_*` falls back to 
 | `api_key` / `api_key_env` | API key or env var name |
 | `model` | Model name |
 | `api_backend` | Wire protocol: `chat_completions` (default) or `responses` |
-| `headers` | Extra `Key=Value` request headers (`${VAR}` expanded; `${KVIT_RUN_ID}` = per-process ID) |
+| `headers` | Extra `Key=Value` request headers (`${VAR}` expanded; `${KVIT_RUN_ID}` = per-conversation ID) |
 | `reasoning_effort` | Thinking budget for a reasoning model (`responses` backend only) |
 | `temperature` | Sampling temperature |
 | `max_output_tokens` | Max output tokens |
 | `context` | Max context size for display (0 = hide) |
 | `merge_thinking` | Merge `reasoning_content` into `content` |
 | `verbose` | Tool output verbosity (0 = off, N = show up to N lines) |
+| `generation_stats` | Ask the endpoint for per-request cost and native token counts (OpenRouter only; default false) |
 | `benchmark_cmd` | External command for benchmarks (`{prompt}` placeholder) |
 
 **Endpoints that only serve `/responses`.** Some hosted models are offered only
@@ -244,9 +276,10 @@ endpoints that also demand a routing or session header of their own.
 
 An endpoint that routes by a session header sends every request carrying the
 same header value to one backend, so two agents sharing a value compete for the
-same prompt cache. `${KVIT_RUN_ID}` in a header expands to an ID unique to the
-kvit-coder process, which keeps concurrent runs apart; setting `KVIT_RUN_ID` in
-the environment pins a value across runs instead.
+same prompt cache. `${KVIT_RUN_ID}` in a header expands to an ID derived from
+the session name, which keeps concurrent conversations apart while sending
+every turn of one conversation to the backend that already holds its prompt
+cache. Setting `KVIT_RUN_ID` in the environment pins a value instead.
 
 ### `workspace`
 
@@ -275,6 +308,7 @@ Each tool group has `enabled: true/false` plus tool-specific options:
 - **`edit.fuzzy_threshold`** — Fuzzy matching for searchreplace mode (0 = exact only)
 - **`edit.read_before_edit_msgs`** — Require a read within N messages before editing
 - **`shell.allowed_commands`** / **`shell.disallowed_commands`** — Command allow/blocklists
+- **`shell.default_timeout`** / **`shell.max_timeout`** — Seconds a command gets, and the ceiling a call may ask for (default 120 and 600)
 - **`checkpoint.max_turns`** — Max checkpoints before rotating (default: 100)
 - **`tasks.collapse`** — Enable context collapsing (stage 2)
 - **`tasks.plan`** — Enable plan-based task tools (stage 3)
