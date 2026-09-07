@@ -400,12 +400,21 @@ func (r *Runner) executeToolWithTimeout(
 	select {
 	case <-ctx.Done():
 		cancelled = true
-		if toolErr == nil {
+		// The turn was cancelled while this tool was running. Record whatever
+		// it produced, but say that it was cut short: without the marker the
+		// next turn reads a partial result as a complete one and trusts it.
+		switch {
+		case toolErr != nil:
+			content = fmt.Sprintf("Error: %v", toolErr)
+		case toolResult != nil:
 			resultJSON, _ := json.MarshalIndent(toolResult, "", "  ")
 			content = string(resultJSON)
-		} else {
-			content = fmt.Sprintf("Error: %v", toolErr)
+		default:
+			content = "(nothing)"
 		}
+		content = fmt.Sprintf(
+			"[interrupted: the turn was cancelled while %s was running. What follows is everything it produced.]\n%s",
+			internalName, content)
 		r.logger.ToolExecuted(internalName, duration, false, ctx.Err())
 		return
 	default:

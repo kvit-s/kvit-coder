@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/agent"
 	"github.com/kvit-s/kvit-coder/internal/benchmark"
@@ -290,6 +293,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// An interrupt cancels the run rather than killing the process, so the turn
+	// gets to write down what it did before exiting. A second one within two
+	// seconds means the caller wants out now.
+	runCtx, cancelRun := context.WithCancel(context.Background())
+	defer cancelRun()
+	installInterruptHandler(cancelRun)
+
 	// Acquire workspace lock to prevent multiple instances on same workspace
 	workspaceLock, err := workspace.AcquireLock(cfg.Workspace.Root)
 	if err != nil {
@@ -496,7 +506,7 @@ func main() {
 			Suffix:      benchmarkSuffix,
 		}
 
-		if err := benchmark.Run(context.Background(), flags, runner, cfg, systemPrompt, version, originalWorkspaceRoot); err != nil {
+		if err := benchmark.Run(runCtx, flags, runner, cfg, systemPrompt, version, originalWorkspaceRoot); err != nil {
 			log.Fatalf("Benchmark failed: %v", err)
 		}
 		return
@@ -518,7 +528,7 @@ func main() {
 			Suffix:      haystackSuffix,
 		}
 
-		if err := benchmark.RunHaystack(context.Background(), flags, cfg, version, originalWorkspaceRoot); err != nil {
+		if err := benchmark.RunHaystack(runCtx, flags, cfg, version, originalWorkspaceRoot); err != nil {
 			log.Fatalf("Haystack benchmark failed: %v", err)
 		}
 		return
@@ -558,7 +568,7 @@ func main() {
 			Suffix:      thinkbenchSuffix,
 		}
 
-		if err := benchmark.RunThinkbench(context.Background(), flags, runner, cfg, systemPrompt, version, originalWorkspaceRoot); err != nil {
+		if err := benchmark.RunThinkbench(runCtx, flags, runner, cfg, systemPrompt, version, originalWorkspaceRoot); err != nil {
 			log.Fatalf("Thinkbench benchmark failed: %v", err)
 		}
 		return
@@ -582,7 +592,7 @@ func main() {
 	fmt.Println()
 
 	// Run in exec mode (always, since we require -p or --benchmark)
-	repl.RunExec(runner, writer, cfg, systemPrompt, promptText, quietMode, sess, projectInstructions)
+	repl.RunExec(runCtx, runner, writer, cfg, systemPrompt, promptText, quietMode, sess, projectInstructions)
 }
 
 // startStdinReader queues each line typed at the terminal for the running
@@ -604,6 +614,29 @@ func startStdinReader(steering *inbox.Inbox, writer *ui.Writer) {
 			}
 			steering.Push(inbox.Message{Kind: inbox.KindUserLine, Text: line})
 			writer.Info("→ queued")
+		}
+	}()
+}
+
+// installInterruptHandler makes ctrl-c end the turn rather than end the
+// process. The first interrupt cancels the run context: the loop stops where
+// it is, the tool that was running is killed, and what happened is written to
+// the session before the process exits normally. A second interrupt within two
+// seconds exits immediately, for when that is taking too long.
+func installInterruptHandler(cancelRun context.CancelFunc) {
+	sigCh := make(chan os.Signal, 4)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		var last time.Time
+		for range sigCh {
+			now := time.Now()
+			if !last.IsZero() && now.Sub(last) < 2*time.Second {
+				fmt.Fprintln(os.Stderr, "\nquitting now")
+				os.Exit(130) // 128 + SIGINT(2)
+			}
+			last = now
+			fmt.Fprintln(os.Stderr, "\ninterrupted - stopping the turn and saving it; press ctrl-c again to quit now")
+			cancelRun()
 		}
 	}()
 }

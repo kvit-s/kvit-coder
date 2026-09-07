@@ -21,7 +21,7 @@ import (
 // turn ends because the loop discards history mid-turn when it backtracks, and
 // an append-only file cannot take that back; the prompt itself is written up
 // front, so a turn that dies leaves a record of what it was asked.
-func RunExec(runner *agent.Runner, writer *ui.Writer, cfg *config.Config, systemPrompt string, promptText string, quietMode bool, sess *session.Session, projectInstructions *ProjectInstructions) {
+func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *config.Config, systemPrompt string, promptText string, quietMode bool, sess *session.Session, projectInstructions *ProjectInstructions) {
 	messages := []llm.Message{
 		{Role: llm.RoleSystem, Content: systemPrompt},
 	}
@@ -90,7 +90,7 @@ func RunExec(runner *agent.Runner, writer *ui.Writer, cfg *config.Config, system
 	}
 
 	// Run agent loop
-	result, err := runner.Run(context.Background(), agent.RunConfig{
+	result, err := runner.Run(ctx, agent.RunConfig{
 		Messages:     messages,
 		UseFileFirst: false,
 		QuietMode:    quietMode,

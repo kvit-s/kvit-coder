@@ -4,7 +4,6 @@ package workspace
 import (
 	"fmt"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"sync"
 	"syscall"
@@ -13,10 +12,15 @@ import (
 const lockFileName = ".kvit-coder.lock"
 
 // Lock represents an acquired workspace lock.
+//
+// The lock used to install its own SIGINT handler that removed the lock file
+// and called os.Exit(130). That is why an interrupt used to throw away the
+// conversation: the process died before the turn could write down what it had
+// done. Cleanup now happens on the normal exit path, and the interrupt is
+// handled where the run context can be cancelled.
 type Lock struct {
 	file        *os.File
 	lockPath    string
-	sigChan     chan os.Signal
 	mu          sync.Mutex
 	cleanupOnce sync.Once
 }
@@ -45,24 +49,10 @@ func AcquireLock(workspaceRoot string) (*Lock, error) {
 	_, _ = lockFile.Seek(0, 0)
 	fmt.Fprintf(lockFile, "%d\n", os.Getpid())
 
-	lock := &Lock{
+	return &Lock{
 		file:     lockFile,
 		lockPath: lockPath,
-		sigChan:  make(chan os.Signal, 1),
-	}
-
-	// Register signal handler to clean up lock file on Ctrl+C
-	signal.Notify(lock.sigChan, syscall.SIGINT, syscall.SIGTERM)
-	sigChan := lock.sigChan // Capture to avoid race with Release() setting to nil
-	go func() {
-		sig, ok := <-sigChan
-		if ok && sig != nil {
-			lock.cleanup()
-			os.Exit(130) // 128 + SIGINT(2)
-		}
-	}()
-
-	return lock, nil
+	}, nil
 }
 
 // Release releases the workspace lock and removes the lock file.
@@ -72,17 +62,11 @@ func (l *Lock) Release() {
 		l.mu.Unlock()
 		return
 	}
-	// Stop listening for signals
-	if l.sigChan != nil {
-		signal.Stop(l.sigChan)
-		close(l.sigChan)
-		l.sigChan = nil
-	}
 	l.mu.Unlock()
 	l.cleanup()
 }
 
-// cleanup performs the actual file cleanup (called by both Release and signal handler)
+// cleanup releases the flock and removes the lock file, once.
 func (l *Lock) cleanup() {
 	l.cleanupOnce.Do(func() {
 		l.mu.Lock()

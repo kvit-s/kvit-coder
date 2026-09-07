@@ -344,15 +344,17 @@ func (t *ShellAdvancedTool) executeCommand(ctx context.Context, command, workDir
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 
-	var timedOut bool
+	var timedOut, interrupted bool
 	var cmdErr error
 
 	select {
 	case <-ctx.Done():
-		// Parent context cancelled (e.g., user pressed ESC)
+		// The turn was cancelled — the user pressed ctrl-c, or the caller's
+		// time budget expired. Kill the whole process group so nothing this
+		// command started outlives the turn.
 		t.killProcessGroup(cmd)
 		<-done // Wait for process to exit
-		timedOut = true
+		interrupted = true
 	case <-timer.C:
 		// Timeout - kill the entire process group
 		t.killProcessGroup(cmd)
@@ -362,6 +364,18 @@ func (t *ShellAdvancedTool) executeCommand(ctx context.Context, command, workDir
 		// Command completed normally
 	}
 
+	// Either way the command was killed part-way, so return what it had
+	// produced. Which of the two it was decides what to tell the model: a
+	// timeout can be retried with a longer one, an interrupt cannot.
+	if interrupted {
+		partialOutput, _ := outputBuf.FormatForLLM()
+		return map[string]any{
+			"stdout":    partialOutput,
+			"exit_code": -1,
+			"error":     "interrupted",
+			"hint":      "The command was killed part-way when the turn was cancelled. The output above is everything it produced before that.",
+		}, nil
+	}
 	if timedOut {
 		// Get any partial output
 		partialOutput, _ := outputBuf.FormatForLLM()

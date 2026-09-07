@@ -473,3 +473,69 @@ func TestSteeringSurvivesBacktrack(t *testing.T) {
 		t.Errorf("the steering line was discarded by the backtrack: %q", res.FinalMessages[1].Content)
 	}
 }
+
+// TestCancellationLeavesACompleteRecord: an interrupt stops the turn where it
+// is and leaves a history that can be continued — every tool call the model
+// made has a result, the one that was running says what it produced before it
+// was cut short, and the ones that never ran say they were cancelled.
+func TestCancellationLeavesACompleteRecord(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	client := newFakeClient(
+		calls(
+			toolCall("c1", "slow", map[string]string{"arg": "a"}),
+			toolCall("c2", "slow", map[string]string{"arg": "b"}),
+		),
+		answer("unreachable"),
+	)
+	// The first call is interrupted part-way and returns what it had.
+	slow := &scriptedTool{name: "slow", call: func(context.Context, json.RawMessage) (any, error) {
+		cancel()
+		return map[string]any{"stdout": "half of the output"}, nil
+	}}
+	runner, _ := newTestRunner(t, testConfig(), client, slow)
+
+	res, err := runner.Run(ctx, RunConfig{Messages: userStart("go")})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if !res.Cancelled {
+		t.Error("the run does not report that it was cancelled")
+	}
+	if res.BudgetExhausted {
+		t.Error("a cancelled run reports the iteration budget as exhausted")
+	}
+	if client.callCount() != 1 {
+		t.Errorf("made %d model calls, want 1: the loop kept going after the interrupt", client.callCount())
+	}
+
+	// Every tool call the model made has a result, which is what the API
+	// requires of a history you want to continue from.
+	assertShape(t, res.FinalMessages,
+		"user",
+		"assistant+tool_calls",
+		"tool:slow", // interrupted part-way
+		"tool:slow", // never ran
+	)
+
+	interrupted := res.FinalMessages[2]
+	if !strings.Contains(interrupted.Content, "interrupted") {
+		t.Errorf("the interrupted tool's result is not marked as such: %q", interrupted.Content)
+	}
+	if !strings.Contains(interrupted.Content, "half of the output") {
+		t.Errorf("the interrupted tool's partial output was lost: %q", interrupted.Content)
+	}
+	if interrupted.ToolCallID != "c1" {
+		t.Errorf("the interrupted result is for call %q, want c1", interrupted.ToolCallID)
+	}
+
+	never := res.FinalMessages[3]
+	if !strings.Contains(never.Content, "Cancelled by user") {
+		t.Errorf("the tool call that never ran has no result saying so: %q", never.Content)
+	}
+	if never.ToolCallID != "c2" {
+		t.Errorf("the cancelled result is for call %q, want c2", never.ToolCallID)
+	}
+}
