@@ -42,3 +42,12 @@ type Tool interface {
 	// Template files are located in prompts/tools/<name>.tmpl
 	PromptTemplateName() string
 }
+
+// SelfTimeoutTool is an optional interface a Tool can implement to opt out of the
+// agent loop's blanket per-tool timeout (15s) and manage its own execution
+// deadline instead. MCP tools implement it: their calls (a web fetch, a database
+// query, a browser action) routinely exceed 15s, and each applies its own
+// configurable per-call deadline inside Call.
+type SelfTimeoutTool interface {
+	SelfTimeout() bool
+}

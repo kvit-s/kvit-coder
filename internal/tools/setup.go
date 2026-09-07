@@ -23,6 +23,12 @@ type SetupConfig struct {
 	TempFileMgr   *TempFileManager
 	PlanManager   *PlanManager
 	ToolCtx       *ToolContext // Shared mutable state for tools (created if nil)
+
+	// MCPTools are adapters for tools discovered on configured MCP servers,
+	// already built by the MCP manager. Passing built []Tool (rather than the
+	// manager) keeps internal/tools free of any dependency on internal/mcp,
+	// avoiding an import cycle. Nil/empty when MCP is disabled.
+	MCPTools []Tool
 }
 
 // SetupRegistry creates and configures the tool registry based on config.
@@ -208,6 +214,13 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		checkpointUndoTool := NewCheckpointUndoTool(sc.CheckpointMgr)
 		registry.Enable(checkpointUndoTool)
 		debug(fmt.Sprintf("Enabled tool: %s", checkpointUndoTool.Name()))
+	}
+
+	// MCP tools (from configured external servers). Registered last; they are
+	// indistinguishable from built-in tools to the registry and agent loop.
+	for _, t := range sc.MCPTools {
+		registry.Enable(t)
+		debug(fmt.Sprintf("Enabled MCP tool: %s", t.Name()))
 	}
 
 	return registry

@@ -187,6 +187,41 @@ func TestLoadInvalidYAML(t *testing.T) {
 	}
 }
 
+func TestProjectInstructionsConfig(t *testing.T) {
+	defaults := ProjectInstructionsConfig{}
+	if !defaults.IsEnabled() {
+		t.Error("project instructions should default to enabled")
+	}
+	if got := defaults.PathOrDefault(); got != "CLAUDE.md" {
+		t.Errorf("PathOrDefault default = %q, want CLAUDE.md", got)
+	}
+
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "test-config.yaml")
+	configContent := `agent:
+  project_instructions:
+    enabled: false
+    path: AGENTS.md
+`
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		t.Fatalf("Failed to create test config: %v", err)
+	}
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Agent.ProjectInstructions.Enabled == nil {
+		t.Fatal("ProjectInstructions.Enabled = nil, want explicit false")
+	}
+	if cfg.Agent.ProjectInstructions.IsEnabled() {
+		t.Error("ProjectInstructions.IsEnabled() = true, want false")
+	}
+	if got := cfg.Agent.ProjectInstructions.PathOrDefault(); got != "AGENTS.md" {
+		t.Errorf("ProjectInstructions.PathOrDefault() = %q, want AGENTS.md", got)
+	}
+}
+
 func TestDiagnosticsConfigDefaults(t *testing.T) {
 	d := &DiagnosticsConfig{}
 	if got := d.GetInterrogateIdenticalThreshold(); got != 2 {

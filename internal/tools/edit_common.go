@@ -531,7 +531,7 @@ func StreamingSearchInRange(fullPath string, search string, startLine, endLine i
 
 	// Search with normalization
 	fuzzyThreshold := 0.8 // Default threshold
-	matchStart, matchEnd, _, matchFound := MatchWithNormalization(content, search, fuzzyThreshold)
+	matchStart, matchEnd, _, matchFound := MatchWithNormalization(content, search, fuzzyThreshold, false)
 	if !matchFound {
 		return 0, 0, false, nil
 	}

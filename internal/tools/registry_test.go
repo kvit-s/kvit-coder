@@ -55,6 +55,47 @@ func TestRegistry_Specs(t *testing.T) {
 	}
 }
 
+func TestRegistry_ModelToolNameAliases(t *testing.T) {
+	registry := NewRegistry()
+	tool := fakeCategoryTool{name: "Shell.advanced", category: "shell"}
+	registry.Enable(tool)
+
+	specs := registry.Specs()
+	if len(specs) != 1 {
+		t.Fatalf("Expected 1 spec, got %d", len(specs))
+	}
+	if specs[0].Function.Name != "Shell_advanced" {
+		t.Fatalf("Expected provider-safe function name Shell_advanced, got %q", specs[0].Function.Name)
+	}
+	if registry.Get("Shell_advanced") == nil {
+		t.Fatal("Expected provider-facing alias to resolve to internal tool")
+	}
+	if got := registry.InternalName("Shell_advanced"); got != "Shell.advanced" {
+		t.Fatalf("Expected alias to resolve to Shell.advanced, got %q", got)
+	}
+	if got := registry.ModelName("Shell.advanced"); got != "Shell_advanced" {
+		t.Fatalf("Expected internal name to map to Shell_advanced, got %q", got)
+	}
+
+	prompt := registry.RewriteToolNamesForPrompt("Use Shell.advanced for timeout options.")
+	if prompt != "Use Shell_advanced for timeout options." {
+		t.Fatalf("Expected prompt tool name rewrite, got %q", prompt)
+	}
+}
+
+func TestRegistry_ModelToolNameAliasCollision(t *testing.T) {
+	registry := NewRegistry()
+	registry.Enable(fakeCategoryTool{name: "mcp.srv.tool", category: "mcp"})
+	registry.Enable(fakeCategoryTool{name: "mcp_srv_tool", category: "mcp"})
+
+	if got := registry.ModelName("mcp_srv_tool"); got != "mcp_srv_tool" {
+		t.Fatalf("Expected valid internal name to keep exact provider name, got %q", got)
+	}
+	if got := registry.ModelName("mcp.srv.tool"); got != "mcp_srv_tool_2" {
+		t.Fatalf("Expected colliding sanitized alias to get suffix, got %q", got)
+	}
+}
+
 func TestRegistry_All(t *testing.T) {
 	tempMgr := NewTempFileManager(os.TempDir())
 	defer tempMgr.CleanupAll()

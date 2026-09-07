@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/kvit-s/kvit-coder/internal/llm"
@@ -33,7 +34,10 @@ var CategoryHeaders = map[string]string{
 	"shell":      "## Shell Tool",
 	"plan":       "## Plan Management Tools",
 	"checkpoint": "## Checkpoints and Undo",
+	"mcp":        "## MCP Tools (external servers)",
 }
+
+var modelToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // Registry manages enabled tools
 type Registry struct {
@@ -58,7 +62,69 @@ func (r *Registry) Disable(name string) {
 
 // Get retrieves a tool by name
 func (r *Registry) Get(name string) Tool {
-	return r.tools[name]
+	if tool := r.tools[name]; tool != nil {
+		return tool
+	}
+	return r.tools[r.InternalName(name)]
+}
+
+// ModelName returns the provider-facing alias for an internal tool name.
+// OpenAI-compatible function names must match ^[A-Za-z0-9_-]+$, while several
+// kvit-coder internal names use dots for grouping (Plan.write, Shell.advanced).
+func (r *Registry) ModelName(name string) string {
+	internalToModel, _ := r.toolNameAliases()
+	if modelName, ok := internalToModel[name]; ok {
+		return modelName
+	}
+	return name
+}
+
+// InternalName returns the registered internal name for a provider-facing alias.
+func (r *Registry) InternalName(name string) string {
+	if r.tools[name] != nil {
+		return name
+	}
+	_, modelToInternal := r.toolNameAliases()
+	if internalName, ok := modelToInternal[name]; ok {
+		return internalName
+	}
+	return name
+}
+
+// NormalizeToolCallName converts any known internal or provider-facing tool name
+// to the provider-facing spelling that can safely be sent back to the LLM API.
+func (r *Registry) NormalizeToolCallName(name string) string {
+	internalName := r.InternalName(name)
+	if r.tools[internalName] == nil {
+		return name
+	}
+	return r.ModelName(internalName)
+}
+
+// RewriteToolNamesForPrompt rewrites internal dotted tool names in prompt text
+// to their provider-facing aliases so examples match the advertised tool specs.
+func (r *Registry) RewriteToolNamesForPrompt(text string) string {
+	internalToModel, _ := r.toolNameAliases()
+	names := make([]string, 0, len(internalToModel))
+	for internalName, modelName := range internalToModel {
+		if internalName != modelName {
+			names = append(names, internalName)
+		}
+	}
+	if len(names) == 0 {
+		return text
+	}
+	sort.Slice(names, func(i, j int) bool {
+		if len(names[i]) == len(names[j]) {
+			return names[i] < names[j]
+		}
+		return len(names[i]) > len(names[j])
+	})
+	pairs := make([]string, 0, len(names)*2)
+	for _, internalName := range names {
+		pairs = append(pairs, internalName, internalToModel[internalName])
+	}
+	return strings.NewReplacer(pairs...).Replace(text)
 }
 
 // Specs returns OpenAI-compatible tool specs for all registered tools
@@ -73,12 +139,13 @@ func (r *Registry) Specs() []llm.ToolSpec {
 
 	// Build specs in sorted order
 	specs := make([]llm.ToolSpec, 0, len(names))
+	internalToModel, _ := r.toolNameAliases()
 	for _, name := range names {
 		tool := r.tools[name]
 		spec := llm.ToolSpec{
 			Type: "function",
 		}
-		spec.Function.Name = tool.Name()
+		spec.Function.Name = internalToModel[name]
 		spec.Function.Description = tool.Description()
 		spec.Function.Parameters = tool.JSONSchema()
 
@@ -105,7 +172,7 @@ func (r *Registry) LooksLikeMalformedToolCall(content string) bool {
 		return false
 	}
 
-	for name := range r.tools {
+	for _, name := range r.toolCallNames() {
 		// Check if content starts with "toolname{" (no space)
 		if strings.HasPrefix(content, name+"{") {
 			return true
@@ -116,6 +183,84 @@ func (r *Registry) LooksLikeMalformedToolCall(content string) bool {
 		}
 	}
 	return false
+}
+
+func (r *Registry) toolNameAliases() (map[string]string, map[string]string) {
+	names := make([]string, 0, len(r.tools))
+	for name := range r.tools {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	internalToModel := make(map[string]string, len(names))
+	modelToInternal := make(map[string]string, len(names))
+	used := make(map[string]bool, len(names))
+
+	assign := func(internalName, modelName string) {
+		internalToModel[internalName] = modelName
+		modelToInternal[modelName] = internalName
+		used[modelName] = true
+	}
+
+	var invalid []string
+	for _, name := range names {
+		if modelToolNamePattern.MatchString(name) {
+			assign(name, name)
+			continue
+		}
+		invalid = append(invalid, name)
+	}
+
+	for _, name := range invalid {
+		base := sanitizeModelToolName(name)
+		modelName := base
+		for i := 2; used[modelName]; i++ {
+			modelName = base + "_" + strconv.Itoa(i)
+		}
+		assign(name, modelName)
+	}
+
+	return internalToModel, modelToInternal
+}
+
+func sanitizeModelToolName(name string) string {
+	var b strings.Builder
+	for _, ch := range name {
+		switch {
+		case ch >= 'a' && ch <= 'z':
+			b.WriteRune(ch)
+		case ch >= 'A' && ch <= 'Z':
+			b.WriteRune(ch)
+		case ch >= '0' && ch <= '9':
+			b.WriteRune(ch)
+		case ch == '_' || ch == '-':
+			b.WriteRune(ch)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	if b.Len() == 0 {
+		return "tool"
+	}
+	return b.String()
+}
+
+func (r *Registry) toolCallNames() []string {
+	internalToModel, _ := r.toolNameAliases()
+	seen := make(map[string]bool, len(internalToModel)*2)
+	names := make([]string, 0, len(internalToModel)*2)
+	for internalName, modelName := range internalToModel {
+		if !seen[modelName] {
+			names = append(names, modelName)
+			seen[modelName] = true
+		}
+		if !seen[internalName] {
+			names = append(names, internalName)
+			seen[internalName] = true
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // ExtractToolCallsFromText attempts to parse tool calls from text content
@@ -175,7 +320,7 @@ func (r *Registry) ExtractToolCallsFromText(content string) []llm.ToolCall {
 								Name      string `json:"name"`
 								Arguments string `json:"arguments"`
 							}{
-								Name:      functionName,
+								Name:      r.NormalizeToolCallName(functionName),
 								Arguments: string(argsJSON),
 							},
 						})
@@ -219,7 +364,7 @@ func (r *Registry) ExtractToolCallsFromText(content string) []llm.ToolCall {
 						Name      string `json:"name"`
 						Arguments string `json:"arguments"`
 					}{
-						Name:      toolCallJSON.Name,
+						Name:      r.NormalizeToolCallName(toolCallJSON.Name),
 						Arguments: argsStr,
 					},
 				})
@@ -236,16 +381,16 @@ func (r *Registry) ExtractToolCallsFromText(content string) []llm.ToolCall {
 	// Also handle cases where <tool_call> opening tag is missing but closing tag is present
 	xmlPattern := regexp.MustCompile(`(?is)(?:<tool_call>\s*)?<function=([^>]+)>(.*?)</function>\s*</tool_call>`)
 	matches := xmlPattern.FindAllStringSubmatch(content, -1)
-	
+
 	for _, match := range matches {
 		if len(match) >= 3 {
 			functionName := strings.TrimSpace(match[1])
 			arguments := strings.TrimSpace(match[2])
-			
+
 			// Parse arguments from XML-like format: <parameter=name>value</parameter>
 			argPattern := regexp.MustCompile(`(?is)<parameter=([^>]+)>(.*?)</parameter>`)
 			argMatches := argPattern.FindAllStringSubmatch(arguments, -1)
-			
+
 			argsMap := make(map[string]string)
 			for _, argMatch := range argMatches {
 				if len(argMatch) >= 3 {
@@ -254,7 +399,7 @@ func (r *Registry) ExtractToolCallsFromText(content string) []llm.ToolCall {
 					argsMap[paramName] = paramValue
 				}
 			}
-			
+
 			// Convert to JSON for the tool call
 			argsJSON, err := json.Marshal(argsMap)
 			if err == nil {
@@ -265,16 +410,16 @@ func (r *Registry) ExtractToolCallsFromText(content string) []llm.ToolCall {
 						Name      string `json:"name"`
 						Arguments string `json:"arguments"`
 					}{
-						Name:      functionName,
+						Name:      r.NormalizeToolCallName(functionName),
 						Arguments: string(argsJSON),
 					},
 				})
 			}
 		}
 	}
-	
+
 	// Try to find JSON-like tool call format: toolname{"param": "value"}
-	for toolName := range r.tools {
+	for _, toolName := range r.toolCallNames() {
 		// Look for toolName{"param": "value"}
 		jsonPattern := regexp.MustCompile(`\b` + regexp.QuoteMeta(toolName) + `\s*\{([^}]*)\}`)
 		jsonMatches := jsonPattern.FindAllStringSubmatch(content, -1)
@@ -293,7 +438,7 @@ func (r *Registry) ExtractToolCallsFromText(content string) []llm.ToolCall {
 							Name      string `json:"name"`
 							Arguments string `json:"arguments"`
 						}{
-							Name:      toolName,
+							Name:      r.NormalizeToolCallName(toolName),
 							Arguments: string(argsJSON),
 						},
 					})
@@ -330,7 +475,7 @@ func (r *Registry) ExtractToolCallsFromText(content string) []llm.ToolCall {
 			jsonStr := jsonContent[:jsonEnd]
 			var jsonObj map[string]interface{}
 			if err := json.Unmarshal([]byte(jsonStr), &jsonObj); err == nil {
-				for toolName := range r.tools {
+				for _, toolName := range r.toolCallNames() {
 					if args, ok := jsonObj[toolName]; ok {
 						if argsMap, ok := args.(map[string]interface{}); ok {
 							argsJSON, err := json.Marshal(argsMap)
@@ -342,7 +487,7 @@ func (r *Registry) ExtractToolCallsFromText(content string) []llm.ToolCall {
 										Name      string `json:"name"`
 										Arguments string `json:"arguments"`
 									}{
-										Name:      toolName,
+										Name:      r.NormalizeToolCallName(toolName),
 										Arguments: string(argsJSON),
 									},
 								})
@@ -378,7 +523,7 @@ func (r *Registry) GenerateToolPrompt() string {
 	var sb strings.Builder
 
 	// Generate in deterministic order
-	categories := []string{"filesystem", "shell", "plan", "checkpoint"}
+	categories := []string{"filesystem", "shell", "plan", "checkpoint", "mcp"}
 	for _, cat := range categories {
 		docs, ok := sections[cat]
 		if !ok || len(docs) == 0 {
@@ -438,7 +583,7 @@ func (r *Registry) ToolsInCategory(category string) []Tool {
 
 // EnabledCategories returns the list of categories that have enabled tools
 func (r *Registry) EnabledCategories() []string {
-	categoryOrder := []string{"filesystem", "shell", "plan", "checkpoint"}
+	categoryOrder := []string{"filesystem", "shell", "plan", "checkpoint", "mcp"}
 	var enabled []string
 	for _, cat := range categoryOrder {
 		if len(r.ToolsInCategory(cat)) > 0 {

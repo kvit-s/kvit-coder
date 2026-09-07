@@ -3,6 +3,7 @@ package benchmark
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -144,9 +145,19 @@ func (e *TBExecutor) runAgent(ctx context.Context, task TBTask, result *TBRunRes
 		QuietMode:    false,
 	})
 
-	if err != nil {
+	// Report the harness's own budget as such. A run stopped by timeoutCtx used
+	// to surface as a bare "context deadline exceeded" printed by the runner and
+	// nothing at all in the CSV, which made a task the model simply could not
+	// finish in time look like a failure of the model endpoint.
+	switch {
+	case agentResult != nil && agentResult.TimedOut,
+		errors.Is(timeoutCtx.Err(), context.DeadlineExceeded):
+		result.TimedOut = true
+		result.Errors = append(result.Errors,
+			fmt.Sprintf("run exceeded the %s budget (thinkbench.timeout_per_run)", e.timeout))
+	case err != nil:
 		result.Errors = append(result.Errors, err.Error())
-	} else if agentResult != nil && agentResult.Cancelled {
+	case agentResult != nil && agentResult.Cancelled:
 		result.Errors = append(result.Errors, "cancelled")
 	}
 

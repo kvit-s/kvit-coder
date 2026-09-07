@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -80,6 +81,25 @@ func (r *Runner) handleLLMError(ctx context.Context, err error, state *runState,
 		state.agentStats.TotalLLMTime = state.totalLLMTime
 		state.agentStats.TotalToolTime = state.totalToolTime
 		result.cancelled = true
+		result.shouldBreak = true
+		return result, nil
+	}
+
+	// A deadline on the run context is the caller's own time budget expiring
+	// (thinkbench's timeout_per_run, say), not a fault of the model endpoint.
+	// The bare error text is "context deadline exceeded", which reads like a
+	// network failure, so say where it came from and how long the call had run.
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		elapsed := time.Since(state.requestStartTime)
+		r.writer.Error(fmt.Sprintf(
+			"time budget for this run expired after %s, during an LLM call that had been running for %s (context deadline exceeded)",
+			elapsed.Round(time.Second), result.duration.Round(time.Second)))
+		r.logger.Error("run time budget expired during LLM call", err)
+
+		state.agentStats.TotalAgentTime = elapsed
+		state.agentStats.TotalLLMTime = state.totalLLMTime
+		state.agentStats.TotalToolTime = state.totalToolTime
+		result.timedOut = true
 		result.shouldBreak = true
 		return result, nil
 	}

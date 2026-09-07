@@ -1,6 +1,6 @@
 llm:
   base_url: "http://192.168.8.20:8080/v1"  # Your OpenAI-compatible endpoint
-  model: "qwen3.6-27b-mtp"
+  model: "go/glm-5.2"
   context: 180000
   merge_thinking: false  # true = merge reasoning into content, false = discard
   verbose: 0             # 0 = off, >0 = show tool output up to N lines

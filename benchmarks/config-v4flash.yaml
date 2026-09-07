@@ -1,16 +1,19 @@
 llm:
   base_url: "http://192.168.8.20:8080/v1"  # Your OpenAI-compatible endpoint
-  model: "qwen3.6-27b-mtp"
+  model: "go/deepseek-v4-flash"
   context: 180000
   merge_thinking: false  # true = merge reasoning into content, false = discard
   verbose: 0             # 0 = off, >0 = show tool output up to N lines
 
 workspace:
   root: "."
-  path_safety_mode: "ask_once"  # "block", "warn", "ask_once", "ask_always"
+  path_safety_mode: "block"     # APOS headless replays must not block on interactive path prompts.
 
 agent:
   max_tool_iterations: 1000
+  project_instructions:
+    enabled: true
+    path: CLAUDE.md
 
 backtrack:
   enabled: true             # Enable backtracking on semantic errors (LLM misuse)
@@ -119,7 +122,7 @@ prompts:
 
 # Improvement 2: anomaly interrogation / logging (observability only - does not change recovery)
 diagnostics:
-  interrogate_on_anomaly: true        # Ask qwen to explain loops / repeated calls / ignored confirm-cancel; log the Q&A
+  interrogate_on_anomaly: false       # Disabled for APOS replays: benchmark interrogation logs dirty replay worktrees.
   interrogate_triggers: []            # [] = all: duplicate_call, pending_blocked, alternating_loop, fatal, backtrack
   interrogate_identical_threshold: 2  # Fire after N consecutive identical calls / pending-edit blocks
   interrogate_max_per_task: 3         # Hard cap on interrogations per task

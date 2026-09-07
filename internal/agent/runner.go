@@ -3,6 +3,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -56,6 +57,11 @@ type RunResult struct {
 	Stats         *stats.AgentStats
 	FinalMessages []llm.Message
 	Cancelled     bool
+	// TimedOut is set when the loop stopped because the context passed to Run
+	// hit its deadline, as opposed to being cancelled by the user. Callers that
+	// impose a time budget (the thinkbench executor) use it to report the
+	// budget rather than the bare "context deadline exceeded".
+	TimedOut bool
 }
 
 // NewRunner creates a new agent runner
@@ -133,6 +139,7 @@ type llmCallResult struct {
 	shouldContinue bool // retry needed
 	shouldBreak    bool // fatal error, exit loop
 	cancelled      bool
+	timedOut       bool // the run context hit its deadline
 }
 
 // toolExecutionResult holds the outcome of executing all tools
@@ -217,6 +224,7 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 		if llmResult.shouldBreak {
 			iterCancel()
 			result.Cancelled = llmResult.cancelled
+			result.TimedOut = llmResult.timedOut
 			result.FinalMessages = state.messages
 			break
 		}
@@ -290,7 +298,14 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 		iterCancel()
 
 		if toolResult.toolsCancelled {
-			result.Cancelled = true
+			// Distinguish the caller's time budget expiring from a user
+			// pressing ctrl-c: both stop the loop here, but only one is a
+			// fault worth reporting against the run.
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				result.TimedOut = true
+			} else {
+				result.Cancelled = true
+			}
 			result.FinalMessages = state.messages
 			break
 		}

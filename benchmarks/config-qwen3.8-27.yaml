@@ -1,7 +1,13 @@
 llm:
-  base_url: "http://192.168.8.20:8080/v1"  # Your OpenAI-compatible endpoint
-  model: "qwen3.6-27b-mtp"
-  context: 180000
+  base_url: "http://192.168.138.186:8090/v1"  # Your OpenAI-compatible endpoint
+  model: "qwen3.8-27b-nvfp4-dflash2"
+  context: 200000
+  # Cap on one response. Without it no `max_tokens` is sent and the model may
+  # generate until it hits the context window: measured over 199 task runs, a
+  # completed task averaged 696 generated tokens per call and never exceeded
+  # 5,658, whereas every task that hit the run budget was generating 30k-64k
+  # tokens in a single call and was still going when the clock ran out.
+  max_output_tokens: 16384
   merge_thinking: false  # true = merge reasoning into content, false = discard
   verbose: 0             # 0 = off, >0 = show tool output up to N lines
 
@@ -125,3 +131,11 @@ diagnostics:
   interrogate_max_per_task: 3         # Hard cap on interrogations per task
   interrogate_log_dir: ".kvit-coder-benchmark/interrogations"  # JSONL logs (relative to benchmarks/ launch dir, alongside results/ and workspace/)
   interrogate_then_inject: false      # Reserved for the later recovery variant (no-op in v1)
+
+# Per-task budget for the agent loop. Without this block it defaults to 600
+# seconds, and a task stopped by it is reported as a bare "context deadline
+# exceeded", which reads like a failure of the model endpoint rather than the
+# harness's own timer. The heavy `implement` tasks (csvql, ledgercore, migrato)
+# legitimately need 30-60 LLM calls and were being cut off part-way.
+thinkbench:
+  timeout_per_run: 1200

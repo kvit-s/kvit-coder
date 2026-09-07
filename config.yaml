@@ -1,9 +1,27 @@
+# Default model: Muse Spark 1.3 on the opencode.ai Go subscription, the same
+# model and endpoint the `krok` CLI uses (see ~/.krok/config.toml). Export
+# OPENCODE_API_KEY first, or `source ~/.config/grok/env`, which is where krok
+# reads it from. The endpoint serves this model only through OpenAI's Responses
+# API, and rejects any request without an x-opencode-session header.
 llm:
-  base_url: "http://192.168.8.20:8080/v1"  # Your OpenAI-compatible endpoint
-  model: "ministral-3-14b"
-  context: 120000
+  base_url: "https://opencode.ai/zen/go/v1"
+  api_key_env: "OPENCODE_API_KEY"
+  model: "muse-spark-1.3-contributor"
+  api_backend: "responses"   # this endpoint answers /chat/completions with a 500 for this model
+  reasoning_effort: "high"   # minimal | low | medium | high | xhigh
+  headers:
+    # ${KVIT_RUN_ID} is unique per kvit-coder process, so two agents running at
+    # once do not share one backend and compete for the same prompt cache.
+    - "x-opencode-session=kvit-coder-${KVIT_RUN_ID}"
+  context: 1048576
   merge_thinking: false  # true = merge reasoning into content, false = discard
   verbose: 0             # 0 = off, >0 = show tool output up to N lines
+
+# Previous default -- a local model behind the llama-swap-plus front door:
+#   base_url: "http://192.168.8.20:8080/v1"
+#   model: "ministral-3-14b"
+#   context: 120000
+# (a local endpoint needs no api_backend, headers or api_key_env)
 
 workspace:
   root: "."
@@ -11,6 +29,9 @@ workspace:
 
 agent:
   max_tool_iterations: 1000
+  project_instructions:
+    enabled: true          # Load instructions before -p prompts when the file exists
+    path: "CLAUDE.md"      # Relative to the directory where kvit-coder is launched
 
 backtrack:
   enabled: true             # Enable backtracking on semantic errors (LLM misuse)

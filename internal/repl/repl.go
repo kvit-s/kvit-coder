@@ -15,7 +15,7 @@ import (
 )
 
 // RunExec runs in exec mode with a single prompt
-func RunExec(runner *agent.Runner, writer *ui.Writer, cfg *config.Config, systemPrompt string, promptText string, quietMode bool, sessionName string, sessionMgr *session.Manager) {
+func RunExec(runner *agent.Runner, writer *ui.Writer, cfg *config.Config, systemPrompt string, promptText string, quietMode bool, sessionName string, sessionMgr *session.Manager, projectInstructions *ProjectInstructions) {
 	messages := []llm.Message{
 		{Role: llm.RoleSystem, Content: systemPrompt},
 	}
@@ -64,7 +64,7 @@ func RunExec(runner *agent.Runner, writer *ui.Writer, cfg *config.Config, system
 	// Add user message
 	userMsg := llm.Message{
 		Role:    llm.RoleUser,
-		Content: promptText,
+		Content: promptWithProjectInstructions(promptText, projectInstructions),
 	}
 	messages = append(messages, userMsg)
 
@@ -81,7 +81,8 @@ func RunExec(runner *agent.Runner, writer *ui.Writer, cfg *config.Config, system
 
 	// Save session
 	if sessionMgr != nil && sessionName != "" {
-		if err := sessionMgr.SaveSession(sessionName, result.FinalMessages); err != nil {
+		sessionMessages := stripProjectInstructions(result.FinalMessages, projectInstructions)
+		if err := sessionMgr.SaveSession(sessionName, sessionMessages); err != nil {
 			writer.Error(fmt.Sprintf("Failed to save session: %v", err))
 		}
 	}

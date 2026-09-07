@@ -62,7 +62,7 @@ func (r *Runner) executeTools(
 
 		result.lastExecutedIdx = idx
 
-		if strings.HasPrefix(tc.Function.Name, "Tasks.") {
+		if strings.HasPrefix(r.registry.InternalName(tc.Function.Name), "Tasks.") {
 			result.tasksToolExecuted = true
 		}
 	}
@@ -102,17 +102,20 @@ func (r *Runner) executeSingleTool(
 		})
 		return result
 	}
+	internalName := tool.Name()
+	internalTC := tc
+	internalTC.Function.Name = internalName
 
 	// Analyze pending edit state from message history
 	var roles, contents, toolNames []string
 	for _, msg := range state.messages {
 		roles = append(roles, string(msg.Role))
 		contents = append(contents, msg.Content)
-		toolNames = append(toolNames, msg.Name)
+		toolNames = append(toolNames, r.registry.InternalName(msg.Name))
 	}
 	pendingState := tools.AnalyzePendingEditState(roles, contents, toolNames)
 
-	if blockErr := tools.CheckPendingEditBlockWithState(tc.Function.Name, pendingState, r.cfg, r.toolCtx); blockErr != nil {
+	if blockErr := tools.CheckPendingEditBlockWithState(internalName, pendingState, r.cfg, r.toolCtx); blockErr != nil {
 		// Anomaly: the model keeps issuing non-confirm/cancel calls while an edit is
 		// pending. Interrogate once the model has ignored the pending state repeatedly.
 		if r.interrogator.Enabled() && pendingState.BlockCountSincePending >= r.cfg.Diagnostics.GetInterrogateIdenticalThreshold() {
@@ -120,13 +123,13 @@ func (r *Runner) executeSingleTool(
 				Trigger:       TriggerPendingBlocked,
 				Key:           "pending_blocked:" + pendingState.PendingPath,
 				TriggerCount:  pendingState.BlockCountSincePending,
-				OffendingTool: tc.Function.Name,
+				OffendingTool: internalName,
 				OffendingArgs: tc.Function.Arguments,
 				PendingDiff:   r.toolCtx.GetPendingEditDiff(),
 			}, state)
 		}
 
-		btResult := r.handleToolError(ctx, blockErr, tc, state, rollbackPoint, promptTokens, completionTokens, requestCost)
+		btResult := r.handleToolError(ctx, blockErr, internalTC, state, rollbackPoint, promptTokens, completionTokens, requestCost)
 		if btResult.shouldBacktrack {
 			result.shouldBacktrack = true
 			if btResult.injectUserMessage {
@@ -156,7 +159,7 @@ func (r *Runner) executeSingleTool(
 	// Run safety checks
 	if err := tool.Check(ctx, checkArgs); err != nil {
 		checkErr := tools.WrapAsSemantic(err)
-		btResult := r.handleToolError(ctx, checkErr, tc, state, rollbackPoint, promptTokens, completionTokens, requestCost)
+		btResult := r.handleToolError(ctx, checkErr, internalTC, state, rollbackPoint, promptTokens, completionTokens, requestCost)
 		if btResult.shouldBacktrack {
 			result.shouldBacktrack = true
 			if btResult.injectUserMessage {
@@ -183,12 +186,12 @@ func (r *Runner) executeSingleTool(
 			errSummary = fmt.Sprintf("Error: %v", err)
 		}
 		r.writer.ToolResult(errSummary, "")
-		state.loopDetector.Record(tc.Function.Name, tc.Function.Arguments, errContent, true)
+		state.loopDetector.Record(internalName, tc.Function.Arguments, errContent, true)
 		return result
 	}
 
 	// Check for immediate duplicate call
-	if tc.Function.Name == state.lastToolName && tc.Function.Arguments == state.lastToolArgs {
+	if internalName == state.lastToolName && tc.Function.Arguments == state.lastToolArgs {
 		state.consecutiveDuplicates++
 
 		if state.consecutiveDuplicates >= maxConsecutiveDuplicates {
@@ -197,16 +200,16 @@ func (r *Runner) executeSingleTool(
 			if r.interrogator.Enabled() {
 				r.interrogator.Interrogate(ctx, Episode{
 					Trigger:       TriggerFatal,
-					Key:           fmt.Sprintf("fatal:%s:%s", tc.Function.Name, tc.Function.Arguments),
+					Key:           fmt.Sprintf("fatal:%s:%s", internalName, tc.Function.Arguments),
 					TriggerCount:  state.consecutiveDuplicates,
-					OffendingTool: tc.Function.Name,
+					OffendingTool: internalName,
 					OffendingArgs: tc.Function.Arguments,
 					PriorResult:   lastToolResult(state.messages),
 				}, state)
 			}
 
 			r.writer.Error(fmt.Sprintf("FATAL: %s called %d times with identical arguments - stopping to prevent infinite loop",
-				tc.Function.Name, state.consecutiveDuplicates))
+				internalName, state.consecutiveDuplicates))
 
 			state.agentStats.TotalAgentTime = time.Since(state.requestStartTime)
 			state.agentStats.TotalLLMTime = state.totalLLMTime
@@ -221,16 +224,16 @@ func (r *Runner) executeSingleTool(
 		if r.interrogator.Enabled() && state.consecutiveDuplicates >= r.cfg.Diagnostics.GetInterrogateIdenticalThreshold() {
 			r.interrogator.Interrogate(ctx, Episode{
 				Trigger:       TriggerDuplicateCall,
-				Key:           fmt.Sprintf("duplicate_call:%s:%s", tc.Function.Name, tc.Function.Arguments),
+				Key:           fmt.Sprintf("duplicate_call:%s:%s", internalName, tc.Function.Arguments),
 				TriggerCount:  state.consecutiveDuplicates,
-				OffendingTool: tc.Function.Name,
+				OffendingTool: internalName,
 				OffendingArgs: tc.Function.Arguments,
 				PriorResult:   lastToolResult(state.messages),
 			}, state)
 		}
 
 		dupErr := tools.SemanticErrorf("DUPLICATE CALL ERROR: You just made this exact same call with identical arguments. The result will be the same. You MUST try a different approach or different arguments. Repeated duplicate calls will cause the session to terminate.")
-		btResult := r.handleToolError(ctx, dupErr, tc, state, rollbackPoint, promptTokens, completionTokens, requestCost)
+		btResult := r.handleToolError(ctx, dupErr, internalTC, state, rollbackPoint, promptTokens, completionTokens, requestCost)
 		if btResult.shouldBacktrack {
 			result.shouldBacktrack = true
 			if btResult.injectUserMessage {
@@ -246,7 +249,7 @@ func (r *Runner) executeSingleTool(
 			Content:    errContent,
 		})
 		r.writer.ToolResult("Error: duplicate call", "")
-		state.loopDetector.Record(tc.Function.Name, tc.Function.Arguments, errContent, true)
+		state.loopDetector.Record(internalName, tc.Function.Arguments, errContent, true)
 		return result
 	}
 
@@ -254,10 +257,10 @@ func (r *Runner) executeSingleTool(
 	state.consecutiveDuplicates = 0
 
 	// Display tool call
-	r.displayToolCall(tc, contextStr)
+	r.displayToolCall(internalName, tc, contextStr)
 
 	// Execute tool with timing
-	content, toolErr, toolDuration, cancelled := r.executeToolWithTimeout(ctx, tool, tc, state)
+	content, toolErr, toolDuration, cancelled := r.executeToolWithTimeout(ctx, tool, internalName, tc, state)
 
 	if cancelled {
 		result.toolsCancelled = true
@@ -272,7 +275,7 @@ func (r *Runner) executeSingleTool(
 
 	// Handle tool error (backtrackable)
 	if toolErr != nil && tools.IsBacktrackable(toolErr) {
-		btResult := r.handleToolError(ctx, toolErr, tc, state, rollbackPoint, promptTokens, completionTokens, requestCost)
+		btResult := r.handleToolError(ctx, toolErr, internalTC, state, rollbackPoint, promptTokens, completionTokens, requestCost)
 		if btResult.shouldBacktrack {
 			result.shouldBacktrack = true
 			if btResult.injectUserMessage {
@@ -286,7 +289,7 @@ func (r *Runner) executeSingleTool(
 	if toolErr != nil {
 		content = fmt.Sprintf("Error: %v", toolErr)
 		r.writer.Error(fmt.Sprintf("Tool error: %s", toolErr))
-		r.logger.ToolExecuted(tc.Function.Name, toolDuration, false, toolErr)
+		r.logger.ToolExecuted(internalName, toolDuration, false, toolErr)
 	}
 
 	state.messages = append(state.messages, llm.Message{
@@ -297,23 +300,23 @@ func (r *Runner) executeSingleTool(
 	})
 
 	isError := toolErr != nil || strings.HasPrefix(content, "Error:") || strings.Contains(content, "\"success\": false")
-	state.loopDetector.Record(tc.Function.Name, tc.Function.Arguments, content, isError)
+	state.loopDetector.Record(internalName, tc.Function.Arguments, content, isError)
 
-	state.lastToolName = tc.Function.Name
+	state.lastToolName = internalName
 	state.lastToolArgs = tc.Function.Arguments
 
 	return result
 }
 
 // displayToolCall formats and displays a tool call to the user
-func (r *Runner) displayToolCall(tc llm.ToolCall, contextStr string) {
+func (r *Runner) displayToolCall(internalName string, tc llm.ToolCall, contextStr string) {
 	var args map[string]any
 	_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
 
-	if tc.Function.Name == "Shell" {
+	if internalName == "Shell" {
 		cmdStr, _ := args["command"].(string)
 		r.writer.ToolCall("Shell", cmdStr, contextStr)
-	} else if tc.Function.Name == "Shell.advanced" {
+	} else if internalName == "Shell.advanced" {
 		cmdStr, _ := args["command"].(string)
 		wdStr, _ := args["working_dir"].(string)
 		argsDisplay := ui.FormatShellDisplay(cmdStr, wdStr, r.cfg.Workspace.Root)
@@ -321,16 +324,16 @@ func (r *Runner) displayToolCall(tc llm.ToolCall, contextStr string) {
 			argsDisplay += fmt.Sprintf(", timeout=%ds", int(timeoutVal))
 		}
 		r.writer.ToolCall("Shell.advanced", argsDisplay, contextStr)
-	} else if strings.HasPrefix(tc.Function.Name, "Plan.") {
+	} else if strings.HasPrefix(internalName, "Plan.") {
 		if r.writer.IsVerbose() {
 			argsDisplay := ui.FormatToolArgs(args)
-			r.writer.ToolCall(tc.Function.Name, argsDisplay, contextStr)
+			r.writer.ToolCall(internalName, argsDisplay, contextStr)
 		} else {
 			r.writer.ToolContext(contextStr)
 		}
 	} else {
 		argsDisplay := ui.FormatToolArgs(args)
-		r.writer.ToolCall(tc.Function.Name, argsDisplay, contextStr)
+		r.writer.ToolCall(internalName, argsDisplay, contextStr)
 	}
 }
 
@@ -338,6 +341,7 @@ func (r *Runner) displayToolCall(tc llm.ToolCall, contextStr string) {
 func (r *Runner) executeToolWithTimeout(
 	ctx context.Context,
 	tool tools.Tool,
+	internalName string,
 	tc llm.ToolCall,
 	state *runState,
 ) (content string, toolErr error, duration time.Duration, cancelled bool) {
@@ -358,12 +362,20 @@ func (r *Runner) executeToolWithTimeout(
 		}
 	}()
 
-	// Apply timeout to non-shell tools
+	// Apply the blanket 15s timeout to most tools. Shell manages its own
+	// timeout, and SelfTimeout tools (e.g. MCP tools, whose calls routinely
+	// exceed 15s) apply their own per-call deadline inside Call.
+	selfTimeout := false
+	if st, ok := tool.(tools.SelfTimeoutTool); ok {
+		selfTimeout = st.SelfTimeout()
+	}
 	toolCtx := ctx
 	var toolCancel context.CancelFunc
-	if tc.Function.Name != "Shell" && tc.Function.Name != "Shell.advanced" {
+	applied15s := false
+	if internalName != "Shell" && internalName != "Shell.advanced" && !selfTimeout {
 		toolCtx, toolCancel = context.WithTimeout(ctx, 15*time.Second)
 		defer toolCancel()
+		applied15s = true
 	}
 
 	// Normalize tool arguments
@@ -376,7 +388,7 @@ func (r *Runner) executeToolWithTimeout(
 
 	toolResult, toolErr := tool.Call(toolCtx, normalizedArgs)
 
-	if toolCtx.Err() == context.DeadlineExceeded {
+	if applied15s && toolCtx.Err() == context.DeadlineExceeded {
 		toolErr = fmt.Errorf("tool execution timed out after 15 seconds")
 	}
 	duration = time.Since(toolStart)
@@ -394,14 +406,14 @@ func (r *Runner) executeToolWithTimeout(
 		} else {
 			content = fmt.Sprintf("Error: %v", toolErr)
 		}
-		r.logger.ToolExecuted(tc.Function.Name, duration, false, ctx.Err())
+		r.logger.ToolExecuted(internalName, duration, false, ctx.Err())
 		return
 	default:
 	}
 
 	// Format successful result
 	if toolErr == nil {
-		isPlanTool := strings.HasPrefix(tc.Function.Name, "Plan.")
+		isPlanTool := strings.HasPrefix(internalName, "Plan.")
 
 		resultJSON, _ := json.MarshalIndent(toolResult, "", "  ")
 		content = string(resultJSON)
@@ -412,7 +424,7 @@ func (r *Runner) executeToolWithTimeout(
 				r.writer.ActivePlan(planText)
 			}
 			r.writer.VerboseOutput(content)
-			r.logger.ToolExecuted(tc.Function.Name, duration, true, nil)
+			r.logger.ToolExecuted(internalName, duration, true, nil)
 		} else {
 			summary := ui.GetResultSummary(toolResult)
 			var durationStr string
@@ -421,7 +433,7 @@ func (r *Runner) executeToolWithTimeout(
 			}
 			r.writer.ToolResult(summary, durationStr)
 			r.writer.VerboseOutput(content)
-			r.logger.ToolExecuted(tc.Function.Name, duration, true, nil)
+			r.logger.ToolExecuted(internalName, duration, true, nil)
 		}
 	}
 

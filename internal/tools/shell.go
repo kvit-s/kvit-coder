@@ -16,37 +16,60 @@ import (
 	"github.com/kvit-s/kvit-coder/internal/safety"
 )
 
-// wordBlock is a dangerous command token matched only as a whole shell word.
-type wordBlock struct {
+// cmdBlock is a dangerous binary blocked only when it appears in COMMAND
+// POSITION — at the start of the command line or immediately after a shell
+// separator (; | & ( ) { } < > newline or backtick), optionally with a path
+// prefix (/usr/bin/curl, ./curl). Matching command position rather than a bare
+// substring avoids the false-positive class where the word is a grep pattern, an
+// echo string, a filename, or part of another word: "grep -r shutdown .",
+// "man curl", `echo "adapt the layer"` (contains "apt "), "Hebrew" (contains
+// "brew "), `grep reboot /var/log`. A plain space does NOT start a command, so an
+// argument like the second token in "grep nc" is never matched.
+type cmdBlock struct {
 	name string
 	re   *regexp.Regexp
 }
 
-// wordBlockedAlways blocks the su/nc/ncat binaries as standalone shell tokens
-// (network/privilege tools). A naive substring match would falsely reject
-// ordinary words ("sync", "concat", ...) that merely contain these letters, so
-// they are matched on shell-token boundaries (the delimiter class excludes
-// '-', '.', '/').
-var wordBlockedAlways = buildWordBlocks("su", "nc", "ncat")
-
-// wordBlockedEval blocks the `eval` shell builtin as a standalone token. It is
-// lifted when AllowInterpreters is set (thinkbench): inside that hard OS sandbox
-// `eval` grants nothing beyond the already-allowed interpreter one-liners, while
-// the token legitimately appears in coding tasks (grep for "eval", an `eval`
-// CLI subcommand, etc.). Default keeps it blocked.
-var wordBlockedEval = buildWordBlocks("eval")
-
-func buildWordBlocks(words ...string) []wordBlock {
-	const delim = `[\s;&|()<>]`
-	out := make([]wordBlock, len(words))
-	for i, w := range words {
-		out[i] = wordBlock{
-			name: w,
-			re:   regexp.MustCompile(`(?:^|` + delim + `)` + regexp.QuoteMeta(w) + `(?:$|` + delim + `)`),
+func buildCmdBlocks(names ...string) []cmdBlock {
+	const sep = "(?:^|[;|&(){}<>`\n])\\s*"   // start, or a shell separator + optional whitespace
+	const pathPrefix = `(?:[\w./-]*/)?`       // optional /usr/bin/ or ./ prefix
+	const trail = "(?:$|[\\s;|&(){}<>`\n])"   // token boundary: end or separator/whitespace
+	out := make([]cmdBlock, len(names))
+	for i, n := range names {
+		out[i] = cmdBlock{
+			name: n,
+			re:   regexp.MustCompile(sep + pathPrefix + regexp.QuoteMeta(n) + trail),
 		}
 	}
 	return out
 }
+
+// cmdBlockedAlways blocks privilege-escalation, package-manager, system-control,
+// and network binaries — but only when actually invoked as a command (see
+// cmdBlock). su/nc/ncat live here too; they were previously matched as standalone
+// words, which still falsely blocked them as arguments ("find . -name nc").
+var cmdBlockedAlways = buildCmdBlocks(
+	"sudo", "chroot", "su", // privilege escalation
+	"apt", "apt-get", "yum", "brew", // package managers (modify system)
+	"shutdown", "reboot", // system control
+	"curl", "wget", "netcat", "nc", "ncat", // network (data exfiltration)
+)
+
+// cmdBlockedEval blocks the `eval` shell builtin (in command position). Lifted
+// when AllowInterpreters is set (thinkbench/benchmarks): inside that hard OS
+// sandbox `eval` grants nothing beyond the already-allowed interpreter
+// one-liners, while the token legitimately appears in coding tasks. Default
+// keeps it blocked.
+var cmdBlockedEval = buildCmdBlocks("eval")
+
+// rmRootRe / rmHomeRe block `rm -rf /` and `rm -rf ~` ONLY when the target is
+// the filesystem root or the bare home dir — i.e. `/`, `/*`, `~`, or root/home
+// followed by a command terminator. A plain substring match blocked every
+// absolute path (`rm -rf /testbed/foo` starts with "rm -rf /"), a false positive
+// for ordinary recursive deletes. Deleting an actual system-critical path is
+// still caught by safety.RmRule (IsSystemCritical covers /, /usr, $HOME, ...).
+var rmRootRe = regexp.MustCompile(`rm\s+-rf\s+/(\s|;|&|\||\)|\*|$)`)
+var rmHomeRe = regexp.MustCompile(`rm\s+-rf\s+~(\s|;|&|\||\)|$)`)
 
 // ShellTool - simple string-only interface, translates to Shell.advanced internally
 type ShellTool struct {
@@ -461,22 +484,13 @@ func (t *ShellAdvancedTool) validateCommand(cmd string, baseDir string) error {
 		}
 	}
 
-	// Block dangerous commands
+	// Block dangerous commands. Privilege-escalation, package-manager,
+	// system-control, and network binaries are matched in command position via
+	// cmdBlockedAlways below (not here) to avoid substring false positives.
+	// These two stay as substrings: they are specific arg patterns, not bare
+	// binary names, and rarely collide with innocent text.
 	blocked := []string{
-		// Privilege escalation
-		"sudo ", "sudo\t",
-		"chroot ",
-		// Destructive filesystem operations
-		"rm -rf /", "rm -rf ~",
-		"mkfs", "dd if=", // disk formatting/writing
-		// Package managers (can modify system)
-		"apt ", "apt-get ", "yum ", "brew ",
-		// System control
-		"shutdown", "reboot",
-		// Network tools (data exfiltration risk)
-		"curl ", "curl\t",
-		"wget ", "wget\t",
-		"netcat ", "netcat\t",
+		"mkfs", "dd if=", // disk formatting/writing (root/home rm handled by rmRootRe/rmHomeRe below)
 	}
 
 	// Interpreter one-liners (python -c, node -e, ...) are blocked by default to
@@ -504,6 +518,15 @@ func (t *ShellAdvancedTool) validateCommand(cmd string, baseDir string) error {
 		}
 	}
 
+	// Block `rm -rf /` (root) and `rm -rf ~` (home) only when the target is
+	// root/home itself, not a subdirectory like /testbed/foo or ~/.cache.
+	if rmRootRe.MatchString(cmdLower) {
+		return fmt.Errorf("blocked dangerous command containing 'rm -rf /'. If you need to run this command, explain why it's necessary and provide the exact command as a one-liner for the user to run manually")
+	}
+	if rmHomeRe.MatchString(cmdLower) {
+		return fmt.Errorf("blocked dangerous command containing 'rm -rf ~'. If you need to run this command, explain why it's necessary and provide the exact command as a one-liner for the user to run manually")
+	}
+
 	for _, danger := range blocked {
 		if strings.Contains(cmdLower, danger) {
 			dangerName := strings.TrimSpace(danger)
@@ -511,16 +534,16 @@ func (t *ShellAdvancedTool) validateCommand(cmd string, baseDir string) error {
 		}
 	}
 
-	// Short command tokens (su, nc, ncat, and the eval builtin) are matched on
-	// shell word boundaries, not as substrings — otherwise innocent words like
-	// "calceval", "retrieval", "sync", or "concat" would be falsely blocked.
-	wordBlocks := wordBlockedAlways
+	// Privilege/network/system binaries are blocked only in command position
+	// (sudo, curl, nc, eval, ...) — not as substrings — so grep patterns, echo
+	// strings, filenames, and words like "shutdown"/"reboot"/"adapt" pass through.
+	cmdBlocks := cmdBlockedAlways
 	if !t.cfg.Tools.Shell.AllowInterpreters {
-		wordBlocks = append(append([]wordBlock{}, wordBlockedAlways...), wordBlockedEval...)
+		cmdBlocks = append(append([]cmdBlock{}, cmdBlockedAlways...), cmdBlockedEval...)
 	}
-	for _, wb := range wordBlocks {
-		if wb.re.MatchString(cmdLower) {
-			return fmt.Errorf("blocked dangerous command containing '%s'. If you need to run this command, explain why it's necessary and provide the exact command as a one-liner for the user to run manually", wb.name)
+	for _, cb := range cmdBlocks {
+		if cb.re.MatchString(cmdLower) {
+			return fmt.Errorf("blocked dangerous command containing '%s'. If you need to run this command, explain why it's necessary and provide the exact command as a one-liner for the user to run manually", cb.name)
 		}
 	}
 

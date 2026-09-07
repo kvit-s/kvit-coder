@@ -245,7 +245,7 @@ func (t *SearchReplaceEditTool) Call(ctx context.Context, args json.RawMessage) 
 
 	// Find the search text with cascading normalization
 	fuzzyThreshold := t.Config.Tools.Edit.FuzzyThreshold
-	start, end, level, found := MatchWithNormalization(content, params.Search, fuzzyThreshold)
+	start, end, level, found := MatchWithNormalization(content, params.Search, fuzzyThreshold, t.Config.Tools.Edit.ExactMatchOnly)
 
 	if !found {
 		return t.handleNoMatch(content, params.Search, params.Path)

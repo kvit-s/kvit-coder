@@ -81,6 +81,11 @@ type TBRunResult struct {
 	Cost            float64
 	LLMCalls        int
 
+	// TimedOut records that the run was stopped by thinkbench.timeout_per_run
+	// rather than finishing. Such a run is still graded on whatever it wrote,
+	// so a nonzero Score here does not mean the agent completed the task.
+	TimedOut bool
+
 	Errors       []string
 	FailedChecks []string // "check_id: detail" for each grader check that did not pass
 	WorkspaceDir string   // persisted path for observed tasks / grading failures

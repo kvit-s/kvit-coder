@@ -220,6 +220,8 @@ func RunThinkbench(ctx context.Context, flags ThinkbenchCLIFlags, runner *agent.
 				status := "FAIL"
 				if result.FullPass {
 					status = "FULL-PASS"
+				} else if result.TimedOut {
+					status = "TIMEOUT"
 				}
 				fmt.Fprintf(out, "  %s score=%.3f (%d/%d) — %.0fs, %d tokens, $%.4f\n",
 					status, result.Score, result.Passed, result.Total,

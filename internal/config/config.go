@@ -50,10 +50,7 @@ type Config struct {
 		DeniedPaths           []string `yaml:"denied_paths"`
 	} `yaml:"workspace"`
 
-	Agent struct {
-		MaxIterations int    `yaml:"max_tool_iterations"`
-		AgentFile     string `yaml:"agent_file"`
-	} `yaml:"agent"`
+	Agent AgentConfig `yaml:"agent"`
 
 	Backtrack BacktrackConfig `yaml:"backtrack"`
 
@@ -66,6 +63,154 @@ type Config struct {
 	Diagnostics DiagnosticsConfig `yaml:"diagnostics"`
 
 	Thinkbench ThinkbenchConfig `yaml:"thinkbench"`
+
+	MCP MCPConfig `yaml:"mcp"`
+}
+
+// AgentConfig configures the agent loop and startup instruction sources.
+type AgentConfig struct {
+	MaxIterations       int                       `yaml:"max_tool_iterations"`
+	AgentFile           string                    `yaml:"agent_file"`
+	ProjectInstructions ProjectInstructionsConfig `yaml:"project_instructions"`
+}
+
+// ProjectInstructionsConfig controls the Claude-Code-style project instruction
+// file loaded for headless -p runs.
+type ProjectInstructionsConfig struct {
+	// Enabled defaults to true when unset, so an existing CLAUDE.md is picked up.
+	Enabled *bool `yaml:"enabled"`
+	// Path is resolved relative to the directory kvit-coder was launched from.
+	// Defaults to "CLAUDE.md".
+	Path string `yaml:"path"`
+}
+
+// IsEnabled reports whether project instructions should be loaded.
+func (p ProjectInstructionsConfig) IsEnabled() bool {
+	return p.Enabled == nil || *p.Enabled
+}
+
+// PathOrDefault returns the configured project instructions path.
+func (p ProjectInstructionsConfig) PathOrDefault() string {
+	if p.Path == "" {
+		return "CLAUDE.md"
+	}
+	return p.Path
+}
+
+// MCPConfig configures the Model Context Protocol (MCP) client. MCP lets
+// kvit-coder connect to external tool servers (over stdio or HTTP) and surface
+// each server's tools to the model as ordinary agent tools. The section is
+// absent by default, so existing configs are unaffected and the feature is
+// zero-cost when unused. See mcp-plan.md.
+type MCPConfig struct {
+	// Enabled is the group toggle. When false (default) no servers are dialed.
+	Enabled bool `yaml:"enabled"`
+	// StartupTimeout is the per-server connect + tools/list deadline, in seconds
+	// (default 20). A server that exceeds it is logged and skipped, never fatal.
+	StartupTimeout int `yaml:"startup_timeout"`
+	// CallTimeout is the default per-tool-call deadline, in seconds (default 120),
+	// overridable per server. MCP calls are exempt from the agent loop's blanket
+	// 15s tool timeout and use this deadline instead.
+	CallTimeout int `yaml:"call_timeout"`
+	// Confirm is the default trust policy for MCP tool calls, overridable per
+	// server: "block" | "ask_once" | "ask_always" | "trust" (default "ask_once").
+	Confirm string `yaml:"confirm"`
+	// SanitizeSchemas flattens/strips JSON Schema constructs ($ref, oneOf, allOf,
+	// ...) that some grammar-constrained tool-calling templates reject. Opt-in so
+	// faithful schemas are the default.
+	SanitizeSchemas bool `yaml:"sanitize_schemas"`
+	// Servers lists the configured MCP servers.
+	Servers []MCPServerConfig `yaml:"servers"`
+}
+
+// MCPServerConfig configures a single MCP server.
+type MCPServerConfig struct {
+	// Name namespaces the server's tools (mcp.<name>.<tool>); must be unique.
+	Name string `yaml:"name"`
+	// Enabled opts this server in. Zero value false = skipped (opt-in).
+	Enabled bool `yaml:"enabled"`
+	// Transport selects the wire protocol: "stdio" (default) or "http".
+	Transport string `yaml:"transport"`
+
+	// stdio transport
+	Command string   `yaml:"command"` // executable to spawn
+	Args    []string `yaml:"args"`    // arguments
+	Env     []string `yaml:"env"`     // extra "KEY=VALUE" entries appended to inherited env
+	// Cwd is the working directory for the stdio subprocess. Empty defaults to
+	// the workspace root, so a server that keys off its own working directory
+	// (e.g. a codebase indexer) targets the project kvit-coder operates on rather
+	// than wherever kvit-coder happened to be launched. A relative path is
+	// resolved against the workspace root.
+	Cwd string `yaml:"cwd"`
+
+	// http transport
+	URL     string   `yaml:"url"`     // streamable-HTTP endpoint
+	Headers []string `yaml:"headers"` // extra "Key=Value" request headers (supports ${VAR})
+
+	// CallTimeout optionally overrides MCPConfig.CallTimeout for this server, in seconds.
+	CallTimeout int `yaml:"call_timeout"`
+	// Confirm optionally overrides MCPConfig.Confirm for this server.
+	Confirm string `yaml:"confirm"`
+	// Tools optionally filters which of the server's tools are exposed.
+	Tools MCPToolFilter `yaml:"tools"`
+}
+
+// MCPToolFilter optionally restricts which tools a server exposes. Names are
+// matched against the raw (server-side) tool name. An empty Allow list allows
+// all tools; Deny is applied after Allow.
+type MCPToolFilter struct {
+	Allow []string `yaml:"allow"`
+	Deny  []string `yaml:"deny"`
+}
+
+// GetTransport returns the transport, defaulting to "stdio".
+func (s *MCPServerConfig) GetTransport() string {
+	if s.Transport == "" {
+		return "stdio"
+	}
+	return s.Transport
+}
+
+// GetCallTimeout returns the per-call deadline for this server in seconds,
+// preferring the server override, then the group default, then 120.
+func (s *MCPServerConfig) GetCallTimeout(group *MCPConfig) int {
+	if s.CallTimeout > 0 {
+		return s.CallTimeout
+	}
+	return group.GetCallTimeout()
+}
+
+// GetConfirm returns the confirm policy for this server, preferring the server
+// override, then the group default.
+func (s *MCPServerConfig) GetConfirm(group *MCPConfig) string {
+	if s.Confirm != "" {
+		return s.Confirm
+	}
+	return group.GetConfirm()
+}
+
+// GetStartupTimeout returns the per-server connect deadline in seconds, default 20.
+func (m *MCPConfig) GetStartupTimeout() int {
+	if m.StartupTimeout <= 0 {
+		return 20
+	}
+	return m.StartupTimeout
+}
+
+// GetCallTimeout returns the default per-call deadline in seconds, default 120.
+func (m *MCPConfig) GetCallTimeout() int {
+	if m.CallTimeout <= 0 {
+		return 120
+	}
+	return m.CallTimeout
+}
+
+// GetConfirm returns the default confirm policy, default "ask_once".
+func (m *MCPConfig) GetConfirm() string {
+	if m.Confirm == "" {
+		return "ask_once"
+	}
+	return m.Confirm
 }
 
 // ThinkbenchConfig configures the thinkbench benchmark family (autonomous coding
@@ -271,7 +416,14 @@ type EditToolConfig struct {
 	PreviewMode           bool    `yaml:"preview_mode"`            // enables edit.confirm/edit.cancel
 	ReadBeforeEditMsgs    int     `yaml:"read_before_edit_msgs"`   // require read within N messages before edit (0 = disabled)
 	PendingConfirmRetries int     `yaml:"pending_confirm_retries"` // max retries when LLM ignores confirm/cancel (0 = disabled, default 5)
-	FuzzyThreshold        float64 `yaml:"fuzzy_threshold"`         // for searchreplace mode: 0 = exact only, 0.8 = fuzzy matching
+	FuzzyThreshold        float64 `yaml:"fuzzy_threshold"`         // searchreplace mode: gates ONLY the fuzzy level (0 = fuzzy off). Whitespace-normalization levels still run unless ExactMatchOnly is set.
+
+	// ExactMatchOnly forces searchreplace matching to byte-exact (Level 0) only:
+	// no rstrip, no leading/trailing whitespace normalization, no fuzzy fallback.
+	// A non-exact search returns a clean no-match instead of being silently
+	// re-anchored to a normalized (line-start) position. Default off = today's
+	// cascade behavior for all existing configs.
+	ExactMatchOnly bool `yaml:"exact_match_only"`
 
 	// SmartFirstLineIndent enables first-line indentation auto-correction in lines mode
 	// (the "autoindent" feature). Only active when PreviewMode is also true, since the
@@ -318,8 +470,10 @@ type ShellToolConfig struct {
 	ExecPrefix []string `yaml:"-"`
 	// AllowInterpreters, when true, lifts the default block on interpreter
 	// one-liners (python -c, node -e, perl -e, ...). Set by the thinkbench harness,
-	// whose tasks are interpreter-driven and sandboxed. Default false (blocked).
-	AllowInterpreters bool `yaml:"-"`
+	// whose tasks are interpreter-driven and sandboxed, and opt-in via benchmark
+	// configs (e.g. SWE-bench, which runs in a Docker container and needs python -c
+	// to introspect the codebase). Default false (blocked) for normal use.
+	AllowInterpreters bool `yaml:"allow_interpreters"`
 }
 
 // PlanToolsConfig configures all plan.* tools as a group

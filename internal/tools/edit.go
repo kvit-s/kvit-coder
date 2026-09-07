@@ -377,7 +377,7 @@ func (t *UnifiedEditTool) callSearchReplaceMode(ctx context.Context, path, searc
 
 	// Find the search text with cascading normalization
 	fuzzyThreshold := t.Config.Tools.Edit.FuzzyThreshold
-	start, end, level, found := MatchWithNormalization(content, search, fuzzyThreshold)
+	start, end, level, found := MatchWithNormalization(content, search, fuzzyThreshold, t.Config.Tools.Edit.ExactMatchOnly)
 
 	if !found {
 		return HandleNoMatch(content, search, path), nil

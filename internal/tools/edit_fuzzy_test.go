@@ -295,7 +295,7 @@ func TestMatchWithNormalization_FuzzyFallback(t *testing.T) {
 }`
 
 	// Should fall back to fuzzy matching (level 3)
-	start, end, level, found := MatchWithNormalization(content, search, 0.8)
+	start, end, level, found := MatchWithNormalization(content, search, 0.8, false)
 
 	if !found {
 		t.Error("Expected fuzzy match to succeed")
@@ -316,7 +316,7 @@ func TestMatchWithNormalization_ExactFirst(t *testing.T) {
     return 42
 }`
 
-	start, end, level, found := MatchWithNormalization(content, search, 0.8)
+	start, end, level, found := MatchWithNormalization(content, search, 0.8, false)
 
 	if !found {
 		t.Error("Expected exact match to succeed")
@@ -326,6 +326,34 @@ func TestMatchWithNormalization_ExactFirst(t *testing.T) {
 	}
 	if content[start:end] != search {
 		t.Errorf("Extracted = %q, want %q", content[start:end], search)
+	}
+}
+
+func TestMatchWithNormalization_ExactOnly(t *testing.T) {
+	content := "func f() {\n        pk_val := get()\n        return pk_val\n}"
+
+	// A first-line-only dropped space is still a byte-exact substring (the 7-space
+	// run sits inside the file's 8-space indent), so Level 0 matches it at the
+	// sub-line offset even in exact-only mode. Verbatim splice then restores the
+	// correct indent. This is the benign tic that needs no normalization.
+	firstLineDrop := "       pk_val := get()\n        return pk_val" // 7 spaces line 1, 8 on line 2
+	if start, end, level, found := MatchWithNormalization(content, firstLineDrop, 0.8, true); !found || level != 0 {
+		t.Errorf("exact-only: expected level-0 sub-line match on first-line drop, got found=%v level=%d", found, level)
+	} else if content[start:end] != firstLineDrop {
+		t.Errorf("exact-only: extracted %q, want %q", content[start:end], firstLineDrop)
+	}
+
+	// Drift on a continuation line means no contiguous substring exists.
+	multiLineDrift := "       pk_val := get()\n       return pk_val" // 7 spaces on BOTH lines
+
+	// Cascade rescues it via whitespace normalization (re-anchored to line start).
+	if _, _, _, found := MatchWithNormalization(content, multiLineDrift, 0.8, false); !found {
+		t.Error("cascade: expected normalized match on multi-line drift")
+	}
+
+	// Exact-only refuses it: clean no-match instead of a corrupting re-anchor.
+	if _, _, _, found := MatchWithNormalization(content, multiLineDrift, 0.8, true); found {
+		t.Error("exact-only: expected no-match on multi-line drift")
 	}
 }
 

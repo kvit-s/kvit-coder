@@ -16,6 +16,7 @@ var TBCSVHeaders = []string{
 	"score", "passed", "total", "full_pass", "import_ok",
 	"llm_calls", "tokens", "prompt_tokens", "generated_tokens", "cached_tokens",
 	"context_used", "cost", "duration_ms", "errors", "workspace_dir", "failed_checks",
+	"timed_out",
 }
 
 // TBCSVWriter appends thinkbench run results to a CSV for resume.
@@ -79,6 +80,7 @@ func (w *TBCSVWriter) WriteResult(r *TBRunResult) error {
 		string(errorsJSON),
 		r.WorkspaceDir,
 		string(failedJSON),
+		strconv.FormatBool(r.TimedOut),
 	}
 	if err := w.writer.Write(row); err != nil {
 		return err
@@ -140,6 +142,9 @@ func LoadTBResults(path string) ([]TBRunResult, error) {
 			_ = json.Unmarshal([]byte(row[19]), &failed)
 		}
 
+		// timed_out (col 21) postdates the other columns; older files lack it.
+		timedOut := len(row) >= 21 && strings.EqualFold(row[20], "true")
+
 		out = append(out, TBRunResult{
 			Slug:            row[0],
 			Type:            row[1],
@@ -158,6 +163,7 @@ func LoadTBResults(path string) ([]TBRunResult, error) {
 			ContextUsed:     contextUsed,
 			Cost:            cost,
 			DurationMS:      durationMS,
+			TimedOut:        timedOut,
 			Errors:          errs,
 			WorkspaceDir:    row[18],
 			FailedChecks:    failed,

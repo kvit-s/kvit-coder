@@ -16,6 +16,7 @@ import (
 	"github.com/kvit-s/kvit-coder/internal/config"
 	ctxtools "github.com/kvit-s/kvit-coder/internal/context"
 	"github.com/kvit-s/kvit-coder/internal/llm"
+	"github.com/kvit-s/kvit-coder/internal/mcp"
 	"github.com/kvit-s/kvit-coder/internal/prompt"
 	"github.com/kvit-s/kvit-coder/internal/repl"
 	"github.com/kvit-s/kvit-coder/internal/session"
@@ -71,6 +72,11 @@ func main() {
 	agentFile := flag.String("agent-file", "", "path to agent file (content appended to system prompt)")
 
 	flag.Parse()
+
+	launchDir, err := os.Getwd()
+	if err != nil {
+		log.Fatalf("Failed to get launch directory: %v", err)
+	}
 
 	// Handle --version
 	if *showVersion {
@@ -282,6 +288,18 @@ func main() {
 	tempFileMgr := tools.NewTempFileManager(cfg.Workspace.Root)
 	defer tempFileMgr.CleanupAll()
 
+	// Initialize MCP (Model Context Protocol) client manager. A no-op when
+	// cfg.MCP.Enabled is false or no servers are configured. Servers that fail
+	// to connect are logged and skipped, never fatal.
+	mcpMgr := mcp.NewManager(cfg.MCP, cfg.Workspace.Root, writer, tempFileMgr)
+	if err := mcpMgr.Connect(context.Background()); err != nil {
+		writer.Warn(fmt.Sprintf("MCP: some servers failed to connect: %v", err))
+	}
+	defer mcpMgr.Close()
+	if summary := mcpMgr.Summary(); summary != "" {
+		writer.Debug("MCP: " + summary)
+	}
+
 	// Initialize plan manager
 	planManager := tools.NewPlanManager()
 
@@ -346,6 +364,7 @@ func main() {
 		TempFileMgr:   tempFileMgr,
 		PlanManager:   planManager,
 		ToolCtx:       toolCtx,
+		MCPTools:      mcpMgr.Tools(),
 	})
 
 	// Generate system prompt using the prompt generator
@@ -477,6 +496,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	projectInstructions, err := repl.LoadProjectInstructions(cfg, launchDir)
+	if err != nil {
+		log.Fatalf("Failed to load project instructions: %v", err)
+	}
+	if projectInstructions != nil {
+		writer.Debug(fmt.Sprintf("Project instructions: %s", projectInstructions.Path))
+	}
+
 	// Show startup info
 	writer.StartupInfo("Agent REPL v0.1")
 	writer.StartupInfo(fmt.Sprintf("Model: %s @ %s", cfg.LLM.Model, cfg.LLM.BaseURL))
@@ -502,5 +529,5 @@ func main() {
 	}
 
 	// Run in exec mode (always, since we require -p or --benchmark)
-	repl.RunExec(runner, writer, cfg, systemPrompt, promptText, quietMode, *sessionName, sessionMgr)
+	repl.RunExec(runner, writer, cfg, systemPrompt, promptText, quietMode, *sessionName, sessionMgr, projectInstructions)
 }

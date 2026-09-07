@@ -168,6 +168,22 @@ func WriteTBResultsMarkdown(path string, model string, res *TBResults, rawResult
 		commaInt(ov.AvgTokens), ov.CachedFrac*100, ov.TotalCostUSD)
 	b.WriteString("\n")
 
+	// Runs the agent did not get to finish are graded on whatever they had
+	// written when the clock ran out, so the mean score above understates the
+	// model whenever this count is high.
+	if graded := filterResults(rawResults, false); len(graded) > 0 {
+		timedOut := 0
+		for _, r := range graded {
+			if r.TimedOut {
+				timedOut++
+			}
+		}
+		if timedOut > 0 {
+			fmt.Fprintf(&b, "%d of %d graded runs were stopped by the per-task time budget "+
+				"(`thinkbench.timeout_per_run`) and graded part-finished.\n\n", timedOut, len(graded))
+		}
+	}
+
 	// By type.
 	b.WriteString("## By task type (mean score / full-pass rate)\n\n")
 	b.WriteString("| type | tasks | mean score | full-pass |\n")
@@ -275,6 +291,10 @@ func runOutcome(r TBRunResult) string {
 	switch {
 	case r.FullPass:
 		return "pass"
+	case r.TimedOut:
+		// Graded on a half-finished workspace: the score says how far the agent
+		// got, not how well it did, so keep it distinct from an honest partial.
+		return "timeout"
 	case !r.ImportOK:
 		return "import-fail"
 	default:

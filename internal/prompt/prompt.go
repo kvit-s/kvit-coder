@@ -65,11 +65,25 @@ func (g *Generator) GenerateSystemPrompt() (string, error) {
 		if g.engine == nil {
 			return "", fmt.Errorf("templates enabled but template engine not initialized")
 		}
-		return g.generateFromTemplates()
+		out, err := g.generateFromTemplates()
+		if err != nil {
+			return "", err
+		}
+		return g.rewriteToolNames(out), nil
 	}
 
 	// Use hardcoded generation
-	return g.generateHardcoded(), nil
+	return g.rewriteToolNames(g.generateHardcoded()), nil
+}
+
+func (g *Generator) rewriteToolNames(text string) string {
+	type toolNameRewriter interface {
+		RewriteToolNamesForPrompt(string) string
+	}
+	if rewriter, ok := g.registry.(toolNameRewriter); ok {
+		return rewriter.RewriteToolNamesForPrompt(text)
+	}
+	return text
 }
 
 // generateFromTemplates generates the system prompt using templates.

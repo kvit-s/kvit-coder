@@ -378,10 +378,19 @@ func FindSimilarChunk(content, search string, contextLines int) (startLine int, 
 // MatchWithNormalization tries to match search text with progressive normalization levels
 // Returns position and the normalization level that succeeded:
 // 0 = exact, 1 = rstrip, 2 = full strip, 3 = fuzzy
-func MatchWithNormalization(content, search string, fuzzyThreshold float64) (start, end int, level int, found bool) {
+//
+// When exactOnly is true, only Level 0 (byte-exact) is attempted: a miss returns
+// found=false rather than re-anchoring the match to a whitespace-normalized
+// (line-start) position. This keeps the splice character-precise and turns the
+// model's uncertainty into a clean no-match instead of a silent miscorrection.
+func MatchWithNormalization(content, search string, fuzzyThreshold float64, exactOnly bool) (start, end int, level int, found bool) {
 	// Level 0: Exact match
 	if idx := strings.Index(content, search); idx >= 0 {
 		return idx, idx + len(search), 0, true
+	}
+
+	if exactOnly {
+		return 0, 0, -1, false
 	}
 
 	// Level 1: Right-strip whitespace normalization
