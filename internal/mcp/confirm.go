@@ -30,12 +30,20 @@ const (
 // instance is shared by all adapters (owned by the Manager) so "ask_once"
 // spans every tool from every server.
 type confirmer struct {
-	mu       sync.Mutex
-	approved map[string]bool
+	approvals Approvals
 }
 
 func newConfirmer() *confirmer {
-	return &confirmer{approved: make(map[string]bool)}
+	return &confirmer{approvals: newMemoryApprovals()}
+}
+
+// setApprovals swaps in where "ask_once" answers are remembered. The default
+// is process memory, which under one process per turn lasts exactly one
+// instruction; cmd/kvit-coder points this at the session directory instead.
+func (c *confirmer) setApprovals(a Approvals) {
+	if a != nil {
+		c.approvals = a
+	}
 }
 
 // Confirm applies the policy for a single call. It returns nil to allow the
@@ -51,10 +59,7 @@ func (c *confirmer) Confirm(toolName, server, policy, argsPreview string) error 
 	case ConfirmAskOnce:
 		fallthrough
 	default:
-		c.mu.Lock()
-		ok := c.approved[toolName]
-		c.mu.Unlock()
-		if ok {
+		if c.approvals.Approved(toolName) {
 			return nil
 		}
 		return c.ask(toolName, server, argsPreview, true)
@@ -124,9 +129,11 @@ func (c *confirmer) ask(toolName, server, argsPreview string, remember bool) err
 		return fmt.Errorf("user declined MCP tool %s; do not retry", toolName)
 	}
 	if remember {
-		c.mu.Lock()
-		c.approved[toolName] = true
-		c.mu.Unlock()
+		if err := c.approvals.Approve(toolName); err != nil {
+			// The call was approved; only remembering it failed. Say so and
+			// carry on, because the cost is another prompt rather than the work.
+			fmt.Fprintf(os.Stderr, "warning: could not record the approval for %s: %v\n", toolName, err)
+		}
 	}
 	return nil
 }

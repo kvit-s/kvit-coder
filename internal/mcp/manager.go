@@ -64,6 +64,14 @@ func NewManager(cfg config.MCPConfig, workspaceRoot string, logger Logger, tempF
 	}
 }
 
+// SetApprovals decides where "ask_once" answers are remembered. Without it they
+// live in process memory, which under one process per turn means they are
+// forgotten between instructions. cmd/kvit-coder passes a store in the session
+// directory.
+func (m *Manager) SetApprovals(a Approvals) {
+	m.confirmer.setApprovals(a)
+}
+
 // Connect dials every enabled server concurrently, each under its own startup
 // timeout, running initialize → tools/list. Failures are logged and skipped; a
 // summary error naming the failed servers is returned for the caller to warn on

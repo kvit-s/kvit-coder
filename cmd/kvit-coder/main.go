@@ -462,6 +462,19 @@ func main() {
 	// cfg.MCP.Enabled is false or no servers are configured. Servers that fail
 	// to connect are logged and skipped, never fatal.
 	mcpMgr := mcp.NewManager(cfg.MCP, cfg.Workspace.Root, writer, tempFileMgr)
+	// Remember "ask_once" answers in the session rather than in memory. The
+	// process lives for one turn, so an in-memory map turns ask_once into
+	// ask-once-per-instruction -- painless while nothing is configured, and
+	// unbearable the moment a browser server is, since every click of every
+	// turn would prompt again.
+	if sess != nil {
+		approvals, err := mcp.OpenApprovals(filepath.Join(sess.Dir(), "mcp-approvals.json"))
+		if err != nil {
+			writer.Warn(fmt.Sprintf("mcp: approvals will not be remembered past this turn: %v", err))
+		} else {
+			mcpMgr.SetApprovals(approvals)
+		}
+	}
 	if err := mcpMgr.Connect(context.Background()); err != nil {
 		writer.Warn(fmt.Sprintf("mcp: some servers failed to connect: %v", err))
 	}
