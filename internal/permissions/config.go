@@ -29,7 +29,12 @@ func normalizeEntry(entry string) string {
 	if entry == "" {
 		return ""
 	}
-	if strings.HasSuffix(entry, "*") {
+	// The entry already covers any arguments when its last word is "*". A "*"
+	// inside the last word does not: "mkfs.*" names a family of programs and
+	// still needs the arguments added, or it would match only an invocation
+	// with none.
+	fields := strings.Fields(entry)
+	if fields[len(fields)-1] == "*" {
 		return entry
 	}
 	return entry + " *"

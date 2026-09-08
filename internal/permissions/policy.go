@@ -27,6 +27,13 @@ const (
 // first words are the rest of the pattern, so "curl *" is every curl and
 // "python3 -c *" is only the one-liner form. Without a trailing "*" the whole
 // command must match word for word.
+//
+// The program itself may also end in "*", which matches every program whose
+// name starts with what comes before it: "mkfs.* *" is mkfs.ext4, mkfs.xfs and
+// every other member of that family. Those are separate binaries rather than
+// mkfs with an argument, so no pattern over arguments can reach them, and there
+// are too many to list. Only the program accepts a partial word; the arguments
+// are compared whole.
 type Rule struct {
 	Pattern string
 	Effect  Effect
@@ -34,6 +41,13 @@ type Rule struct {
 	// Source says where the rule came from, for a message that explains
 	// itself: "builtin", "config", "session", "project", "global".
 	Source string
+	// Irreversible says the command destroys something that cannot be got
+	// back — a disk overwritten, a filesystem written over what was there.
+	// Everything else asked about can be undone or lived with: a fetch can be
+	// deleted, a listening port closed. It is the one thing --yolo does not
+	// answer for you, because the reason an ask is safe to answer blind is
+	// that a wrong answer can be corrected.
+	Irreversible bool
 }
 
 // Matches reports whether this rule covers the given command.
@@ -64,6 +78,12 @@ func (r Rule) Matches(s Scope) bool {
 			// and ./curl are the same rule's business.
 			got = programName(got)
 			want = programName(want)
+			if prefix, partial := strings.CutSuffix(want, "*"); partial {
+				if !strings.HasPrefix(got, prefix) {
+					return false
+				}
+				continue
+			}
 		}
 		if got != want {
 			return false
@@ -84,6 +104,11 @@ type Verdict struct {
 	Effect Effect
 	Scope  Scope
 	Rule   Rule
+	// AutoAllowed says this was a command someone would normally be asked
+	// about, allowed because AllowAsks is set. The caller says so on the
+	// terminal, so a run started with --yolo leaves a record of what it
+	// decided rather than only of having been started.
+	AutoAllowed bool
 }
 
 // Reason explains the verdict in a sentence, naming the command it is about.
@@ -115,6 +140,11 @@ type Policy struct {
 	// when tools.shell.allowed_commands is non-empty, which is how that option
 	// has always behaved.
 	AllowlistOnly bool
+
+	// AllowAsks answers yes to every command that would need permission,
+	// except the ones marked Irreversible. --yolo sets it. A refusal stays a
+	// refusal: this answers questions, and a denial was never a question.
+	AllowAsks bool
 
 	// HomeDir is used to recognise a command that would delete the home
 	// directory. Empty falls back to the process's own home.
@@ -185,6 +215,9 @@ func (p *Policy) decideScope(s Scope) Verdict {
 	for _, tier := range tiers {
 		for _, rule := range tier {
 			if rule.Effect == EffectAsk && rule.Matches(s) {
+				if p.AllowAsks && !rule.Irreversible {
+					return Verdict{Effect: EffectAllow, Scope: s, Rule: rule, AutoAllowed: true}
+				}
 				return Verdict{Effect: EffectAsk, Scope: s, Rule: rule}
 			}
 		}
@@ -223,8 +256,7 @@ func (p *Policy) builtinPathDenial(s Scope) (Rule, bool) {
 				Pattern: "rm " + raw,
 				Effect:  EffectDeny,
 				Source:  "builtin",
-				Reason: "it would delete the filesystem root or your home directory. " +
-					"If you really need this, run it yourself outside kvit-coder",
+				Reason:  "it would delete your home directory or the filesystem root",
 			}, true
 		}
 	}

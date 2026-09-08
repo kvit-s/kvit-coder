@@ -147,7 +147,7 @@ Plan/Checkpoint tools and Tasks tools are mutually exclusive — enable one grou
 | `--json` | Structured JSON output to stderr | false |
 | `-s <name>` | Continue or create named session | - |
 | `-c` | Continue the most recent session | - |
-| `--yolo` | Read and write anywhere on the filesystem, without asking | false |
+| `--yolo` | Read and write anywhere, and run anything that would have asked | false |
 | `--sessions` | List sessions | - |
 | `--session-show <name>` | Show session history | - |
 | `--session-delete <name>` | Delete a session | - |
@@ -161,7 +161,7 @@ Plan/Checkpoint tools and Tasks tools are mutually exclusive — enable one grou
 | `-agent-path <path>` | Path to kvit-coder binary | auto-detected |
 | `-s <name>` | Continue or create named session | - |
 | `-c` | Continue the most recent session | - |
-| `--yolo` | Read and write anywhere on the filesystem, without asking (passed to each turn) | false |
+| `--yolo` | Read and write anywhere, and run anything that would have asked (passed to each turn) | false |
 
 ## Sessions
 
@@ -238,12 +238,36 @@ own, so `git diff && rm -rf /` is refused for its second command, `ps aux | awk
 rather than a program.
 
 Refused outright: `sudo`, `su`, `chroot`, package managers, `shutdown`/`reboot`,
-`mkfs`, deleting `/` or your home directory, and `sed -i` when the Edit tool is
-available. Deleting anything *under* those directories is ordinary cleanup and
-is allowed.
+and deleting `/` or your home directory. Deleting anything *under* those
+directories is ordinary cleanup and is allowed. Under `agent.profile: weak`,
+`sed -i` is refused too when the Edit tool is enabled, since a weak model will
+otherwise edit files with it instead of calling Edit; the strong profile allows
+it, and sed is an ordinary shell command there.
+
+`--yolo` answers these questions for you, which is what it is for in a run with
+no terminal: there an unanswered question comes back as a refusal rather than a
+pause, so without it a headless `--yolo` run fails on the first `curl` it needs.
+Two things it does not answer. What is refused outright stays refused, since a
+refusal was never a question. And `dd` and the `mkfs` family keep asking, so
+with no terminal they are still refused — everything else on the list can be
+undone or lived with, whereas an overwritten disk cannot. Each command `--yolo`
+allows is named on the terminal as it happens, so the run records what the flag
+decided rather than only that it was passed. The same switch is
+`tools.shell.allow_without_asking` in the config file.
+
+None of this is a sandbox. A denied command is generally reachable some other
+way — through an interpreter, or by writing a script and running it — and no
+rule here tries to close that off. What the rules catch is a command that would
+do damage without anyone having decided to.
 
 Needing permission — dangerous in general, ordinary in context — are `curl`,
-`wget`, `nc`, `dd`, `eval` and interpreter one-liners such as `python -c`. At a
+`wget`, `nc`, `dd` and the `mkfs` family. Under `agent.profile: weak`, `eval`
+and interpreter one-liners such as `python -c` are added to that list; the
+strong profile runs them without asking, since the same code written to a file
+and run is refused by nothing. Whichever way a command is refused, the message
+says in one line what the command would do rather than which list it is on,
+since that is all a person has to decide on and all the model is told when
+nobody is there to ask. At a
 terminal you are asked, with four answers: just this once, for the rest of this
 session, always for this project, or always everywhere. The last three are
 written to permission files under `~/.kvit-coder/permissions/` and the session
@@ -253,8 +277,11 @@ to `tools.shell.allowed_commands`.
 
 `allowed_commands` and `disallowed_commands` still work, now as patterns
 matched against each command in the line rather than as a prefix of the whole
-string. Setting `allowed_commands` still makes everything else a denial, and a
-grant can never open something that is refused outright.
+string. A pattern is a list of words: `curl` is every curl, `python3 -c` is only
+the one-liner form, and a program name ending in `*` covers a family of programs
+that differ only by suffix, so `mkfs.*` is `mkfs.ext4`, `mkfs.xfs` and the rest.
+Setting `allowed_commands` still makes everything else a denial, and a grant can
+never open something that is refused outright.
 
 ### Background processes
 
@@ -442,7 +469,7 @@ cache. Setting `KVIT_RUN_ID` in the environment pins a value instead.
 |-----|-------------|
 | `root` | Workspace root directory |
 | `lock` | Refuse to start when another agent is working in this directory (default: `false`) |
-| `path_safety_mode` | `allow` (same as `--yolo`), `block`, `warn`, `ask_once` (default), `ask_always` |
+| `path_safety_mode` | `allow` (what `--yolo` sets), `block`, `warn`, `ask_once` (default), `ask_always` |
 | `allowed_paths` / `allowed_read_paths` | Paths allowed outside workspace |
 | `denied_paths` | Explicitly denied paths |
 
@@ -467,11 +494,12 @@ A lot of the loop exists to catch a model getting confused:
 backtracking away from a bad tool call, ending a turn after three identical
 calls, a confirm handshake before an edit is applied, scraping tool calls out of
 prose, fuzzy matching and indentation repair, asking the model to explain an
-anomaly, and retrying an empty answer. On a model that does not make those
-mistakes each one is a tax — a retry that discards good work, a handshake that
-costs two round trips per edit, a fuzzy match that silently edits the wrong
-lines. `profile: strong`, the default, skips all of it; `profile: weak`
-reproduces the earlier behaviour exactly.
+anomaly, retrying an empty answer, and keeping `sed -i`, `eval` and interpreter
+one-liners away from a model that would use them instead of the Edit tool. On a model that does not make those mistakes each
+one is a tax — a retry that discards good work, a handshake that costs two round
+trips per edit, a fuzzy match that silently edits the wrong lines, a refusal to
+run a command the model had good reason to run. `profile: strong`, the default,
+skips all of it; `profile: weak` reproduces the earlier behaviour exactly.
 
 ### `tools`
 

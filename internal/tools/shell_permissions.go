@@ -28,6 +28,8 @@ func (t *ShellAdvancedTool) checkPermissions(command string) error {
 		return fmt.Errorf("could not check this command for safety: %v", err)
 	}
 
+	t.reportAutoAllowed(verdicts)
+
 	worst, needsAttention := permissions.Worst(verdicts)
 	if !needsAttention {
 		return nil
@@ -67,6 +69,17 @@ func (t *ShellAdvancedTool) checkPermissions(command string) error {
 	return nil
 }
 
+// reportAutoAllowed names anything that ran only because --yolo answered for
+// you. Without this the run records that the flag was passed and nothing about
+// what it decided, which is the part worth being able to look back at.
+func (t *ShellAdvancedTool) reportAutoAllowed(verdicts []permissions.Verdict) {
+	for _, v := range verdicts {
+		if v.AutoAllowed {
+			fmt.Fprintf(os.Stderr, "  allowed without asking: %s — %s\n", v.Scope.Literal, v.Rule.Reason)
+		}
+	}
+}
+
 // policy assembles the rules that apply to this run: kvit-coder's own, then the
 // config's allow and deny lists, then whatever has been granted.
 func (t *ShellAdvancedTool) policy() *permissions.Policy {
@@ -74,6 +87,7 @@ func (t *ShellAdvancedTool) policy() *permissions.Policy {
 		Builtin: permissions.Builtin(permissions.Options{
 			AllowInterpreters: t.cfg.Tools.Shell.AllowInterpreters,
 			EditToolAvailable: t.cfg.Tools.Edit.Enabled,
+			Strong:            t.cfg.Agent.IsStrong(),
 		}),
 		Config: permissions.FromConfig(
 			t.cfg.Tools.Shell.AllowedCommands,
@@ -81,6 +95,7 @@ func (t *ShellAdvancedTool) policy() *permissions.Policy {
 		),
 		Session:       t.grantor().Rules(),
 		AllowlistOnly: len(t.cfg.Tools.Shell.AllowedCommands) > 0,
+		AllowAsks:     t.cfg.Tools.Shell.AllowWithoutAsking,
 	}
 }
 

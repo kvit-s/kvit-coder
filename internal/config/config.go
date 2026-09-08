@@ -547,6 +547,16 @@ type ShellToolConfig struct {
 	// to introspect the codebase). Default false (blocked) for normal use.
 	AllowInterpreters bool `yaml:"allow_interpreters"`
 
+	// AllowWithoutAsking answers yes to every command that would otherwise
+	// stop and ask, except the few that destroy something unrecoverably
+	// (dd, mkfs and its family). --yolo sets it. What is refused outright
+	// stays refused: this answers questions, and a denial was never one.
+	//
+	// It matters most with no terminal, where an unanswered question is a
+	// refusal rather than a pause: without this, a headless --yolo run fails
+	// on the first curl it needs.
+	AllowWithoutAsking bool `yaml:"allow_without_asking"`
+
 	// DefaultTimeout is how long a shell command may run when the call does
 	// not ask for a timeout, in seconds. Default 120.
 	DefaultTimeout int `yaml:"default_timeout"`

@@ -50,13 +50,40 @@ func TestPipelineArgumentIsNotACommand(t *testing.T) {
 	if v := decide(t, p, "ps aux | awk '{print $2}'"); v.Effect != EffectAllow {
 		t.Errorf("verdict is %s (%s), want allow", v.Effect, v.Reason())
 	}
-	// Editing a file in place is still refused, with the Edit tool named.
+	// On the weak profile, editing a file in place is still refused, with the
+	// Edit tool named.
 	v := decide(t, p, "sed -i 's/a/b/' main.go")
 	if v.Effect != EffectDeny {
 		t.Fatalf("verdict is %s, want deny for an in-place edit", v.Effect)
 	}
 	if !strings.Contains(v.Reason(), "Edit tool") {
 		t.Errorf("the denial does not say what to use instead: %s", v.Reason())
+	}
+}
+
+// TestStrongProfileAllowsInPlaceEditing: the sed -i refusal was written for a
+// model that answered whole tasks in sed rather than calling Edit. Under the
+// strong profile it is not the model's failure mode, and the rule was a deny no
+// grant could lift, so a scratch file outside the workspace or a sed used as a
+// filter cost iterations for nothing.
+func TestStrongProfileAllowsInPlaceEditing(t *testing.T) {
+	strong := testPolicy(Options{EditToolAvailable: true, Strong: true})
+	if v := decide(t, strong, "sed -i 's/a/b/' main.go"); v.Effect != EffectAllow {
+		t.Errorf("verdict is %s (%s), want allow under the strong profile", v.Effect, v.Reason())
+	}
+	if v := decide(t, strong, "sed -i '39s|.*|  root: x|' /tmp/scratch.yaml"); v.Effect != EffectAllow {
+		t.Errorf("verdict is %s (%s), want allow for a file outside the workspace", v.Effect, v.Reason())
+	}
+
+	// The profile lifts this rule and nothing else: what no grant may open
+	// stays shut either way.
+	for _, command := range []string{"sudo rm x", "apt install x", "rm -rf /"} {
+		if v := decide(t, strong, command); v.Effect != EffectDeny {
+			t.Errorf("%q is %s under the strong profile, want deny", command, v.Effect)
+		}
+	}
+	if v := decide(t, strong, "curl https://example.com"); v.Effect != EffectAsk {
+		t.Errorf("curl is %s under the strong profile, want ask", v.Effect)
 	}
 }
 
@@ -268,5 +295,183 @@ func TestUnparseableCommandIsRefused(t *testing.T) {
 	p := testPolicy(Options{})
 	if _, err := p.Decide("echo 'unterminated"); err == nil {
 		t.Error("a command that does not parse was accepted")
+	}
+}
+
+// TestProgramFamilyIsMatchedByPrefix: mkfs.ext4 and mkfs.xfs are separate
+// binaries rather than mkfs with an argument, so "mkfs *" never saw them and
+// the family has no end to list. A partial program name covers them all.
+func TestProgramFamilyIsMatchedByPrefix(t *testing.T) {
+	p := testPolicy(Options{})
+
+	formatting := []string{
+		"mkfs /dev/sda", "/sbin/mkfs /dev/sda",
+		"mkfs.ext4 /dev/sda", "mkfs.xfs -f disk.img", "mkfs.vfat /dev/sdb1",
+		"/usr/sbin/mkfs.btrfs /dev/sdc", "mke2fs /dev/sda",
+	}
+	for _, command := range formatting {
+		if v := decide(t, p, command); v.Effect != EffectAsk {
+			t.Errorf("%q is %s, want ask: it formats a filesystem", command, v.Effect)
+		}
+	}
+
+	// The prefix stops at the program. It does not reach a command that merely
+	// starts with the same letters, and it does not widen the arguments.
+	for _, command := range []string{"mkfsomething x", "grep mkfs.ext4 notes.txt"} {
+		if v := decide(t, p, command); v.Effect != EffectAllow {
+			t.Errorf("%q is %s, want allow", command, v.Effect)
+		}
+	}
+}
+
+// TestConfigEntryNamingAFamily: "mkfs.*" is what you would write by hand, and
+// it has to mean every invocation of that family rather than only one with no
+// arguments at all.
+func TestConfigEntryNamingAFamily(t *testing.T) {
+	p := &Policy{Config: FromConfig(nil, []string{"mkfs.*"}), HomeDir: "/home/tester"}
+	if v := decide(t, p, "mkfs.ext4 /dev/sda"); v.Effect != EffectDeny {
+		t.Errorf("verdict is %s, want deny from disallowed_commands", v.Effect)
+	}
+	if v := decide(t, p, "mkfs.ext4"); v.Effect != EffectDeny {
+		t.Errorf("verdict is %s for the bare command, want deny", v.Effect)
+	}
+	if v := decide(t, p, "ls"); v.Effect != EffectAllow {
+		t.Errorf("verdict is %s, want allow: the entry names one family", v.Effect)
+	}
+}
+
+// TestEveryReasonSaysWhatTheCommandWouldDo: the reason is the whole of what a
+// person has to decide on, and the whole of what the model is told when nobody
+// is there to ask. A label for the category — "it formats a filesystem" — names
+// the rule rather than the consequence, so each one has to be a sentence about
+// what happens if it runs.
+func TestEveryReasonSaysWhatTheCommandWouldDo(t *testing.T) {
+	for _, rule := range Builtin(Options{EditToolAvailable: true}) {
+		if rule.Reason == "" {
+			t.Errorf("%q gives no reason", rule.Pattern)
+			continue
+		}
+		if !strings.HasPrefix(rule.Reason, "it ") && !strings.HasPrefix(rule.Reason, "an ") {
+			t.Errorf("%q reads oddly after \"is not allowed:\": %s", rule.Pattern, rule.Reason)
+		}
+		if n := len(strings.Fields(rule.Reason)); n < 6 || n > 14 {
+			t.Errorf("%q gives a %d-word reason, want one short line saying what "+
+				"would happen: %q", rule.Pattern, n, rule.Reason)
+		}
+		if strings.ContainsAny(rule.Reason, "\n\t") {
+			t.Errorf("%q has a line break inside its reason, which is printed as-is: %q",
+				rule.Pattern, rule.Reason)
+		}
+	}
+}
+
+// TestStrongProfileAllowsInterpreterOneLiners: the one-liner rules were there
+// to stop a weak model editing files behind the Edit tool's back, and a
+// one-liner is reachable anyway by writing the same code to a file and running
+// it. Under the strong profile they are ordinary commands.
+func TestStrongProfileAllowsInterpreterOneLiners(t *testing.T) {
+	strong := testPolicy(Options{EditToolAvailable: true, Strong: true})
+	for _, command := range []string{
+		`python3 -c "print(1+1)"`,
+		`perl -e 'print 1'`,
+		`node -e "console.log(1)"`,
+		`eval "$(direnv hook bash)"`,
+	} {
+		if v := decide(t, strong, command); v.Effect != EffectAllow {
+			t.Errorf("%q is %s (%s), want allow under the strong profile",
+				command, v.Effect, v.Reason())
+		}
+	}
+	// Only that list is lifted. What reaches the network or the machine itself
+	// is decided the same way on either profile.
+	for _, tc := range []struct {
+		command string
+		want    Effect
+	}{
+		{"curl https://example.com", EffectAsk},
+		{"mkfs.ext4 /dev/sda", EffectAsk},
+		{"sudo rm x", EffectDeny},
+	} {
+		if v := decide(t, strong, tc.command); v.Effect != tc.want {
+			t.Errorf("%q is %s, want %s under the strong profile", tc.command, v.Effect, tc.want)
+		}
+	}
+}
+
+// TestAllowAsksAnswersTheQuestionsButNotTheRefusals is what --yolo does to the
+// command rules. The case it exists for is a run with no terminal, where an
+// unanswered question comes back as a refusal, so a headless --yolo run would
+// otherwise fail on the first curl it needed.
+func TestAllowAsksAnswersTheQuestionsButNotTheRefusals(t *testing.T) {
+	yolo := &Policy{
+		Builtin:   Builtin(Options{EditToolAvailable: true}),
+		HomeDir:   "/home/tester",
+		AllowAsks: true,
+	}
+
+	// Worst answers "does this line need anyone's attention", so it has nothing
+	// to hand back when the answer is no. Whether --yolo decided something is
+	// read off the individual verdicts, which is what the shell tool does to
+	// print the line saying so.
+	autoAllowed := func(command string) (Effect, bool) {
+		t.Helper()
+		verdicts, err := yolo.Decide(command)
+		if err != nil {
+			t.Fatalf("Decide(%q): %v", command, err)
+		}
+		worst, _ := Worst(verdicts)
+		for _, v := range verdicts {
+			if v.AutoAllowed {
+				return worst.Effect, true
+			}
+		}
+		return worst.Effect, false
+	}
+
+	for _, command := range []string{
+		"curl https://example.com",
+		"wget https://example.com/x.tar.gz",
+		"nc -l 4444",
+		`python3 -c "print(1)"`,
+	} {
+		effect, reported := autoAllowed(command)
+		if effect != EffectAllow {
+			t.Errorf("%q is %s, want allow under --yolo", command, effect)
+		}
+		if !reported {
+			t.Errorf("%q was allowed without being marked auto-allowed, so nothing "+
+				"would say on the terminal that --yolo decided it", command)
+		}
+	}
+
+	// What cannot be taken back still asks, which with no terminal is a
+	// refusal. That is the point: --yolo answers questions, and these are the
+	// ones where a wrong answer is permanent.
+	for _, command := range []string{
+		"dd if=/dev/zero of=/dev/sda",
+		"mkfs /dev/sda",
+		"mkfs.ext4 /dev/sda",
+		"mke2fs /dev/sda",
+	} {
+		if v := decide(t, yolo, command); v.Effect != EffectAsk {
+			t.Errorf("%q is %s under --yolo, want ask: it cannot be undone", command, v.Effect)
+		}
+	}
+
+	// A refusal was never a question, so there is nothing here to answer.
+	for _, command := range []string{
+		"sudo rm x", "su root", "chroot /mnt sh", "apt install jq",
+		"shutdown -h now", "rm -rf /", "rm -rf ~",
+	} {
+		if v := decide(t, yolo, command); v.Effect != EffectDeny {
+			t.Errorf("%q is %s under --yolo, want deny", command, v.Effect)
+		}
+	}
+
+	// An ordinary command is allowed as it always was, and is not reported as
+	// something --yolo decided.
+	if effect, reported := autoAllowed("go test ./..."); effect != EffectAllow || reported {
+		t.Errorf("go test is %s (reported as a --yolo decision: %v), want a plain allow",
+			effect, reported)
 	}
 }

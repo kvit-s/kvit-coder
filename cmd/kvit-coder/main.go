@@ -243,11 +243,21 @@ func main() {
 	}
 	// --yolo drops the workspace boundary for the whole run: every file tool
 	// and every shell command may read and write anywhere, with no prompt and
-	// no warning. It is set here, before the benchmark overrides below, so a
-	// benchmark run keeps its sandbox whatever the flag says.
+	// no warning. It also answers yes to the commands that would otherwise
+	// stop and ask, which is what the flag is for in a run with no terminal —
+	// there an unanswered question is a refusal rather than a pause, so
+	// without this a headless --yolo run fails on the first curl it needs.
+	// What is refused outright stays refused, and so do dd and mkfs, where a
+	// wrong answer cannot be taken back.
+	//
+	// It is set here, before the benchmark overrides below, so a benchmark run
+	// keeps its sandbox whatever the flag says.
 	if *yolo {
 		cfg.Workspace.PathSafetyMode = "allow"
-		writer.Warn("--yolo: reading and writing anywhere on the filesystem, without asking")
+		cfg.Tools.Shell.AllowWithoutAsking = true
+		writer.Warn("--yolo: reading and writing anywhere on the filesystem, and running " +
+			"anything that would have asked, without asking. Commands refused outright are " +
+			"still refused, and dd and mkfs still ask.")
 	}
 
 	// Override workspace for benchmark mode - set BEFORE tools are initialized

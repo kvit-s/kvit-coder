@@ -61,8 +61,10 @@ agent:
   # model getting confused: backtracking away from a bad tool call, the
   # duplicate-call kill switch, the confirm handshake before an edit is applied,
   # scraping tool calls out of prose, fuzzy matching and indentation repair,
-  # anomaly interrogation, and retrying an empty answer. "strong" skips all of
-  # it: on a model that does not make those mistakes each one is a tax.
+  # anomaly interrogation, retrying an empty answer, and keeping `sed -i`, eval
+  # and interpreter one-liners away from a model that would use them instead of
+  # the Edit tool. "strong" skips all of it: on a model that does not make those
+  # mistakes each one is a tax.
   profile: strong
   max_tool_iterations: 1000
   project_instructions:
@@ -108,10 +110,15 @@ tools:
     enabled: true
     # Permission comes from the command's syntax tree, one decision per simple
     # command in the line. Refused outright: sudo, su, chroot, package
-    # managers, shutdown/reboot, mkfs, deleting / or your home directory, and
-    # sed -i (the Edit tool shows the change and can undo it). Needing
+    # managers, shutdown/reboot, and deleting / or your home directory.
+    # On agent.profile: weak, sed -i is refused as well, to stop a model that
+    # would otherwise edit files without going through the Edit tool. Needing
     # permission, which you can grant once, for the session, for this project
-    # or everywhere: curl, wget, nc, dd, eval and interpreter one-liners.
+    # or everywhere: curl, wget, nc, dd, and mkfs and its family. On
+    # agent.profile: weak, eval and interpreter one-liners are asked about too.
+    allow_without_asking: false # what --yolo sets: run anything that would have asked.
+                                # What is refused outright stays refused, and dd
+                                # and mkfs keep asking — those cannot be undone.
     allowed_commands: []        # allowlist (empty = allow all; non-empty = deny everything else)
     disallowed_commands: []     # blocklist
     default_timeout: 120        # seconds a command gets when the call names none
