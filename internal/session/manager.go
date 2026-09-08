@@ -72,6 +72,14 @@ func (m *Manager) LoadSession(name string) ([]llm.Message, error) {
 // request carrying the same value on one backend.
 const RunIDVar = "KVIT_RUN_ID"
 
+// FromUIVar marks a kvit-coder run spawned by kvit-coder-ui. The UI already
+// showed its own banner and echoed the prompt, so the child skips its copy
+// rather than printing both.
+const FromUIVar = "KVIT_CODER_FROM_UI"
+
+// FromUI reports whether this process was spawned by kvit-coder-ui.
+func FromUI() bool { return os.Getenv(FromUIVar) != "" }
+
 // RunIDFor derives a stable run ID from a session name. Reopening the same
 // session produces the same ID, so the turn lands on the backend that already
 // holds the prompt cache for this conversation instead of a cold one.

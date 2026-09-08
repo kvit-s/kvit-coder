@@ -343,6 +343,9 @@ func (u *UI) runAgent(prompt string) {
 	cmd := exec.Command(u.agentPath, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	// The UI already showed its banner and echoed the prompt, so tell the
+	// child to skip its copies rather than printing both.
+	cmd.Env = append(os.Environ(), session.FromUIVar+"=1")
 	// The agent reads stdin for steering: a line typed while a turn is running
 	// reaches the model at its next iteration. The UI is not reading stdin
 	// while it waits for the agent, so there is no contest for it.

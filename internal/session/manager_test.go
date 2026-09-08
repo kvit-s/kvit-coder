@@ -400,3 +400,14 @@ func writeSession(t *testing.T, mgr *Manager, name string, messages []llm.Messag
 	}
 	return sess
 }
+
+func TestFromUI(t *testing.T) {
+	t.Setenv(FromUIVar, "")
+	if FromUI() {
+		t.Fatal("FromUI() = true without the env var set")
+	}
+	t.Setenv(FromUIVar, "1")
+	if !FromUI() {
+		t.Fatal("FromUI() = false with the env var set")
+	}
+}

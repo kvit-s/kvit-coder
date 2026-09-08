@@ -687,14 +687,19 @@ func main() {
 		writer.Debug(fmt.Sprintf("Project instructions: %s", projectInstructions.Path))
 	}
 
-	// Show startup info
-	writer.StartupInfo("Agent REPL v0.1")
-	writer.StartupInfo(fmt.Sprintf("Model: %s @ %s", cfg.LLM.Model, cfg.LLM.BaseURL))
-	writer.StartupInfo(fmt.Sprintf("Tools: %s", strings.Join(registry.ListTools(), ", ")))
-	if *logFile != "" {
-		writer.StartupInfo(fmt.Sprintf("Logs: %s", *logFile))
+	// Show startup info, unless the UI already showed its own banner: it
+	// spawns one agent per turn, so repeating this every turn doubles the
+	// header the user sees.
+	if !session.FromUI() {
+		writer.StartupInfo("Agent REPL v0.1")
+		writer.StartupInfo(fmt.Sprintf("Model: %s @ %s", cfg.LLM.Model, cfg.LLM.BaseURL))
+		writer.StartupInfo(fmt.Sprintf("Tools: %s", strings.Join(registry.ListTools(), ", ")))
+		if *logFile != "" {
+			writer.StartupInfo(fmt.Sprintf("Logs: %s", *logFile))
+		}
+
+		fmt.Println()
 	}
-	fmt.Println()
 
 	// Run in exec mode (always, since we require -p or --benchmark)
 	repl.RunExec(runCtx, runner, writer, cfg, systemPrompt, promptText, quietMode, sess, projectInstructions)

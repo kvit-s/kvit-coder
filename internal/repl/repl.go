@@ -45,17 +45,22 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 			}
 		}
 		isNewSession = len(messages) == 1
-		if !quietMode {
+		// The UI already announced the session and echoed the prompt, so a
+		// child it spawned stays quiet about both rather than printing them
+		// a second time.
+		if !quietMode && !session.FromUI() {
 			if isNewSession {
 				fmt.Fprintf(os.Stderr, "Starting new session: %s\n\n", sessionName)
 			} else {
 				fmt.Fprintf(os.Stderr, "Continuing session: %s (%d messages)\n\n", sessionName, len(previous))
 			}
+
 		}
 	}
 
-	// Display the prompt (unless in quiet mode)
-	if !quietMode {
+	// Display the prompt (unless in quiet mode, or spawned by the UI which
+	// already echoed what was typed).
+	if !quietMode && !session.FromUI() {
 		colorStart := "\033[97;100m"
 		colorEnd := "\033[0m"
 		inputLines := strings.Split(promptText, "\n")
