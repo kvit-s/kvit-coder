@@ -228,6 +228,11 @@ const (
 	ansiGray   = "\x1b[37;2m"
 	ansiWhite  = "\x1b[97m"
 	ansiDimRed = "\x1b[31;2m"
+	// Dim bright-blue for the background-process count (★N) in the step
+	// header. Same dim family as the brown/gray/dim-red around it, but the
+	// bright-blue base stays readable on dark terminals where plain dim
+	// blue (34;2m) nearly disappears.
+	ansiBlue = "\x1b[94;2m"
 	// Dim gray plus strikethrough for finished plan steps.
 	ansiStrikeGray = "\x1b[37;2;9m"
 )
@@ -270,7 +275,8 @@ func (w *Writer) paint(code, s string) string {
 }
 
 // paintThinkingLine colors one pre-wrapped step line: the bullet white,
-// the "(8.4k 1%)" status brownish-dim, and the message itself full white.
+// the "(8.4k 1%)" status brownish-dim, the background-process count ("★2")
+// dim blue, and the message itself full white.
 // Continuation lines carry only the indent plus white message text.
 func (w *Writer) paintThinkingLine(plain, context string) string {
 	if !w.useColor() {
@@ -283,6 +289,15 @@ func (w *Writer) paintThinkingLine(plain, context string) string {
 			status := "(" + context + ")"
 			if strings.HasPrefix(rest, status) {
 				msg := strings.TrimPrefix(rest, status)
+				if base, star, ok := splitProcStar(context); ok {
+					var painted string
+					if base == "" {
+						painted = ansiBrown + "(" + ansiReset + ansiBlue + star + ansiReset + ansiBrown + ")" + ansiReset
+					} else {
+						painted = ansiBrown + "(" + base + " " + ansiReset + ansiBlue + star + ansiReset + ansiBrown + ")" + ansiReset
+					}
+					return bullet + " " + painted + w.paint(ansiWhite, msg)
+				}
 				return bullet + " " + ansiBrown + status + ansiReset + w.paint(ansiWhite, msg)
 			}
 		}
@@ -292,6 +307,28 @@ func (w *Writer) paintThinkingLine(plain, context string) string {
 		return stepIndent + w.paint(ansiWhite, strings.TrimPrefix(plain, stepIndent))
 	}
 	return w.paint(ansiWhite, plain)
+}
+
+// splitProcStar splits a step status like "8.4k 1% ★2" into its brown base
+// ("8.4k 1%") and its blue star ("★2"). It reports false when the status
+// carries no star suffix, so plain headers paint exactly as before.
+func splitProcStar(context string) (base, star string, ok bool) {
+	i := strings.LastIndex(context, " ★")
+	if i < 0 {
+		return "", "", false
+	}
+	base = context[:i]
+	star = context[i+1:]
+	digits := strings.TrimPrefix(star, "★")
+	if digits == "" || star == digits {
+		return "", "", false
+	}
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return "", "", false
+		}
+	}
+	return base, star, true
 }
 
 // clearProgressLine erases the in-place progress row (if any) so the next
@@ -398,6 +435,8 @@ func wrapLine(prefix, text string, width int, contPrefix string) []string {
 // buildThinkingLines renders the bullet-led step header plus any message
 // continuation lines, all pre-wrapped and indented. An empty message still
 // yields the "● (ctx)" status line so every step shows its context share.
+// The context may carry the background-process count ("8.4k 1% ★2"); it is
+// plain text here, and paintThinkingLine gives the star its blue.
 func buildThinkingLines(context, msg string) []string {
 	width := termWidth()
 	bulletPrefix := stepBullet + " "
@@ -644,7 +683,8 @@ func (w *Writer) Agent(msg string) {
 }
 
 // Thinking prints one bullet-led step line per model turn: the bullet, the
-// brownish context share, and the message in full white. An empty message
+// brownish context share with the blue background-process count ("★2") when
+// any are running, and the message in full white. An empty message
 // still prints "● (ctx)" so every step shows its status. Continuation lines
 // of a multi-line message stay indented and wrapped.
 func (w *Writer) Thinking(context, msg string) {
@@ -736,12 +776,16 @@ func (w *Writer) ToolProgress(dot string) {
 		return
 	}
 
-	// A question waiting for an answer owns the terminal. Every update below
+	// A question waiting for an answer owns the terminal, as does the pause
+	// prompt and the window between an empty Enter and that prompt, where
+	// type-ahead echo is already on screen. Every update below
 	// redraws the current line from its left edge, so a dot arriving while a
 	// question is on screen paints over it one character at a time. That is
 	// what made a path confirmation look like a hang: the row of dots kept
 	// growing and "Allow this access? [y/N]:" was gone before it could be
 	// read, so there was nothing on screen saying an answer was wanted.
+	// The same redraw painted over steering typed after an empty Enter while
+	// the current call finished, garbling the line into doubled text.
 	if w.awaitingAnswer != nil && w.awaitingAnswer() {
 		progressHeld = true
 		return

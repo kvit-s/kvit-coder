@@ -227,19 +227,35 @@ func ShortenBlockMessage(blockMsg string) string {
 // It shows what is used and the share of the window in use, e.g. "8.4k 1%":
 // the raw count on its own never said whether anything needed doing about it.
 func FormatContextStr(totalTokens, contextLimit int) string {
+	return FormatContextStrWithProcs(totalTokens, contextLimit, 0)
+}
+
+// FormatContextStrWithProcs adds the background-process count to the context
+// status: "8.4k 1% ★2" when running > 0, the plain base otherwise. Only
+// running processes count — finished ones already surface through the inbox —
+// and zero keeps the header exactly as before.
+func FormatContextStrWithProcs(totalTokens, contextLimit, running int) string {
+	var base string
 	if totalTokens <= 0 {
 		if contextLimit > 0 {
-			return "0k 0%"
+			base = "0k 0%"
+		} else {
+			base = "0k"
 		}
-		return "0k"
+	} else {
+		tokensK := float64(totalTokens) / 1000.0
+		tokensStr := fmt.Sprintf("%.1fk", tokensK)
+		if contextLimit > 0 {
+			percent := 100 * float64(totalTokens) / float64(contextLimit)
+			base = fmt.Sprintf("%s %.0f%%", tokensStr, percent)
+		} else {
+			base = tokensStr
+		}
 	}
-	tokensK := float64(totalTokens) / 1000.0
-	tokensStr := fmt.Sprintf("%.1fk", tokensK)
-	if contextLimit > 0 {
-		percent := 100 * float64(totalTokens) / float64(contextLimit)
-		return fmt.Sprintf("%s %.0f%%", tokensStr, percent)
+	if running > 0 {
+		return fmt.Sprintf("%s ★%d", base, running)
 	}
-	return tokensStr
+	return base
 }
 
 // SingleLine collapses a message to one display line: newlines, carriage

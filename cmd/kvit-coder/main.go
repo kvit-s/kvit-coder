@@ -447,9 +447,11 @@ func main() {
 	// once per iteration.
 	steering := inbox.New(sess.InboxDir())
 	steering.Log = func(msg string) { writer.Warn(msg) }
-	// Progress dots redraw the line they are on, so they must not run while a
-	// question is waiting to be answered.
-	writer.SetPromptWatcher(steering.Awaiting)
+	// Progress dots redraw the line they are on, so they must not run while
+	// anyone owns the terminal: a question waiting for an answer, the pause
+	// prompt, or the window between an empty Enter and that prompt, where
+	// type-ahead would otherwise be painted over one dot at a time.
+	writer.SetPromptWatcher(pauseAwareWatcher(steering))
 	interactive := startStdinReader(steering, writer)
 
 	// Initialize temp file manager for shell command outputs. Its files are not
@@ -727,6 +729,18 @@ func startStdinReader(steering *inbox.Inbox, writer *ui.Writer) bool {
 		}
 	}()
 	return true
+}
+
+// pauseAwareWatcher holds progress dots while anyone owns the terminal: a
+// question waiting for an answer (Awaiting), the pause prompt itself
+// (PauseMode, covering the instant between the mode flag and Ask's counter),
+// or the window between an empty Enter and that prompt (PauseRequested),
+// where type-ahead echo would otherwise be painted over one dot at a time.
+// Dots held this way are dropped and the row restarts after the answer,
+// which is also why seconds spent at these prompts do not count as a slow
+// tool.
+func pauseAwareWatcher(box *inbox.Inbox) func() bool {
+	return func() bool { return box.Awaiting() || box.PauseMode() || box.PauseRequested() }
 }
 
 // routeStdinLine handles one line from the terminal: empty Enter pauses or

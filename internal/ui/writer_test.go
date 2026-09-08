@@ -63,6 +63,47 @@ func TestProgressHoldsWhileAQuestionIsWaiting(t *testing.T) {
 	}
 }
 
+// TestProgressHoldsWhilePauseRequested is the bug that garbled steering typed
+// after an empty Enter: the current call finishes first, and its per-second
+// dots redrew the line the type-ahead echo was on, doubling the text. A
+// pending pause holds dots the same way a waiting question does, and the row
+// restarts once the turn parks and resumes.
+func TestProgressHoldsWhilePauseRequested(t *testing.T) {
+	w, buf := newProgressWriter(true)
+
+	pausePending := false
+	w.SetPromptWatcher(func() bool { return pausePending })
+
+	w.ToolProgress("✨ ")
+	w.ToolProgress(".")
+
+	pausePending = true
+	buf.Reset()
+	for range 5 {
+		w.ToolProgress(".")
+	}
+	if out := buf.String(); out != "" {
+		t.Errorf("progress was drawn over type-ahead after a pause request: %q", out)
+	}
+
+	// Parked and resumed: the row starts again rather than reprinting what
+	// was held.
+	pausePending = false
+	buf.Reset()
+	w.ToolProgress(".")
+
+	out := buf.String()
+	if !strings.Contains(out, ".") {
+		t.Errorf("progress did not resume after the pause was taken: %q", out)
+	}
+	if progressDotCount != 1 {
+		t.Errorf("the dot counter is %d, want the row restarted at 1", progressDotCount)
+	}
+	if progressLine != "." {
+		t.Errorf("the resumed row is %q, want it to start over at a single dot", progressLine)
+	}
+}
+
 // TestHeadlessProgressReachesATerminal is the bug that made a long command look
 // like a hang: the agent runs headless under the interactive UI, and progress
 // was accumulated into a variable and never printed, so nothing at all appeared
@@ -251,5 +292,80 @@ func TestDividerSuppressed(t *testing.T) {
 	w2.Divider("[1s: 1s llm]")
 	if out := buf2.String(); out != "" {
 		t.Errorf("json divider printed %q, want silence", out)
+	}
+}
+
+// TestFormatContextStrWithProcs: the star count rides on the status only
+// while background processes run, and zero keeps the header byte-identical.
+func TestFormatContextStrWithProcs(t *testing.T) {
+	if got := FormatContextStrWithProcs(8400, 1000000, 0); got != "8.4k 1%" {
+		t.Errorf("no procs = %q, want base status unchanged", got)
+	}
+	if got := FormatContextStrWithProcs(8400, 1000000, 2); got != "8.4k 1% ★2" {
+		t.Errorf("two procs = %q, want %q", got, "8.4k 1% ★2")
+	}
+	if got := FormatContextStrWithProcs(0, 1000000, 1); got != "0k 0% ★1" {
+		t.Errorf("zero tokens = %q, want star still shown", got)
+	}
+	if got := FormatContextStrWithProcs(8400, 0, 3); got != "8.4k ★3" {
+		t.Errorf("no limit = %q, want star on the bare count", got)
+	}
+	if got := FormatContextStr(8400, 1000000); got != "8.4k 1%" {
+		t.Errorf("base helper = %q, want no star", got)
+	}
+}
+
+// TestThinkingShowsBackgroundProcs: a running process count appears inside
+// the parens, as plain text when colors are off.
+func TestThinkingShowsBackgroundProcs(t *testing.T) {
+	w, buf := newProgressWriter(false)
+	w.Thinking("8.4k 1% ★2", "hello")
+	if out := buf.String(); out != "● (8.4k 1% ★2) hello\n" {
+		t.Errorf("header = %q, want star count inside the status", out)
+	}
+}
+
+// TestThinkingStarPaintedBlue: on a terminal the star count is dim blue
+// while the rest of the status stays brownish-dim.
+func TestThinkingStarPaintedBlue(t *testing.T) {
+	w, buf := newProgressWriter(true)
+	w.Thinking("8.4k 1% ★2", "hello")
+	out := buf.String()
+	if !strings.Contains(out, ansiBlue+"★2"+ansiReset) {
+		t.Errorf("header %q has no blue star count", out)
+	}
+	if !strings.Contains(out, ansiBrown+"(8.4k 1% ") {
+		t.Errorf("header %q lost the brown context base", out)
+	}
+}
+
+// TestThinkingWithoutStarUnchanged: no running processes means no blue and
+// the same brown status as before.
+func TestThinkingWithoutStarUnchanged(t *testing.T) {
+	w, buf := newProgressWriter(true)
+	w.Thinking("8.4k 1%", "hello")
+	out := buf.String()
+	if strings.Contains(out, ansiBlue) {
+		t.Errorf("header %q paints blue with no background processes", out)
+	}
+	if !strings.Contains(out, ansiBrown+"(8.4k 1%)"+ansiReset) {
+		t.Errorf("header %q lost its brown status", out)
+	}
+}
+
+// TestSplitProcStar rejects anything that is not a trailing ★N count, so a
+// message that happens to contain a star never steals the blue.
+func TestSplitProcStar(t *testing.T) {
+	if _, _, ok := splitProcStar("8.4k 1%"); ok {
+		t.Error("plain status split as a star")
+	}
+	base, star, ok := splitProcStar("8.4k 1% ★2")
+	if !ok || base != "8.4k 1%" || star != "★2" {
+		t.Errorf("split = %q %q %v, want base, star and true", base, star, ok)
+	}
+	for _, bad := range []string{"8.4k ★", "8.4k ★x", "8.4k ★2x", "8.4k ★ 2", "★2 hello"} {
+		if _, _, ok := splitProcStar(bad); ok {
+			t.Errorf("%q split as a star", bad)
+		}
 	}
 }

@@ -23,6 +23,23 @@ func (r *Runner) pollProcesses() {
 	tools.ProcessEvents(r.procs, r.inbox)
 }
 
+// runningProcsCount reports how many background processes are still running,
+// for the ★N suffix on the step header. Nil registry (procs disabled) means
+// none. Only running processes count: finished ones already surface through
+// the inbox, and listing refreshes liveness from the pidfiles.
+func (r *Runner) runningProcsCount() int {
+	if r.procs == nil {
+		return 0
+	}
+	n := 0
+	for _, info := range r.procs.List() {
+		if info.Running() {
+			n++
+		}
+	}
+	return n
+}
+
 // drainInbox takes everything that arrived since the last iteration and puts it
 // in front of the model. It runs at the top of an iteration, before the
 // rollback point is taken, so a backtrack later in the iteration cannot discard
@@ -68,10 +85,16 @@ func (r *Runner) drainInbox(state *runState) {
 // now, so the line typed after is echoed cleanly. It reports whether the turn
 // was cancelled while paused: then the caller ends the run as cancelled.
 func (r *Runner) checkPause(ctx context.Context) bool {
-	if r.inbox == nil || !r.inbox.TakePause() {
+	if r.inbox == nil {
 		return false
 	}
+	// Raise the mode before consuming the request, so the progress watcher
+	// never sees a gap with neither flag up and a dot lands on type-ahead.
 	r.inbox.SetPauseMode(true)
+	if !r.inbox.TakePause() {
+		r.inbox.SetPauseMode(false)
+		return false
+	}
 	defer r.inbox.SetPauseMode(false)
 	r.writer.Info("paused — type steering, Enter to resume (empty resumes):")
 	// Waiting for a person is not the tool being slow, so pause time is

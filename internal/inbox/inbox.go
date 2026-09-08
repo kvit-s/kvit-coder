@@ -97,15 +97,32 @@ func (i *Inbox) Awaiting() bool {
 
 // RequestPause asks the turn to stop at its next iteration boundary and take
 // steering. It reports whether the request is new, so the reader prints its
-// notice once rather than on every empty Enter.
+// notice once rather than on every empty Enter. A new request also fires the
+// signal, so a tool blocked in Observe.wait wakes early and parks at the
+// boundary instead of holding the pause for its full max_wait; Ask waiters
+// just see a spurious wakeup and loop, since no line was pushed.
 func (i *Inbox) RequestPause() bool {
 	i.mu.Lock()
-	defer i.mu.Unlock()
 	if i.pauseRequested {
+		i.mu.Unlock()
 		return false
 	}
 	i.pauseRequested = true
+	i.mu.Unlock()
+	select {
+	case i.signal <- struct{}{}:
+	default:
+	}
 	return true
+}
+
+// PauseRequested peeks at a pending pause without consuming it. The progress
+// watcher uses it to hold dots from the empty Enter until the pause prompt
+// is up; TakePause is what consumes the request at the boundary.
+func (i *Inbox) PauseRequested() bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.pauseRequested
 }
 
 // TakePause consumes a pause request, reporting whether one was pending. The

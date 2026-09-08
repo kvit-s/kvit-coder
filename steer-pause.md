@@ -215,9 +215,14 @@ interrupt messaging applies. No new exit code.
 ### 4.4 Why this composes with `Question`
 
 - Pause prompt and `Question` both go through `inbox.Ask`: `Awaiting()` is
-  true in both, so `ToolProgress` dots already hold off via the existing
-  `awaitingAnswer` suppression (`writer.go: ToolProgress` +
-  `SetPromptWatcher`) — no Writer change.
+  true in both, so `ToolProgress` dots hold off via the prompt watcher
+  (`writer.go: ToolProgress` + `SetPromptWatcher`, wired to
+  `pauseAwareWatcher` in `main.go`). The watcher also holds while a pause is
+  merely requested (`PauseRequested`) and while the pause mode flag is up
+  (`PauseMode`), covering the type-ahead window between the empty `Enter`
+  and the prompt: without that, the current call's per-second dots redrew
+  the line the half-typed steering was echoing on and garbled it into
+  doubled text. Held dots are dropped and the row restarts after the answer.
 - Stale-line rule unchanged (`inbox.go:270-271,287,310-316`): lines typed
   before the pause prompt was drawn are drained into `notForUs` and pushed
   back, surfacing as ordinary steering at the same-iteration `drainInbox`.
@@ -250,10 +255,12 @@ Non-empty lines are unchanged in every state (`Push` + `→ queued` iff
   echo, `Ctrl-C` cancel semantics (`installInterruptHandler`), `KVIT_RUN_ID`
   pinning, deterministic tool-spec ordering, path containment via
   `tools.NormalizeAndValidatePath` (see `CLAUDE.md`).
-- `internal/tui/ui.go:runAgent`: stdio passthrough unchanged; no new signal
-  to forward (the `SIGINT` catch-and-hold block needs no companion).
-- `Writer`: no funnel, no mutex, no new method required (prompt via existing
-  `Info`; dots already suppress under `Awaiting()`).
+- `Writer`: no funnel, no mutex. The only Writer-side piece is the prompt
+  watcher's pause awareness (`pauseAwareWatcher` in `main.go`, plus the
+  `PauseRequested` peek in `inbox.go`); one-shot lines (`Info`, `ToolCall`,
+  headers) still interleave with type-ahead echo as before, but the repeated
+  `\r` redraw — the one that overwrote input a dot at a time — stays off
+  from the empty `Enter` until the pause resolves.
 
 ## 7. Fallback / gating matrix
 

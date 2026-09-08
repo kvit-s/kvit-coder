@@ -186,6 +186,56 @@ func TestPauseModeToggle(t *testing.T) {
 	}
 }
 
+// TestPauseRequestedPeek: the progress watcher peeks at a pending pause
+// without consuming it — TakePause still sees it afterwards.
+func TestPauseRequestedPeek(t *testing.T) {
+	in := New("")
+	if in.PauseRequested() {
+		t.Fatal("PauseRequested is true before anything was requested")
+	}
+	if !in.RequestPause() {
+		t.Fatal("the first RequestPause is not new")
+	}
+	if !in.PauseRequested() {
+		t.Fatal("PauseRequested missed the pending request")
+	}
+	// Peeking twice must not consume: the loop still takes it at the boundary.
+	if !in.PauseRequested() {
+		t.Fatal("peeking consumed the request")
+	}
+	if !in.TakePause() {
+		t.Fatal("TakePause missed the request after peeking")
+	}
+	if in.PauseRequested() {
+		t.Error("PauseRequested is still true after taking, want it cleared")
+	}
+}
+
+// TestRequestPauseSignals: a tool blocked in Observe.wait selects on the
+// signal, so a pause request must wake it — otherwise the pause waits out
+// the tool's full max_wait. Ask waiters just loop, since no line was pushed.
+func TestRequestPauseSignals(t *testing.T) {
+	in := New("")
+	select {
+	case <-in.Signal():
+		t.Fatal("the signal fired before anything was requested")
+	default:
+	}
+	if !in.RequestPause() {
+		t.Fatal("the first RequestPause is not new")
+	}
+	select {
+	case <-in.Signal():
+	case <-time.After(time.Second):
+		t.Fatal("the signal did not fire after a pause request")
+	}
+	// A repeat request is a no-op and must not queue another signal; drain
+	// the one above first so the check means something.
+	if in.RequestPause() {
+		t.Fatal("a second RequestPause is new, want it a no-op")
+	}
+}
+
 // TestSignalFires: a blocking tool waits on Signal and wakes when something is
 // pushed.
 func TestSignalFires(t *testing.T) {

@@ -161,3 +161,61 @@ func TestRouteNonEmptyStillQueues(t *testing.T) {
 		t.Errorf("the steering line was not acknowledged: %q", out.String())
 	}
 }
+
+// TestPauseAwareWatcherHoldsFromEnterToPrompt: dots must stay off from the
+// empty Enter (pause requested, current call still finishing, type-ahead on
+// screen) through the pause prompt itself (pause mode + Ask's counter), so
+// nothing redraws the line being typed. Each state alone must hold.
+func TestPauseAwareWatcherHoldsFromEnterToPrompt(t *testing.T) {
+	box := inbox.New("")
+	watch := pauseAwareWatcher(box)
+	if watch() {
+		t.Fatal("the watcher holds before anything was requested")
+	}
+
+	if !box.RequestPause() {
+		t.Fatal("the first RequestPause is not new")
+	}
+	if !watch() {
+		t.Error("the watcher does not hold while a pause is pending")
+	}
+
+	// The boundary raises the mode before consuming the request, so the hold
+	// never lapses in handover: requested, then mode up, then taken.
+	box.SetPauseMode(true)
+	if !watch() {
+		t.Error("the watcher released between mode-up and take")
+	}
+	if !box.TakePause() {
+		t.Fatal("TakePause missed the pending request")
+	}
+	if !watch() {
+		t.Error("the watcher does not hold while the pause prompt is up")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		box.Ask(ctx, nil, "", 0)
+	}()
+	for range 200 {
+		if box.Awaiting() {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !box.Awaiting() {
+		t.Fatal("the pause prompt never started waiting")
+	}
+	if !watch() {
+		t.Error("the watcher does not hold while the prompt waits")
+	}
+	cancel()
+	<-done
+	box.SetPauseMode(false)
+	if watch() {
+		t.Error("the watcher still holds after the pause resolved")
+	}
+}
