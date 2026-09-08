@@ -2,16 +2,14 @@ package ui
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
-	"unicode"
-
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	rw "github.com/mattn/go-runewidth"
 	"github.com/rivo/uniseg"
+	"os"
+	"strings"
+	"unicode"
 )
 
 // InputModel wraps the textarea component for multi-line input
@@ -32,10 +30,16 @@ type InputModel struct {
 	// Nil when the host offers no image paste (set by the driver; the model
 	// itself never touches the clipboard).
 	onImagePaste func() (string, error)
-	// pastedImages are clipboard images staged by the paste key this session.
+	// pastedImages are the images staged this session, in label order:
+	// pastedImages[0] is [image1], pastedImages[1] is [image2], and so on.
+	// The first imageBase entries were staged before the composer opened
+	// (:image, :paste); the rest came from the paste key below.
 	pastedImages []string
-	// pasteNotice is the one-line outcome of the last paste attempt, shown
-	// under the input so a failed paste is visible, not silent.
+	imageBase    int
+	// pasteNotice is the one-line outcome of the last failed paste attempt,
+	// shown under the input so a failed paste is visible, not silent.
+	// Success needs no notice: the new token in the text plus the image
+	// list below already say what happened.
 	pasteNotice string
 }
 
@@ -45,14 +49,31 @@ func (m *InputModel) SetImagePasteHandler(fn func() (string, error)) {
 	m.onImagePaste = fn
 }
 
-// PastedImages returns the clipboard images staged by the paste key.
+// SetStagedImages seeds the composer with images staged before it opened
+// (:image, :paste). They take the first labels, so a paste below continues
+// the numbering instead of restarting at [image1].
+func (m *InputModel) SetStagedImages(paths []string) {
+	m.pastedImages = append([]string(nil), paths...)
+	m.imageBase = len(m.pastedImages)
+}
+
+// PastedImages returns the images staged by the paste key plus any seeded
+// with SetStagedImages, in label order.
 func (m InputModel) PastedImages() []string {
 	return append([]string(nil), m.pastedImages...)
 }
 
-// pasteImage stages one clipboard image behind the paste key. Success and
-// failure both leave a one-line notice: a paste that fails silently reads as
-// a broken key, which is the report that started this.
+// ImageLabel returns the in-text label for the nth staged image (1-based),
+// e.g. "[image1]".
+func ImageLabel(n int) string {
+	return "[" + "image" + itoa(n) + "]"
+}
+
+// pasteImage stages one clipboard image behind the paste key and inserts its
+// [imageN] label at the cursor, so the text says what the list below maps:
+// "look at [image1] and compare with [image2]". A failure leaves a one-line
+// notice; a paste that fails silently reads as a broken key, which is the
+// report that started this.
 func (m *InputModel) pasteImage() {
 	if m.onImagePaste == nil {
 		return
@@ -63,7 +84,39 @@ func (m *InputModel) pasteImage() {
 		return
 	}
 	m.pastedImages = append(m.pastedImages, path)
-	m.pasteNotice = fmt.Sprintf("staged image %d: %s (attaches on submit)", len(m.pastedImages), filepath.Base(path))
+	m.pasteNotice = ""
+	m.insertImageToken(len(m.pastedImages))
+}
+
+// insertImageToken inserts the [imageN] label at the cursor, adding spaces
+// where needed so "look at[image1]and" becomes "look at [image1] and".
+// The cursor ends up after the token's trailing space, ready to keep typing.
+func (m *InputModel) insertImageToken(n int) {
+	token := ImageLabel(n)
+	v := m.textarea.Value()
+	row := m.textarea.Line()
+	col := m.textarea.LineInfo().CharOffset
+	lines := strings.Split(v, "\n")
+	var before, after rune
+	if row >= 0 && row < len(lines) {
+		runes := []rune(lines[row])
+		if col-1 >= 0 && col-1 < len(runes) {
+			before = runes[col-1]
+		}
+		if col >= 0 && col < len(runes) {
+			after = runes[col]
+		}
+	}
+	prefix := ""
+	if before != 0 && before != ' ' && before != '\t' && before != '\n' {
+		prefix = " "
+	}
+	suffix := " "
+	if after == ' ' || after == '\t' || after == '\n' {
+		suffix = ""
+	}
+	m.textarea.InsertString(prefix + token + suffix)
+	m.adjustHeight()
 }
 
 // adjustHeight adjusts the textarea height to fit content, up to maxHeight.
@@ -374,11 +427,16 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// No handler: let the textarea see the key.
 
 		case "esc":
-			// ESC just clears the current input, doesn't exit
+			// ESC just clears the current input, doesn't exit. Images pasted
+			// in this composer go with it; images staged before it opened
+			// (:image, :paste) stay staged for the next turn.
 			m.textarea.SetValue("")
 			m.adjustHeight()
 			m.viewportStart = 0
 			m.pasteNotice = ""
+			if len(m.pastedImages) > m.imageBase {
+				m.pastedImages = append([]string(nil), m.pastedImages[:m.imageBase]...)
+			}
 			return m, nil
 		}
 	}
@@ -497,6 +555,12 @@ func (m InputModel) View() string {
 	out := m.prompt + scrollInfo + "\n" + m.textarea.View()
 	if m.pasteNotice != "" {
 		out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(m.pasteNotice)
+	}
+	// The staged-image list maps the [imageN] labels in the text above to
+	// their files, so "compare [image1] with [image2]" is unambiguous.
+	for i, p := range m.pastedImages {
+		out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(
+			fmt.Sprintf("[%s: %s]", "image"+itoa(i+1), p))
 	}
 	return out
 }

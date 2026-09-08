@@ -288,11 +288,16 @@ three producers of the same phase-1 attachment:
    terminals with a text-only paste action (Windows Terminal, the VS Code
    terminal) intercept Ctrl+V before the app ever sees the keypress, so
    Ctrl+V cannot be handled no matter what it is bound to — the same reason
-   krok uses Alt+V on Windows and WSL. Success and failure both leave a
-   one-line notice under the input, so a failed paste never reads as a dead
-   key. Probe per OS at keypress time and report "no image in clipboard"
-   plainly — the common case on a remote SSH session, where there is no
-   clipboard to read.
+   krok uses Alt+V on Windows and WSL. Each paste inserts its **[imageN]**
+   label at the cursor and appends an `[imageN: path]` line to the list under
+   the input, so the prompt reads "compare [image1] with [image2]" with the
+   mapping right below it. Labels follow staging order end to end: images
+   staged before the composer opened (`:image`, `:paste`) take the first
+   numbers, Alt+V pastes continue them, and the `-image` flags plus the send
+   echo use the same order. A failed paste leaves a one-line notice under
+   the input, so it never reads as a dead key. Probe per OS at keypress time
+   and report "no image in clipboard" plainly — the common case on a remote
+   SSH session, where there is no clipboard to read.
 3. Deliberately **not** OSC 52 / Kitty graphics-protocol inline paste:
    terminal support is spotty, and both end at "bytes the TUI must then save
    to a file anyway" — which is producer 2 with more escape sequences.
@@ -309,9 +314,9 @@ the existing `AppendMessages` + `SetPersist` hooks. Flags keep the one-process-
 per-turn shape untouched: the UI still holds no agent state, and a wedged turn
 still ends with its process.
 
-Display: echo a summary line under the submitted prompt
-(`[image 1: foo.png (800x600, 120KB)]`), mirroring how the submitted text is
-echoed with its gray background today.
+Display: echo a summary line per image under the submitted prompt
+(`[image1: foo.png (800x600, 120KB)]`, numbered to match the labels),
+mirroring how the submitted text is echoed with its gray background today.
 
 ### 5.3 WSL: phase 1 works, clipboard needs a Windows-side branch
 

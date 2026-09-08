@@ -130,9 +130,11 @@ func (u *UI) Run() error {
 			continue
 		}
 
-		// Images staged in the composer (Alt+V) join the staged and @path
-		// ones; takeImages consumes and clears them for this turn.
-		u.pendingImages = append(u.pendingImages, composerImages...)
+		// The composer was seeded with the staged images (see readInput), so
+		// its list already holds them in label order: replace, don't append,
+		// or every staged image would attach twice. takeImages then adds any
+		// @path references and clears the staging for the next turn.
+		u.pendingImages = composerImages
 		u.runAgent(input, u.takeImages(input))
 	}
 
@@ -140,13 +142,18 @@ func (u *UI) Run() error {
 }
 
 // readInput reads user input using the BubbleTea-based input model. It also
-// returns the clipboard images staged by the paste key (Alt+V) in the
-// composer; the caller merges them with the staged and @path ones.
+// returns the staged images in label order: the ones staged before the
+// composer opened (:image, :paste), which seed it, plus any pasted inside
+// with Alt+V. The caller hands them to takeImages, which adds @path
+// references and clears the staging.
 func (u *UI) readInput() (string, []string, bool, error) {
 	promptText := u.buildPromptText()
 
 	// Create and run input model
 	inputModel := ui.NewInputModel(promptText, u.history)
+	// Seed the composer list so [imageN] numbering covers the already-staged
+	// images too, not just the ones pasted below.
+	inputModel.SetStagedImages(u.pendingImages)
 	// Alt+V would type √ on macOS, so the paste key is offered everywhere
 	// except darwin — same exclusion krok uses for its Alt+V escape hatch.
 	if runtime.GOOS != "darwin" {
@@ -190,6 +197,8 @@ func (u *UI) buildPromptText() string {
 }
 
 // stageImage validates one :image reference and stages it for the next turn.
+// The staged position is its future [imageN] label, so the confirmation
+// echoes it in the same [imageN: path] form the composer list uses.
 func (u *UI) stageImage(ref string) {
 	clean := ExtractImageRefs(ref, nil)
 	if len(clean) == 0 {
@@ -197,11 +206,13 @@ func (u *UI) stageImage(ref string) {
 		return
 	}
 	u.pendingImages = append(u.pendingImages, clean...)
-	fmt.Printf("Staged for next turn: %s\n", clean[0])
+	fmt.Printf("Staged for next turn: [image%d: %s]\n", len(u.pendingImages), clean[0])
 }
 
 // takeImages consumes staged images and any @path references in this prompt,
-// returning the files to attach to the turn.
+// returning the files to attach to the turn in label order: staged images
+// first ([image1..N], as the composer list showed them), @path references
+// after. Attachments and labels share this order end to end.
 func (u *UI) takeImages(input string) []string {
 	detected := ExtractImageRefs(input, nil)
 	out := make([]string, 0, len(u.pendingImages)+len(detected))
@@ -327,8 +338,8 @@ func (u *UI) handleCommand(input string) bool {
 				fmt.Println("Usage: :image <path>...  (or @path in any prompt, or :paste)")
 			} else {
 				fmt.Printf("Staged for next turn (%d):\n", len(u.pendingImages))
-				for _, p := range u.pendingImages {
-					fmt.Printf("  %s\n", p)
+				for i, p := range u.pendingImages {
+					fmt.Printf("  [image%d: %s]\n", i+1, p)
 				}
 			}
 			fmt.Println()
@@ -347,7 +358,7 @@ func (u *UI) handleCommand(input string) bool {
 			return false
 		}
 		u.pendingImages = append(u.pendingImages, path)
-		fmt.Printf("Staged for next turn: %s\n\n", path)
+		fmt.Printf("Staged for next turn: [image%d: %s]\n\n", len(u.pendingImages), path)
 
 	default:
 		fmt.Printf("Unknown command: %s. Type :help for available commands.\n\n", parts[0])
@@ -372,9 +383,12 @@ func (u *UI) showHelp() {
 	fmt.Println("  :paste            Stage the clipboard image for the next turn")
 	fmt.Println()
 	fmt.Println("Enter any other text to send as a prompt to the agent.")
-	fmt.Println("Attach images: Alt+V pastes the clipboard image, @path/to/shot.png")
-	fmt.Println("(or drag-drop it) attaches a file. Ctrl+V cannot carry images: the")
-	fmt.Println("terminal intercepts it before the app ever sees the keypress.")
+	fmt.Println("Attach images: Alt+V pastes the clipboard image as an [imageN]")
+	fmt.Println("label at the cursor, @path/to/shot.png (or drag-drop it) attaches")
+	fmt.Println("a file. The list under the input maps each label to its file,")
+	fmt.Println("so you can write \"compare [image1] with [image2]\".")
+	fmt.Println("Ctrl+V cannot carry images: the terminal intercepts it before")
+	fmt.Println("the app ever sees the keypress.")
 	fmt.Println()
 }
 
@@ -384,8 +398,9 @@ func (u *UI) runAgent(prompt string, images []string) {
 
 	// Images travel as paths, not pixels: the agent normalizes them into the
 	// session on arrival. argv stays small and the prompt cache undisturbed.
-	for _, img := range images {
-		fmt.Printf("\033[38;5;136m[image: %s]\033[0m\n", img)
+	// Numbered to match the [imageN] labels the composer list showed.
+	for i, img := range images {
+		fmt.Printf("\033[38;5;136m[image%d: %s]\033[0m\n", i+1, img)
 		args = append(args, "-image", img)
 	}
 

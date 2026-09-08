@@ -39,7 +39,7 @@ func preparePromptImages(paths []string, cfg *config.Config, sess *session.Sessi
 		}
 		out = append(out, part)
 		if !quietMode && !session.FromUI() {
-			fmt.Fprintf(os.Stderr, "[image %d: %s]\n", len(out), part.Summary())
+			fmt.Fprintf(os.Stderr, "[image%d: %s]\n", len(out), part.Summary())
 		}
 	}
 	return out
