@@ -338,6 +338,17 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	beforeValue := m.textarea.Value()
 	wasInHistoryMode := m.historyIdx >= 0
 
+	// Pre-grow the viewport by one visual row before the textarea sees the
+	// key: it lays out and scrolls to keep the cursor visible using the old
+	// height, so the keystroke that wraps onto a new row would scroll the
+	// first row out of view (seen as the line shifting left instead of
+	// wrapping) and the shrink-to-fit below would leave that offset
+	// stranded. A single keystroke adds at most one visual row; at the cap
+	// the height is already correct and scrolling is genuinely needed.
+	if total := m.totalSoftLines(); total+1 <= m.maxHeight && m.textarea.Height() < total+1 {
+		m.textarea.SetHeight(total + 1)
+	}
+
 	m.textarea, cmd = m.textarea.Update(msg)
 
 	// If user edited the content while in history mode, exit history mode

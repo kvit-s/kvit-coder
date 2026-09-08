@@ -3,6 +3,8 @@ package ui
 import (
 	"strings"
 	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // A long dictation-style single line must occupy several visual rows and grow
@@ -66,5 +68,32 @@ func TestCursorSoftRowTracksWrappedRows(t *testing.T) {
 	lastRow := m.totalSoftLines() - 1
 	if got := m.cursorSoftRow(); got != lastRow {
 		t.Fatalf("cursorSoftRow() at end = %d, want last visual row %d", got, lastRow)
+	}
+}
+
+func TestTypingWrapsInsteadOfScrolling(t *testing.T) {
+	m := NewInputModel(">", nil)
+	m.textarea.SetWidth(20)
+	m.maxHeight = 20
+
+	// Drive keystrokes through Update, not SetValue: the bug was the
+	// textarea scrolling its internal viewport during Update with the old
+	// (pre-wrap) height, hiding the first visual row so the line looked
+	// like it shifted left instead of wrapping. Render after every update
+	// like bubbletea does: the stray scroll only happens once the viewport
+	// holds the previous frame.
+	_ = m.View()
+	for _, r := range "alpha beta gamma delta epsilon" {
+		msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+		mod, _ := m.Update(msg)
+		m = mod.(InputModel)
+		_ = m.View()
+	}
+
+	if total := m.totalSoftLines(); total <= 1 {
+		t.Fatalf("test setup: want wrapped height > 1, got %d", total)
+	}
+	if got := m.View(); !strings.Contains(got, "alpha") {
+		t.Fatalf("first visual row scrolled out of view; View()=%q", got)
 	}
 }
