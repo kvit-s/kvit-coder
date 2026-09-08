@@ -17,7 +17,50 @@ func newProgressWriter(isTTY bool) (*Writer, *bytes.Buffer) {
 	// The indicator is package state, so reset it between tests.
 	progressLine = ""
 	progressDotCount = 0
+	progressHeld = false
 	return w, &buf
+}
+
+// TestProgressHoldsWhileAQuestionIsWaiting is the bug that made a path
+// confirmation look like a hang. The agent asks "Allow this access? [y/N]:"
+// and blocks; the tool's progress goroutine keeps drawing, and each update
+// starts with a carriage return, so the question is overwritten by the dots a
+// character at a time. Nothing on screen then says an answer is wanted, and
+// the run appears wedged until it is interrupted.
+func TestProgressHoldsWhileAQuestionIsWaiting(t *testing.T) {
+	w, buf := newProgressWriter(true)
+
+	asking := false
+	w.SetPromptWatcher(func() bool { return asking })
+
+	w.ToolProgress("✨ ")
+	w.ToolProgress(".")
+
+	asking = true
+	buf.Reset()
+	for range 5 {
+		w.ToolProgress(".")
+	}
+	if out := buf.String(); out != "" {
+		t.Errorf("progress was drawn over a waiting question: %q", out)
+	}
+
+	// Answered: the row starts again below the question rather than
+	// reprinting what was collected before it.
+	asking = false
+	buf.Reset()
+	w.ToolProgress(".")
+
+	out := buf.String()
+	if !strings.Contains(out, ".") {
+		t.Errorf("progress did not resume after the question was answered: %q", out)
+	}
+	if progressDotCount != 1 {
+		t.Errorf("the dot counter is %d, want the row restarted at 1", progressDotCount)
+	}
+	if progressLine != "." {
+		t.Errorf("the resumed row is %q, want it to start over at a single dot", progressLine)
+	}
 }
 
 // TestHeadlessProgressReachesATerminal is the bug that made a long command look

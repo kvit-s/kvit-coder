@@ -405,6 +405,9 @@ func main() {
 	// once per iteration.
 	steering := inbox.New(sess.InboxDir())
 	steering.Log = func(msg string) { writer.Warn(msg) }
+	// Progress dots redraw the line they are on, so they must not run while a
+	// question is waiting to be answered.
+	writer.SetPromptWatcher(steering.Awaiting)
 	interactive := startStdinReader(steering, writer)
 
 	// Initialize temp file manager for shell command outputs. Its files are not

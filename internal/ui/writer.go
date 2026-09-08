@@ -63,6 +63,18 @@ type Writer struct {
 	// stderrTTY overrides the check for whether stderr can be redrawn in
 	// place. Tests set it; nil means work it out from the file itself.
 	stderrTTY *bool
+	// awaitingAnswer, when set, reports whether a question is on screen
+	// waiting for someone to type an answer. No progress is drawn while one
+	// is.
+	awaitingAnswer func() bool
+}
+
+// SetPromptWatcher installs a function reporting whether a question is waiting
+// for an answer. Progress indicators redraw the line they sit on, so one drawn
+// while a question is on screen erases it; with this set they hold off until
+// the question has been answered.
+func (w *Writer) SetPromptWatcher(fn func() bool) {
+	w.awaitingAnswer = fn
 }
 
 // SetStderrIsTerminal overrides the detection of whether stderr can be redrawn
@@ -308,6 +320,10 @@ var progressLine string
 // progressDotCount tracks dots on current line (for wrapping after 60 dots = 1 minute)
 var progressDotCount int
 
+// progressHeld records that an update was dropped because a question was
+// waiting for an answer, so the row is started over once it has been answered.
+var progressHeld bool
+
 // maxDotsPerLine is the maximum number of dots before wrapping to a new line
 const maxDotsPerLine = 60
 
@@ -356,6 +372,26 @@ func (w *Writer) ToolProgress(dot string) {
 	// In JSON mode, skip progress dots (too noisy)
 	if w.jsonMode {
 		return
+	}
+
+	// A question waiting for an answer owns the terminal. Every update below
+	// redraws the current line from its left edge, so a dot arriving while a
+	// question is on screen paints over it one character at a time. That is
+	// what made a path confirmation look like a hang: the row of dots kept
+	// growing and "Allow this access? [y/N]:" was gone before it could be
+	// read, so there was nothing on screen saying an answer was wanted.
+	if w.awaitingAnswer != nil && w.awaitingAnswer() {
+		progressHeld = true
+		return
+	}
+	// Answered. The cursor is on a fresh line below the question, so start the
+	// row again rather than reprinting the dots collected before it. Waiting
+	// for a person is not the tool being slow, which is why those seconds do
+	// not count towards its timeout either.
+	if progressHeld {
+		progressHeld = false
+		progressLine = ""
+		progressDotCount = 0
 	}
 
 	out, draw := w.progressTarget()
