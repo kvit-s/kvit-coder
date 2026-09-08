@@ -527,3 +527,20 @@ func TestYoloAllowsEverything(t *testing.T) {
 		t.Errorf("a denied_paths entry gave %v, want denied even under --yolo", got)
 	}
 }
+
+// TestModelDisplayAppendsEffort: the startup banner shows "model:effort"
+// when llm.reasoning_effort is set, so the banner reflects what the
+// Responses backend is actually asked for, and plain "model" otherwise.
+func TestModelDisplayAppendsEffort(t *testing.T) {
+	cfg := &Config{}
+	cfg.LLM.Model = "muse-spark-1.3-contributor"
+	cfg.LLM.ReasoningEffort = "xhigh"
+	if got := cfg.ModelDisplay(); got != "muse-spark-1.3-contributor:xhigh" {
+		t.Errorf("ModelDisplay() = %q, want %q", got, "muse-spark-1.3-contributor:xhigh")
+	}
+
+	cfg.LLM.ReasoningEffort = ""
+	if got := cfg.ModelDisplay(); got != "muse-spark-1.3-contributor" {
+		t.Errorf("ModelDisplay() = %q, want %q", got, "muse-spark-1.3-contributor")
+	}
+}

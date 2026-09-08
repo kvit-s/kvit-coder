@@ -86,6 +86,9 @@ func (r *Runner) executeSingleTool(
 	requestCost float64,
 	contextStr string,
 ) *singleToolResult {
+	// The step header already showed the context share; the per-tool status
+	// repetition is gone.
+	_ = contextStr
 	result := &singleToolResult{}
 
 	tool := r.registry.Get(tc.Function.Name)
@@ -150,7 +153,7 @@ func (r *Runner) executeSingleTool(
 			ToolCallID: tc.ID,
 			Content:    tools.FormatError(blockErr),
 		})
-		r.writer.ToolResult(fmt.Sprintf("Error: %s", ui.ShortenBlockMessage(blockErr.Error())), "")
+		r.writer.Error(ui.ShortenBlockMessage(blockErr.Error()))
 		return result
 	}
 
@@ -158,7 +161,7 @@ func (r *Runner) executeSingleTool(
 	checkArgs := json.RawMessage(tc.Function.Arguments)
 	var err error
 	if checkArgs, err = tools.NormalizeToolCallArguments(tool, checkArgs); err != nil {
-		r.writer.Warn(fmt.Sprintf("Warning: Failed to normalize tool arguments for Check: %v", err))
+		r.writer.Warn(fmt.Sprintf("cannot normalize args for check: %v", err))
 		checkArgs = json.RawMessage(tc.Function.Arguments)
 	}
 
@@ -181,17 +184,17 @@ func (r *Runner) executeSingleTool(
 			ToolCallID: tc.ID,
 			Content:    errContent,
 		})
-		var errSummary string
+		var errText string
 		var errMap map[string]any
 		if json.Unmarshal([]byte(errContent), &errMap) == nil {
 			if errType, ok := errMap["error"].(string); ok {
-				errSummary = fmt.Sprintf("Error: %s", errType)
+				errText = errType
 			}
 		}
-		if errSummary == "" {
-			errSummary = fmt.Sprintf("Error: %v", err)
+		if errText == "" {
+			errText = err.Error()
 		}
-		r.writer.ToolResult(errSummary, "")
+		r.writer.Error(ui.SingleLine(errText, 200))
 		state.loopDetector.Record(internalName, tc.Function.Arguments, errContent, true)
 		return result
 	}
@@ -217,7 +220,7 @@ func (r *Runner) executeSingleTool(
 				}, state)
 			}
 
-			r.writer.Error(fmt.Sprintf("FATAL: %s called %d times with identical arguments - stopping to prevent infinite loop",
+			r.writer.Error(fmt.Sprintf("stopping: %s called %d times with identical args (loop)",
 				internalName, state.consecutiveDuplicates))
 
 			state.agentStats.TotalAgentTime = time.Since(state.requestStartTime)
@@ -257,7 +260,7 @@ func (r *Runner) executeSingleTool(
 			ToolCallID: tc.ID,
 			Content:    errContent,
 		})
-		r.writer.ToolResult("Error: duplicate call", "")
+		r.writer.Error("duplicate call")
 		state.loopDetector.Record(internalName, tc.Function.Arguments, errContent, true)
 		return result
 	}
@@ -265,8 +268,8 @@ func (r *Runner) executeSingleTool(
 	// Reset duplicate counter on different call
 	state.consecutiveDuplicates = 0
 
-	// Display tool call
-	r.displayToolCall(internalName, tc, contextStr)
+	// Display tool call: the step header already showed the context share.
+	r.displayToolCall(internalName, tc)
 
 	// Execute tool with timing
 	content, toolErr, toolDuration, cancelled := r.executeToolWithTimeout(ctx, tool, internalName, tc, state)
@@ -317,33 +320,30 @@ func (r *Runner) executeSingleTool(
 	return result
 }
 
-// displayToolCall formats and displays a tool call to the user
-func (r *Runner) displayToolCall(internalName string, tc llm.ToolCall, contextStr string) {
+// displayToolCall formats and displays a tool call to the user.
+// The step header already showed the context share, so only the call itself
+// is printed here, indented and gray.
+func (r *Runner) displayToolCall(internalName string, tc llm.ToolCall) {
 	var args map[string]any
 	_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
 
 	if internalName == "Shell" {
 		cmdStr, _ := args["command"].(string)
-		r.writer.ToolCall("Shell", cmdStr, contextStr)
-	} else if internalName == "Shell.advanced" {
+		r.writer.ToolCall("Shell", cmdStr, "")
+		return
+	}
+	if internalName == "Shell.advanced" {
 		cmdStr, _ := args["command"].(string)
 		wdStr, _ := args["working_dir"].(string)
 		argsDisplay := ui.FormatShellDisplay(cmdStr, wdStr, r.cfg.Workspace.Root)
 		if timeoutVal, ok := args["timeout"].(float64); ok && timeoutVal > 0 && int(timeoutVal) != 30 {
 			argsDisplay += fmt.Sprintf(", timeout=%ds", int(timeoutVal))
 		}
-		r.writer.ToolCall("Shell.advanced", argsDisplay, contextStr)
-	} else if strings.HasPrefix(internalName, "Plan.") {
-		if r.writer.IsVerbose() {
-			argsDisplay := ui.FormatToolArgs(args)
-			r.writer.ToolCall(internalName, argsDisplay, contextStr)
-		} else {
-			r.writer.ToolContext(contextStr)
-		}
-	} else {
-		argsDisplay := ui.FormatToolArgs(args)
-		r.writer.ToolCall(internalName, argsDisplay, contextStr)
+		r.writer.ToolCall("Shell.advanced", argsDisplay, "")
+		return
 	}
+	argsDisplay := ui.FormatToolArgs(args)
+	r.writer.ToolCall(internalName, argsDisplay, "")
 }
 
 // executeToolWithTimeout executes a tool with appropriate timeout and progress display
@@ -391,7 +391,7 @@ func (r *Runner) executeToolWithTimeout(
 	normalizedArgs := json.RawMessage(tc.Function.Arguments)
 	var err error
 	if normalizedArgs, err = tools.NormalizeToolCallArguments(tool, normalizedArgs); err != nil {
-		r.writer.Warn(fmt.Sprintf("Warning: Failed to normalize tool arguments: %v", err))
+		r.writer.Warn(fmt.Sprintf("cannot normalize args: %v", err))
 		normalizedArgs = json.RawMessage(tc.Function.Arguments)
 	}
 
@@ -434,7 +434,9 @@ func (r *Runner) executeToolWithTimeout(
 	default:
 	}
 
-	// Format successful result
+	// Format successful result. Only the call line shows; the size summary
+	// ("34 lines, 5.2k chars") stays silent by design. A slow tool keeps its
+	// duration so waiting has an explanation.
 	if toolErr == nil {
 		isPlanTool := strings.HasPrefix(internalName, "Plan.")
 
@@ -449,12 +451,13 @@ func (r *Runner) executeToolWithTimeout(
 			r.writer.VerboseOutput(content)
 			r.logger.ToolExecuted(internalName, duration, true, nil)
 		} else {
-			summary := ui.GetResultSummary(toolResult)
 			var durationStr string
 			if dotCount > 0 {
 				durationStr = fmt.Sprintf("...%.0fs", duration.Seconds())
 			}
-			r.writer.ToolResult(summary, durationStr)
+			// Summary empty: ToolResult prints the duration (if any) and
+			// nothing else.
+			r.writer.ToolResult("", durationStr)
 			r.writer.VerboseOutput(content)
 			r.logger.ToolExecuted(internalName, duration, true, nil)
 		}

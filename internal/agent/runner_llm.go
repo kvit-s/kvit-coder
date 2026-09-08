@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/llm"
+	"github.com/kvit-s/kvit-coder/internal/ui"
 )
 
 // slowRequestNotice is how often to say how long a model request has been
@@ -18,7 +19,8 @@ const slowRequestNotice = 90 * time.Second
 // callLLM makes an LLM API call with progress indicator and handles errors.
 // It returns the response and metadata about what action to take next.
 func (r *Runner) callLLM(ctx context.Context, state *runState) (*llmCallResult, error) {
-	r.writer.ToolProgress("✨ ")
+	// Silent until the first dot: a fast turn prints only its step header.
+	r.writer.ToolProgress("● ")
 
 	startTime := time.Now()
 	llmDone := make(chan bool)
@@ -60,10 +62,9 @@ func (r *Runner) callLLM(ctx context.Context, state *runState) (*llmCallResult, 
 	duration := time.Since(startTime)
 	state.totalLLMTime += duration
 
-	// Print newline after sparkles/dots before showing response
-	if llmDotCount == 0 {
-		fmt.Print("\n")
-	}
+	// Dots (if any) drew in place on the progress stream; the step header
+	// clears that row itself, so no newline is needed here. (The old code
+	// printed one to stdout, the final-answer stream.)
 
 	result := &llmCallResult{
 		response: resp,
@@ -81,7 +82,7 @@ func (r *Runner) callLLM(ctx context.Context, state *runState) (*llmCallResult, 
 func (r *Runner) handleLLMError(ctx context.Context, err error, state *runState, result *llmCallResult, llmDotCount int) (*llmCallResult, error) {
 	// Check if it was a cancellation
 	if ctx.Err() == context.Canceled {
-		r.writer.Info("LLM call cancelled - returning to prompt")
+		r.writer.Info("llm call cancelled, back to prompt")
 
 		// If the last message is a tool result, add a dummy assistant message
 		if len(state.messages) > 0 && state.messages[len(state.messages)-1].Role == llm.RoleTool {
@@ -106,7 +107,7 @@ func (r *Runner) handleLLMError(ctx context.Context, err error, state *runState,
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		elapsed := time.Since(state.requestStartTime)
 		r.writer.Error(fmt.Sprintf(
-			"time budget for this run expired after %s, during an LLM call that had been running for %s (context deadline exceeded)",
+			"run time budget expired after %s (llm call %s)",
 			elapsed.Round(time.Second), result.duration.Round(time.Second)))
 		r.logger.Error("run time budget expired during LLM call", err)
 
@@ -123,7 +124,7 @@ func (r *Runner) handleLLMError(ctx context.Context, err error, state *runState,
 	// Handle 400 errors (likely context overflow)
 	if strings.Contains(errStr, "API error 400") && state.contextOverflowRetries < maxContextOverflowRetries {
 		state.contextOverflowRetries++
-		r.writer.Warn(fmt.Sprintf("Server error on request (attempt %d/%d) - replacing tool output and retrying...",
+		r.writer.Warn(fmt.Sprintf("server error, retrying (%d/%d)",
 			state.contextOverflowRetries, maxContextOverflowRetries))
 
 		// Replace all recent tool result messages with server error
@@ -141,8 +142,8 @@ func (r *Runner) handleLLMError(ctx context.Context, err error, state *runState,
 
 		// Check if we've exhausted "different approach" attempts
 		if state.differentApproachAttempts >= maxDifferentApproachAttempts {
-			r.writer.Error(fmt.Sprintf("Server error persists after %d attempts - giving up. Last error: %s",
-				maxDifferentApproachAttempts, errStr))
+			r.writer.Error(fmt.Sprintf("server error persists, giving up after %d attempts: %s",
+				maxDifferentApproachAttempts, ui.SingleLine(errStr, 120)))
 			state.agentStats.TotalAgentTime = time.Since(state.requestStartTime)
 			state.agentStats.TotalLLMTime = state.totalLLMTime
 			state.agentStats.TotalToolTime = state.totalToolTime
@@ -150,8 +151,8 @@ func (r *Runner) handleLLMError(ctx context.Context, err error, state *runState,
 			return result, fmt.Errorf("persistent server error: %s", errStr)
 		}
 
-		r.writer.Warn(fmt.Sprintf("Server error persists after %d retries - asking LLM to try a different approach (%d/%d)",
-			maxContextOverflowRetries, state.differentApproachAttempts, maxDifferentApproachAttempts))
+		r.writer.Warn(fmt.Sprintf("server error persists, trying different approach (%d/%d)",
+			state.differentApproachAttempts, maxDifferentApproachAttempts))
 
 		for j := len(state.messages) - 1; j >= 0 && state.messages[j].Role == llm.RoleTool; j-- {
 			state.messages[j].Content = "[Server error: Unable to process tool output after multiple retries.]"
@@ -169,7 +170,7 @@ func (r *Runner) handleLLMError(ctx context.Context, err error, state *runState,
 		return result, nil
 	}
 
-	r.writer.Error(fmt.Sprintf("%v", err))
+	r.writer.Error(fmt.Sprintf("llm call failed: %s", ui.SingleLine(err.Error(), 160)))
 	r.logger.Error("LLM call failed", err)
 
 	state.agentStats.TotalAgentTime = time.Since(state.requestStartTime)
@@ -185,7 +186,7 @@ func (r *Runner) handleLLMError(ctx context.Context, err error, state *runState,
 func (r *Runner) processLLMResponse(ctx context.Context, resp *llm.ChatResponse, state *runState, duration time.Duration) (*llm.Message, bool) {
 	// Extract assistant message
 	if len(resp.Choices) == 0 {
-		r.writer.Error("No response from model")
+		r.writer.Error("no response from model")
 		state.agentStats.TotalAgentTime = time.Since(state.requestStartTime)
 		state.agentStats.TotalLLMTime = state.totalLLMTime
 		state.agentStats.TotalToolTime = state.totalToolTime
@@ -270,7 +271,7 @@ func (r *Runner) processLLMResponse(ctx context.Context, resp *llm.ChatResponse,
 // handleProviderError handles upstream provider errors with retry logic
 func (r *Runner) handleProviderError(ctx context.Context, resp *llm.ChatResponse, state *runState) *llm.ChatResponse {
 	choiceErr := resp.Choices[0].Error
-	r.writer.Warn(fmt.Sprintf("Provider error (code %d): %s - retrying...", choiceErr.Code, choiceErr.Message))
+	r.writer.Warn(fmt.Sprintf("provider error %d, retrying: %s", choiceErr.Code, ui.SingleLine(choiceErr.Message, 120)))
 
 	retryStart := time.Now()
 	retryResp, retryErr := r.llmClient.Chat(ctx, llm.ChatRequest{
@@ -288,7 +289,7 @@ func (r *Runner) handleProviderError(ctx context.Context, resp *llm.ChatResponse
 		state.consecutiveProviderFailures++
 
 		if state.consecutiveProviderFailures >= maxProviderFailures {
-			r.writer.Error(fmt.Sprintf("Provider failed %d times consecutively - stopping", state.consecutiveProviderFailures))
+			r.writer.Error(fmt.Sprintf("provider failed %d times, stopping", state.consecutiveProviderFailures))
 			state.agentStats.TotalAgentTime = time.Since(state.requestStartTime)
 			state.agentStats.TotalLLMTime = state.totalLLMTime
 			state.agentStats.TotalToolTime = state.totalToolTime
@@ -312,7 +313,7 @@ func (r *Runner) handleProviderError(ctx context.Context, resp *llm.ChatResponse
 		return nil
 	}
 
-	r.writer.Info("Retry succeeded")
+	r.writer.Info("retry succeeded")
 	return retryResp
 }
 
@@ -334,8 +335,7 @@ func (r *Runner) checkContextBudget(promptTokens int, state *runState) {
 	}
 	state.contextWarned = true
 	r.writer.Warn(fmt.Sprintf(
-		"the conversation is using %d of the model's %d token window (%.0f%%). "+
-			"Finish what is in progress; a new session will start from a clean context",
+		"context %d/%d tokens (%.0f%%), finish up; new session starts clean",
 		promptTokens, limit, 100*float64(promptTokens)/float64(limit)))
 }
 
@@ -361,9 +361,6 @@ func (r *Runner) checkThinkingArrives(state *runState) {
 	}
 	state.thinkingWarned = true
 	r.writer.Warn(fmt.Sprintf(
-		"merge_thinking is on, but this model has sent no readable reasoning in %d answers. "+
-			"Its thinking is encrypted and only a summary can be read, which the provider "+
-			"sends at its own discretion — often not on turns that call a tool. Nothing is "+
-			"wrong with the setting; there is simply nothing to merge",
+		"merge_thinking on but no readable reasoning in %d answers (encrypted thinking, summaries only)",
 		state.responsesSeen))
 }

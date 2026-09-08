@@ -108,7 +108,7 @@ func (it *Interrogator) Interrogate(ctx context.Context, ep Episode, state *runS
 
 	question := buildInterrogationQuestion(ep)
 
-	it.writer.Warn(fmt.Sprintf("🔎 Interrogation [%s] - asking the model to explain the anomaly (diagnostic, will not change the task)", ep.Trigger))
+	it.writer.Warn(fmt.Sprintf("interrogating anomaly [%s] (diagnostic only)", ep.Trigger))
 	it.writer.Info("Interrogation Q:\n" + question)
 
 	answer, err := it.ask(ctx, state.messages, question)
@@ -116,7 +116,7 @@ func (it *Interrogator) Interrogate(ctx context.Context, ep Episode, state *runS
 		if it.logger != nil {
 			it.logger.Error("interrogation failed", err)
 		}
-		it.writer.Warn(fmt.Sprintf("Interrogation A: <failed: %v>", err))
+		it.writer.Warn(fmt.Sprintf("interrogation failed: %v", err))
 		// Still log the episode with an empty answer so the anomaly is recorded.
 	} else {
 		answerForScreen := answer

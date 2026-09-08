@@ -670,6 +670,16 @@ func ensureRunID() {
 	})
 }
 
+// ModelDisplay is the model name as shown in startup banners and :config:
+// "model:effort" when llm.reasoning_effort is set, plain "model" otherwise,
+// so the banner reflects what the Responses backend is actually asked for.
+func (c *Config) ModelDisplay() string {
+	if effort := c.LLM.ReasoningEffort; effort != "" {
+		return c.LLM.Model + ":" + effort
+	}
+	return c.LLM.Model
+}
+
 // ReasoningSummaryOrDefault says what to ask the provider for. Turning on
 // merge_thinking without this asks the model to think and then throws the
 // readable part away, so an unset value follows merge_thinking.

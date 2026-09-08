@@ -255,9 +255,7 @@ func main() {
 	if *yolo {
 		cfg.Workspace.PathSafetyMode = "allow"
 		cfg.Tools.Shell.AllowWithoutAsking = true
-		writer.Warn("--yolo: reading and writing anywhere on the filesystem, and running " +
-			"anything that would have asked, without asking. Commands refused outright are " +
-			"still refused, and dd and mkfs still ask.")
+		writer.Warn("--yolo: full filesystem access, no prompts (dd/mkfs still ask)")
 	}
 
 	// Override workspace for benchmark mode - set BEFORE tools are initialized
@@ -346,8 +344,7 @@ func main() {
 			// Say it out loud. A failed request that is quietly retried looks
 			// exactly like a slow one from the progress indicator, and the
 			// turn can sit there for the timeout times the retry count.
-			writer.Warn(fmt.Sprintf("model request failed (attempt %d of %d), retrying in %s: %v",
-				attempt, maxAttempts, delay.Round(time.Second), reason))
+			writer.Warn(fmt.Sprintf("model request failed (%d/%d), retrying in %s", attempt, maxAttempts, delay.Round(time.Second)))
 		}))
 
 	// Resolve the session before anything that keeps state, because everything
@@ -458,7 +455,7 @@ func main() {
 	// to connect are logged and skipped, never fatal.
 	mcpMgr := mcp.NewManager(cfg.MCP, cfg.Workspace.Root, writer, tempFileMgr)
 	if err := mcpMgr.Connect(context.Background()); err != nil {
-		writer.Warn(fmt.Sprintf("MCP: some servers failed to connect: %v", err))
+		writer.Warn(fmt.Sprintf("mcp: some servers failed to connect: %v", err))
 	}
 	defer mcpMgr.Close()
 	if summary := mcpMgr.Summary(); summary != "" {
@@ -482,7 +479,7 @@ func main() {
 
 	// Initialize checkpoint infrastructure
 	if err := checkpointMgr.Initialize(); err != nil {
-		writer.Warn(fmt.Sprintf("Failed to initialize checkpoints: %v (continuing without checkpoints)", err))
+		writer.Warn(fmt.Sprintf("no checkpoints: %v", err))
 		checkpointMgr.SetEnabled(false)
 	} else {
 		writer.Debug("Checkpoint infrastructure initialized")
@@ -495,10 +492,10 @@ func main() {
 		var err error
 		contextMgr, err = ctxtools.NewManager(filepath.Join(sess.Dir(), "tasks"), checkpointMgr)
 		if err != nil {
-			writer.Warn(fmt.Sprintf("Failed to create Tasks manager: %v (continuing without Tasks tools)", err))
+			writer.Warn(fmt.Sprintf("no tasks: %v", err))
 		} else {
 			if err := contextMgr.Initialize(); err != nil {
-				writer.Warn(fmt.Sprintf("Failed to initialize Tasks tools: %v (continuing without Tasks tools)", err))
+				writer.Warn(fmt.Sprintf("no tasks: %v", err))
 				contextMgr = nil
 			} else {
 				writer.Debug("Tasks tools initialized")
@@ -598,7 +595,7 @@ func main() {
 	// Run benchmark mode if requested
 	if benchmarkEnabled {
 		writer.StartupInfo("Agent REPL Benchmark Mode")
-		writer.StartupInfo(fmt.Sprintf("Model: %s @ %s", cfg.LLM.Model, cfg.LLM.BaseURL))
+		writer.StartupInfo(fmt.Sprintf("Model: %s @ %s", cfg.ModelDisplay(), cfg.LLM.BaseURL))
 		fmt.Println()
 
 		flags := benchmark.CLIFlags{
@@ -621,7 +618,7 @@ func main() {
 	haystackEnabled := *benchHaystack != ""
 	if haystackEnabled {
 		writer.StartupInfo("Haystack Benchmark Mode (Needle Retrieval)")
-		writer.StartupInfo(fmt.Sprintf("Model: %s @ %s", cfg.LLM.Model, cfg.LLM.BaseURL))
+		writer.StartupInfo(fmt.Sprintf("Model: %s @ %s", cfg.ModelDisplay(), cfg.LLM.BaseURL))
 		fmt.Println()
 
 		flags := benchmark.HaystackCLIFlags{
@@ -658,7 +655,7 @@ func main() {
 		}
 
 		writer.StartupInfo("Thinkbench Benchmark Mode (Coding Agent)")
-		writer.StartupInfo(fmt.Sprintf("Model: %s @ %s", cfg.LLM.Model, cfg.LLM.BaseURL))
+		writer.StartupInfo(fmt.Sprintf("Model: %s @ %s", cfg.ModelDisplay(), cfg.LLM.BaseURL))
 		fmt.Println()
 
 		flags := benchmark.ThinkbenchCLIFlags{
@@ -692,7 +689,7 @@ func main() {
 	// header the user sees.
 	if !session.FromUI() {
 		writer.StartupInfo("Agent REPL v0.1")
-		writer.StartupInfo(fmt.Sprintf("Model: %s @ %s", cfg.LLM.Model, cfg.LLM.BaseURL))
+		writer.StartupInfo(fmt.Sprintf("Model: %s @ %s", cfg.ModelDisplay(), cfg.LLM.BaseURL))
 		writer.StartupInfo(fmt.Sprintf("Tools: %s", strings.Join(registry.ListTools(), ", ")))
 		if *logFile != "" {
 			writer.StartupInfo(fmt.Sprintf("Logs: %s", *logFile))
@@ -807,7 +804,7 @@ func openGrants(sess *session.Session, workspaceRoot string, writer *ui.Writer) 
 		}
 		store, err := permissions.OpenStore(path, source)
 		if err != nil {
-			writer.Warn(fmt.Sprintf("Permissions: %v", err))
+			writer.Warn(fmt.Sprintf("permissions: %v", err))
 			return nil
 		}
 		return store

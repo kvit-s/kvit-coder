@@ -141,3 +141,114 @@ func TestProgressWrapsAfterAMinute(t *testing.T) {
 		t.Errorf("the dot counter is %d, want it reset by the wrap", progressDotCount)
 	}
 }
+
+// TestThinkingStepHeader is the codex-style step line: bullet, brownish
+// status, white message, with continuations indented.
+func TestThinkingStepHeader(t *testing.T) {
+	w, buf := newProgressWriter(false)
+	w.Thinking("8.4k 1%", "hello")
+	out := buf.String()
+	if out != "● (8.4k 1%) hello\n" {
+		t.Errorf("header = %q, want bullet, status and message on one line", out)
+	}
+}
+
+// TestThinkingEmptyMessageStillShowsStatus: a turn with only tool calls
+// still prints its status line.
+func TestThinkingEmptyMessageStillShowsStatus(t *testing.T) {
+	w, buf := newProgressWriter(false)
+	w.Thinking("8.4k 1%", "")
+	if out := buf.String(); out != "● (8.4k 1%)\n" {
+		t.Errorf("empty message header = %q, want status alone", out)
+	}
+}
+
+// TestThinkingContinuationIndented: embedded newlines stay under the header.
+func TestThinkingContinuationIndented(t *testing.T) {
+	w, buf := newProgressWriter(false)
+	w.Thinking("17.4k 2%", "first\nsecond")
+	lines := strings.Split(strings.TrimSuffix(buf.String(), "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("got %d lines, want 2: %q", len(lines), buf.String())
+	}
+	if !strings.HasPrefix(lines[1], "  ") {
+		t.Errorf("continuation %q is not indented", lines[1])
+	}
+	if strings.Contains(lines[1], "●") || strings.Contains(lines[1], "(17.4k") {
+		t.Errorf("continuation %q repeats the bullet or status", lines[1])
+	}
+}
+
+// TestToolCallIgnoresContext: the status lives on the header, so call lines
+// carry only the call, indented gray, with no repeated context.
+func TestToolCallIgnoresContext(t *testing.T) {
+	w, buf := newProgressWriter(false)
+	w.ToolCall("Read", `path="a.go"`, "8.4k 1%")
+	if out := buf.String(); out != "  Read[path=\"a.go\"]\n" {
+		t.Errorf("tool call = %q, want indented call without status", out)
+	}
+}
+
+// TestToolResultSuccessSilent: size summaries no longer print an arrow line.
+func TestToolResultSuccessSilent(t *testing.T) {
+	w, buf := newProgressWriter(false)
+	w.ToolResult("34 lines, 572 chars", "")
+	if out := buf.String(); out != "" {
+		t.Errorf("success summary printed %q, want silence", out)
+	}
+}
+
+// TestToolResultKeepsDuration: a slow tool still explains its dots.
+func TestToolResultKeepsDuration(t *testing.T) {
+	w, buf := newProgressWriter(false)
+	w.ToolResult("", "...2s")
+	if out := buf.String(); out != "  ...2s\n" {
+		t.Errorf("duration = %q, want indented duration line", out)
+	}
+}
+
+// TestWarnErrorSingleLineIndented: warnings and errors collapse to one
+// indented line each.
+func TestWarnErrorSingleLineIndented(t *testing.T) {
+	w, buf := newProgressWriter(false)
+	w.Warn("first\nsecond")
+	if out := buf.String(); out != "  [warn] first second\n" {
+		t.Errorf("warn = %q, want one indented line", out)
+	}
+	buf.Reset()
+	progressLine = ""
+	w.Error("a\nb\nc")
+	if out := buf.String(); out != "  [error] a b c\n" {
+		t.Errorf("error = %q, want one indented line", out)
+	}
+}
+
+// TestDividerCarriesTiming: the divider separates step progress from the
+// final report and embeds the turn timing, replacing the standalone
+// "[39s: ...]" line that used to follow the report.
+func TestDividerCarriesTiming(t *testing.T) {
+	w, buf := newProgressWriter(false)
+	w.Divider("[39s: 39s llm + 0s tools x22]")
+	if out := buf.String(); out != "---------  [39s: 39s llm + 0s tools x22] --------\n" {
+		t.Errorf("divider = %q, want dashes around the timing", out)
+	}
+}
+
+// TestDividerSuppressed: quiet and JSON modes print no divider, keeping
+// stdout clean for the answer alone or the JSON document.
+func TestDividerSuppressed(t *testing.T) {
+	w, buf := newProgressWriter(false)
+	w.SetQuiet(true)
+	w.Divider("[1s: 1s llm]")
+	if out := buf.String(); out != "" {
+		t.Errorf("quiet divider printed %q, want silence", out)
+	}
+
+	w2, buf2 := newProgressWriter(false)
+	w2.SetQuiet(false)
+	w2.SetJSONMode(true)
+	w2.Divider("[1s: 1s llm]")
+	if out := buf2.String(); out != "" {
+		t.Errorf("json divider printed %q, want silence", out)
+	}
+}

@@ -27,7 +27,7 @@ func (r *Runner) handleFinalAnswer(
 
 	// Check for malformed tool call
 	if finishReason == "stop" && !r.cfg.Agent.IsStrong() && r.registry.LooksLikeMalformedToolCall(assistantMsg.Content) {
-		r.writer.Warn("Detected malformed tool call in response, auto-continuing...")
+		r.writer.Warn("malformed tool call, continuing...")
 		state.messages = append(state.messages, llm.Message{
 			Role:    llm.RoleUser,
 			Content: "continue",
@@ -43,7 +43,7 @@ func (r *Runner) handleFinalAnswer(
 		if assistantMsg.ReasoningContent != "" && !r.cfg.Agent.IsStrong() {
 			if state.emptyReasoningRetries < maxEmptyReasoningRetries {
 				state.emptyReasoningRetries++
-				r.writer.Warn(fmt.Sprintf("LLM returned empty response with reasoning, retrying... (%d/%d)",
+				r.writer.Warn(fmt.Sprintf("empty response, retrying (%d/%d)",
 					state.emptyReasoningRetries, maxEmptyReasoningRetries))
 
 				// Remove the empty assistant message
@@ -51,7 +51,7 @@ func (r *Runner) handleFinalAnswer(
 				return true // shouldContinue
 			}
 
-			r.writer.Warn("LLM still confused, using directive prompt...")
+			r.writer.Warn("empty response, using directive prompt...")
 			assistantMsg.Content = assistantMsg.ReasoningContent
 			assistantMsg.ReasoningContent = ""
 			state.messages[len(state.messages)-1] = *assistantMsg
@@ -64,26 +64,26 @@ func (r *Runner) handleFinalAnswer(
 			return true // shouldContinue
 		}
 
-		r.writer.Warn(fmt.Sprintf("LLM returned empty response (finish_reason=%s)", finishReason))
+		r.writer.Warn(fmt.Sprintf("empty response (%s)", finishReason))
 	}
 
-	r.writer.Assistant(assistantMsg.Content)
-
-	// Display stats summary
+	// The divider separates the step progress from the final report and
+	// carries the turn timing, so nothing prints after the report itself.
 	totalTime := time.Since(state.requestStartTime)
 	var statsMsg string
 	if state.totalToolCalls > 0 {
-		statsMsg = fmt.Sprintf("[%s: %s✨ + %s🔧x%d]",
+		statsMsg = fmt.Sprintf("[%s: %s llm + %s tools x%d]",
 			ui.FormatDuration(totalTime),
 			ui.FormatDuration(state.totalLLMTime),
 			ui.FormatDuration(state.totalToolTime),
 			state.totalToolCalls)
 	} else {
-		statsMsg = fmt.Sprintf("[%s: %s✨]",
+		statsMsg = fmt.Sprintf("[%s: %s llm]",
 			ui.FormatDuration(totalTime),
 			ui.FormatDuration(state.totalLLMTime))
 	}
-	r.writer.Info(statsMsg)
+	r.writer.Divider(statsMsg)
+	r.writer.Assistant(assistantMsg.Content)
 
 	state.agentStats.TotalAgentTime = totalTime
 	state.agentStats.TotalLLMTime = state.totalLLMTime
@@ -93,7 +93,7 @@ func (r *Runner) handleFinalAnswer(
 	if rcfg.UseFileFirst && r.contextMgr != nil && !tasksToolExecuted && len(state.messages) > rollbackPoint {
 		newMessages := state.messages[rollbackPoint:]
 		if err := r.contextMgr.AppendMessages(newMessages); err != nil {
-			r.writer.Error(fmt.Sprintf("Failed to persist messages: %v", err))
+			r.writer.Error(fmt.Sprintf("cannot persist messages: %v", err))
 		}
 	}
 
@@ -106,14 +106,14 @@ func (r *Runner) checkAndHandleLoops(ctx context.Context, state *runState) {
 		var interventionMsg string
 
 		if loopInfo.IsError {
-			r.writer.Warn(fmt.Sprintf("Loop detected: %s called %d times with same error", loopInfo.ToolName, loopInfo.Count))
+			r.writer.Warn(fmt.Sprintf("loop detected: %s called %d times with same error", loopInfo.ToolName, loopInfo.Count))
 
 			interventionMsg = fmt.Sprintf("\n\n<system-reminder>\n"+
 				"LOOP DETECTED: You have called '%s' %d times in a row with the same failing result. "+
 				"STOP and try a DIFFERENT approach.\n"+
 				"</system-reminder>", loopInfo.ToolName, loopInfo.Count)
 		} else if loopInfo.IsSuccess {
-			r.writer.Warn(fmt.Sprintf("Loop detected: %s called %d times with same arguments and result", loopInfo.ToolName, loopInfo.Count))
+			r.writer.Warn(fmt.Sprintf("loop detected: %s called %d times with same args and result", loopInfo.ToolName, loopInfo.Count))
 
 			interventionMsg = fmt.Sprintf("\n\n<system-reminder>\n"+
 				"LOOP DETECTED: You have called '%s' %d times in a row with identical arguments and results. "+
@@ -125,7 +125,7 @@ func (r *Runner) checkAndHandleLoops(ctx context.Context, state *runState) {
 			state.messages[len(state.messages)-1].Content += interventionMsg
 		}
 	} else if loopInfo := state.loopDetector.DetectErrorLoop(4); loopInfo != nil {
-		r.writer.Warn(fmt.Sprintf("Error loop detected: %s has failed %d times consecutively", loopInfo.ToolName, loopInfo.Count))
+		r.writer.Warn(fmt.Sprintf("error loop: %s failed %d times in a row", loopInfo.ToolName, loopInfo.Count))
 
 		interventionMsg := fmt.Sprintf("\n\n<system-reminder>\n"+
 			"ERROR LOOP DETECTED: '%s' has failed %d times in a row. "+
@@ -136,7 +136,7 @@ func (r *Runner) checkAndHandleLoops(ctx context.Context, state *runState) {
 			state.messages[len(state.messages)-1].Content += interventionMsg
 		}
 	} else if loopInfo := state.loopDetector.DetectAlternatingLoop(3); loopInfo != nil {
-		r.writer.Warn(fmt.Sprintf("Alternating loop detected: %s is repeating the same cycle", loopInfo.ToolName))
+		r.writer.Warn(fmt.Sprintf("alternating loop: %s repeating same cycle", loopInfo.ToolName))
 
 		// Interrogate on first detection of an alternating loop (e.g. Edit↔cancel cycles).
 		if r.interrogator.Enabled() {
@@ -204,7 +204,7 @@ func (r *Runner) handlePostIteration(
 
 	// Handle cancelled tools
 	if toolResult.toolsCancelled {
-		r.writer.Info("Tool execution cancelled - returning to prompt")
+		r.writer.Info("tool execution cancelled, back to prompt")
 
 		for k := toolResult.lastExecutedIdx + 1; k < len(assistantMsg.ToolCalls); k++ {
 			tc := assistantMsg.ToolCalls[k]
@@ -223,7 +223,7 @@ func (r *Runner) handlePostIteration(
 		if rcfg.UseFileFirst && r.contextMgr != nil && !toolResult.tasksToolExecuted && len(state.messages) > rollbackPoint {
 			newMessages := state.messages[rollbackPoint:]
 			if err := r.contextMgr.AppendMessages(newMessages); err != nil {
-				r.writer.Error(fmt.Sprintf("Failed to persist messages: %v", err))
+				r.writer.Error(fmt.Sprintf("cannot persist messages: %v", err))
 			}
 		}
 
@@ -264,7 +264,7 @@ func (r *Runner) handlePostIteration(
 	if rcfg.UseFileFirst && r.contextMgr != nil && !toolResult.tasksToolExecuted && len(state.messages) > rollbackPoint {
 		newMessages := state.messages[rollbackPoint:]
 		if err := r.contextMgr.AppendMessages(newMessages); err != nil {
-			r.writer.Error(fmt.Sprintf("Failed to persist messages: %v", err))
+			r.writer.Error(fmt.Sprintf("cannot persist messages: %v", err))
 		}
 	}
 
@@ -302,7 +302,7 @@ func (r *Runner) handleToolError(
 				PriorResult:   err.Error(),
 			}, state)
 		}
-		r.writer.Info(fmt.Sprintf("↩ Retry [%d/%d]: %s - %s",
+		r.writer.Info(fmt.Sprintf("retry [%d/%d]: %s - %s",
 			backtracker.GetRetryCount(), backtracker.GetMaxRetries(),
 			tc.Function.Name, errMsg))
 		backtracker.RecordDiscarded(promptTokens, completionTokens, requestCost)
@@ -322,7 +322,7 @@ func (r *Runner) handleToolError(
 				"Read the error carefully and take the correct action.",
 				err.Error(), backtracker.GetMaxRetries())
 
-			r.writer.Warn(fmt.Sprintf("⚠ Backtrack limit reached for %s, injecting user message", tc.Function.Name))
+			r.writer.Warn(fmt.Sprintf("backtrack limit for %s, injecting user message", tc.Function.Name))
 			backtracker.RecordDiscarded(promptTokens, completionTokens, requestCost)
 			backtracker.ResetAtPoint()
 			return backtrackResult{
@@ -333,7 +333,7 @@ func (r *Runner) handleToolError(
 				reason:            err.Error(),
 			}
 		}
-		r.writer.Warn(fmt.Sprintf("⚠ Backtrack limit reached for %s, adding error to history", tc.Function.Name))
+		r.writer.Warn(fmt.Sprintf("backtrack limit for %s, adding error to history", tc.Function.Name))
 		backtracker.ResetAtPoint()
 	}
 

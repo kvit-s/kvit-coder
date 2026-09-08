@@ -88,7 +88,7 @@ func (u *UI) Run() error {
 
 	// Show startup info
 	fmt.Println("\033[38;5;136mAgent REPL UI v0.1\033[0m")
-	fmt.Printf("\033[38;5;136mModel: %s @ %s\033[0m\n", u.cfg.LLM.Model, u.cfg.LLM.BaseURL)
+	fmt.Printf("\033[38;5;136mModel: %s @ %s\033[0m\n", u.cfg.ModelDisplay(), u.cfg.LLM.BaseURL)
 	if u.currentSession != "" {
 		if u.sessionMgr.SessionExists(u.currentSession) {
 			fmt.Printf("\033[38;5;136mSession: %s (continuing)\033[0m\n", u.currentSession)
@@ -268,7 +268,7 @@ func (u *UI) handleCommand(input string) bool {
 
 	case "config":
 		fmt.Printf("Config: %s\n", u.configPath)
-		fmt.Printf("Model: %s\n", u.cfg.LLM.Model)
+		fmt.Printf("Model: %s\n", u.cfg.ModelDisplay())
 		fmt.Printf("Base URL: %s\n", u.cfg.LLM.BaseURL)
 		fmt.Printf("Agent: %s\n", u.agentPath)
 		if u.currentSession != "" {

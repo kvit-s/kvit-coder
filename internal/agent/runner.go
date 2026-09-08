@@ -272,7 +272,7 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 		if rcfg.UseFileFirst && r.contextMgr != nil {
 			fileMessages, err := r.contextMgr.ReadMessagesForLLM()
 			if err != nil {
-				r.writer.Error(fmt.Sprintf("Failed to read messages from file: %v", err))
+				r.writer.Error(fmt.Sprintf("cannot read messages file: %v", err))
 			} else {
 				state.messages = fileMessages
 			}
@@ -363,14 +363,12 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 
 		r.logger.AgentIteration(i, len(assistantMsg.ToolCalls))
 
-		// Display reasoning/thinking if present
+		// One bullet-led step line per turn: the status plus the message, or the
+		// status alone when the turn carries only tool calls. Reasoning is
+		// already merged into Content by the normalizer, so a single call
+		// covers both.
 		contextStr := ui.FormatContextStr(state.totalTokens, r.cfg.LLM.Context)
-		if assistantMsg.ReasoningContent != "" {
-			r.writer.Thinking(contextStr, assistantMsg.ReasoningContent)
-		}
-		if assistantMsg.Content != "" {
-			r.writer.Thinking(contextStr, assistantMsg.Content)
-		}
+		r.writer.Thinking(contextStr, assistantMsg.Content)
 
 		// Start checkpoint turn
 		if len(assistantMsg.ToolCalls) > 0 && r.checkpointMgr != nil && r.checkpointMgr.Enabled() {
@@ -411,8 +409,7 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 	// terminal, so the next turn has the fact and the caller can act on it.
 	result.BudgetExhausted = budgetExhausted
 	if budgetExhausted {
-		notice := fmt.Sprintf("Stopped after %d iterations without a final answer: the iteration budget "+
-			"(agent.max_tool_iterations) ran out while work was still in progress.", maxIters)
+		notice := fmt.Sprintf("iteration budget exhausted after %d iterations, no final answer", maxIters)
 		r.writer.Warn(notice)
 		state.messages = append(state.messages, llm.Message{
 			Role:    llm.RoleAssistant,
@@ -471,7 +468,7 @@ func (r *Runner) flush(state *runState) {
 	// writes asynchronously enough that a shared slice would be a race.
 	batch := append([]llm.Message(nil), pending...)
 	if err := r.persist(batch); err != nil {
-		r.writer.Error(fmt.Sprintf("Failed to record messages: %v", err))
+		r.writer.Error(fmt.Sprintf("cannot record messages: %v", err))
 		return
 	}
 	state.persistedUpTo = len(state.messages)
@@ -498,6 +495,6 @@ func (r *Runner) discard(state *runState, to int) {
 		return
 	}
 	if err := r.rollback(dropped); err != nil {
-		r.writer.Error(fmt.Sprintf("Failed to record a discarded attempt: %v", err))
+		r.writer.Error(fmt.Sprintf("cannot record discarded attempt: %v", err))
 	}
 }

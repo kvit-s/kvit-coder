@@ -13,24 +13,44 @@ import (
 
 // Color definitions for consistent UI
 var (
-	// Brown color for startup info
+	// Brownish, dim status for the per-step context share (e.g. "(8.4k 1%)").
+	// Faint yellow reads as brown without shouting over the message.
 	brownColor = color.New(color.FgYellow, color.Faint)
 
-	// Gray color for tool calls and thinking
+	// Gray color for tool calls and other secondary progress lines.
 	grayColor = color.New(color.FgWhite, color.Faint)
 
-	// Red for errors
-	errorColor = color.New(color.FgRed)
+	// Dim red for errors: visible, but not a bright alarm on every failure.
+	errorColor = color.New(color.FgRed, color.Faint)
 
-	// Yellow for warnings
-	warnColor = color.New(color.FgYellow)
+	// Dim brown for warnings, same family as the status line.
+	warnColor = color.New(color.FgYellow, color.Faint)
 
-	// White for assistant responses
-	whiteColor = color.New(color.FgWhite)
+	// Full white for assistant messages and step text.
+	whiteColor = color.New(color.FgHiWhite)
 
 	// Colors for plan rendering
 	planCompletedColor = color.New(color.FgWhite, color.Faint, color.CrossedOut)
-	planActiveColor    = color.New(color.FgYellow)
+	planActiveColor    = color.New(color.FgYellow, color.Faint)
+)
+
+// Step rendering follows the codex pattern: one bullet-led line per model
+// turn, then indented detail lines beneath it.
+//
+//	● (8.4k 1%) Analyzing textarea wrapping behavior
+//	  Read[path="internal/ui/input.go"]
+//
+// The bullet starts the step, the brownish status shows the context share,
+// the message is full white, and tool calls are gray. Continuation lines of
+// a multi-line message or tool call stay indented so wrapped text never
+// jumps back to column zero. Warnings and errors use the same indent with
+// dim brown/red coloring, and are always collapsed to a single line.
+const (
+	stepBullet      = "●"
+	stepIndent      = "  "
+	maxWarnChars    = 200
+	maxErrorChars   = 300
+	maxToolArgChars = 160
 )
 
 // JSONOutput represents the structured output for --json mode
@@ -174,6 +194,236 @@ func (w *Writer) WriteJSONOutput(stats *JSONStats) {
 	jsonContent = "" // Reset for next use
 }
 
+// Manual ANSI codes mirror the fatih/color palette above, but they are
+// emitted explicitly so a headless run whose stderr is a terminal still gets
+// colors even when stdout (the final-answer stream) is piped and the color
+// package has switched itself off.
+const (
+	ansiReset  = "\x1b[0m"
+	ansiBrown  = "\x1b[33;2m"
+	ansiGray   = "\x1b[37;2m"
+	ansiWhite  = "\x1b[97m"
+	ansiDimRed = "\x1b[31;2m"
+	// Dim gray plus strikethrough for finished plan steps.
+	ansiStrikeGray = "\x1b[37;2;9m"
+)
+
+// useColor reports whether the progress stream should carry ANSI colors:
+// headless output goes to stderr, so it depends on stderr being a terminal;
+// interactive output goes through the color package, which already knows.
+func (w *Writer) useColor() bool {
+	if w.quiet || w.jsonMode {
+		return false
+	}
+	if w.headless {
+		if w.stderrTTY != nil {
+			return *w.stderrTTY
+		}
+		if f, ok := w.stderr.(*os.File); ok {
+			if info, err := f.Stat(); err == nil {
+				return info.Mode()&os.ModeCharDevice != 0
+			}
+		}
+		return false
+	}
+	return !color.NoColor
+}
+
+// out returns the stream progress lines belong on.
+func (w *Writer) out() io.Writer {
+	if w.headless {
+		return w.stderr
+	}
+	return color.Output
+}
+
+// paint wraps s in an ANSI code when colors are on.
+func (w *Writer) paint(code, s string) string {
+	if s == "" || !w.useColor() {
+		return s
+	}
+	return code + s + ansiReset
+}
+
+// paintThinkingLine colors one pre-wrapped step line: the bullet white,
+// the "(8.4k 1%)" status brownish-dim, and the message itself full white.
+// Continuation lines carry only the indent plus white message text.
+func (w *Writer) paintThinkingLine(plain, context string) string {
+	if !w.useColor() {
+		return plain
+	}
+	if strings.HasPrefix(plain, stepBullet+" ") {
+		rest := strings.TrimPrefix(plain, stepBullet+" ")
+		bullet := ansiWhite + stepBullet + ansiReset
+		if context != "" {
+			status := "(" + context + ")"
+			if strings.HasPrefix(rest, status) {
+				msg := strings.TrimPrefix(rest, status)
+				return bullet + " " + ansiBrown + status + ansiReset + w.paint(ansiWhite, msg)
+			}
+		}
+		return bullet + w.paint(ansiWhite, " "+rest)
+	}
+	if strings.HasPrefix(plain, stepIndent) {
+		return stepIndent + w.paint(ansiWhite, strings.TrimPrefix(plain, stepIndent))
+	}
+	return w.paint(ansiWhite, plain)
+}
+
+// clearProgressLine erases the in-place progress row (if any) so the next
+// header, tool, warning or error line starts clean rather than overwriting
+// dots. Piped output never draws in place, so there is nothing to erase.
+func (w *Writer) clearProgressLine() {
+	if progressLine == "" {
+		progressDotCount = 0
+		return
+	}
+	if _, draw := w.progressTarget(); draw {
+		if w.headless {
+			fmt.Fprint(w.stderr, "\r\033[K")
+		} else {
+			fmt.Fprint(color.Output, "\r\033[K")
+		}
+	}
+	progressLine = ""
+	progressDotCount = 0
+}
+
+// termWidth is the display width step lines wrap at. COLUMNS wins when set;
+// otherwise 100 keeps long reasoning readable without assuming a wide window.
+func termWidth() int {
+	if s := os.Getenv("COLUMNS"); s != "" {
+		var n int
+		if _, err := fmt.Sscanf(s, "%d", &n); err == nil {
+			if n < 40 {
+				return 40
+			}
+			if n > 250 {
+				return 250
+			}
+			return n
+		}
+	}
+	return 100
+}
+
+func visibleLen(s string) int {
+	return len([]rune(s))
+}
+
+// wrapLine word-wraps one logical line (no newlines) to width, keeping the
+// first-line prefix and indenting wrapped continuations with contPrefix.
+// A single word longer than the width is split mid-word so a long path or
+// URL cannot push one display line off the side of the terminal.
+func wrapLine(prefix, text string, width int, contPrefix string) []string {
+	if visibleLen(prefix+text) <= width {
+		return []string{prefix + text}
+	}
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return []string{prefix + text}
+	}
+	var lines []string
+	cur := prefix
+	curIsPrefix := true
+	flush := func() {
+		lines = append(lines, cur)
+		cur = contPrefix
+		curIsPrefix = true
+	}
+	for _, wd := range words {
+		// Split an overlong word into width-sized chunks first.
+		for visibleLen(wd) > width-visibleLen(contPrefix) {
+			if !curIsPrefix || visibleLen(cur) > visibleLen(prefix) {
+				flush()
+			}
+			room := width - visibleLen(cur)
+			if room <= 0 {
+				flush()
+				room = width - visibleLen(cur)
+			}
+			runes := []rune(wd)
+			cur += string(runes[:room])
+			wd = string(runes[room:])
+			flush()
+		}
+		sep := ""
+		if !curIsPrefix || visibleLen(cur) > visibleLen(prefix) {
+			sep = " "
+		}
+		// When the prefix itself already fills the line (a long
+		// "● (status)" on a narrow terminal), start the text below it
+		// rather than emitting an overlong first line.
+		if curIsPrefix && visibleLen(prefix) >= width {
+			flush()
+			sep = ""
+		}
+		if visibleLen(cur+sep+wd) <= width {
+			cur += sep + wd
+			curIsPrefix = false
+			continue
+		}
+		flush()
+		cur += wd
+		curIsPrefix = false
+	}
+	lines = append(lines, cur)
+	return lines
+}
+
+// buildThinkingLines renders the bullet-led step header plus any message
+// continuation lines, all pre-wrapped and indented. An empty message still
+// yields the "● (ctx)" status line so every step shows its context share.
+func buildThinkingLines(context, msg string) []string {
+	width := termWidth()
+	bulletPrefix := stepBullet + " "
+	contPrefix := stepIndent
+	status := ""
+	if context != "" {
+		status = "(" + context + ")"
+	}
+	trimmed := strings.Trim(msg, "\n")
+	if strings.TrimSpace(trimmed) == "" {
+		if status != "" {
+			return wrapLine(bulletPrefix, status, width, contPrefix)
+		}
+		return []string{stepBullet}
+	}
+	logical := strings.Split(trimmed, "\n")
+	firstText := logical[0]
+	if status != "" {
+		if firstText != "" {
+			firstText = status + " " + firstText
+		} else {
+			firstText = status
+		}
+	}
+	out := wrapLine(bulletPrefix, firstText, width, contPrefix)
+	for _, ln := range logical[1:] {
+		if strings.TrimSpace(ln) == "" {
+			out = append(out, "")
+			continue
+		}
+		out = append(out, wrapLine(contPrefix, ln, width, contPrefix)...)
+	}
+	return out
+}
+
+// buildToolLines renders one gray tool-call line plus indented continuations.
+// argsDisplay is collapsed to a single short line first, so a multiline shell
+// command cannot break the step layout.
+func buildToolLines(name, argsDisplay string) []string {
+	width := termWidth()
+	basePrefix := stepIndent
+	contPrefix := stepIndent + stepIndent
+	single := SingleLine(argsDisplay, maxToolArgChars)
+	display := name
+	if single != "" {
+		display = name + "[" + single + "]"
+	}
+	return wrapLine(basePrefix, display, width, contPrefix)
+}
+
 // StartupInfo prints startup information in brown.
 func (w *Writer) StartupInfo(msg string) {
 	if w.quiet {
@@ -186,40 +436,58 @@ func (w *Writer) StartupInfo(msg string) {
 	}
 }
 
-// Info prints an info message with [info] prefix in gray.
+// Info prints an info message in gray, indented like other step lines.
+// Multi-line messages keep every continuation line indented.
 func (w *Writer) Info(msg string) {
 	if w.quiet {
 		return
 	}
-	if w.headless {
-		fmt.Fprintf(w.stderr, "[info] %s\n", msg)
-	} else {
-		grayColor.Printf("[info] %s\n", msg)
+	w.clearProgressLine()
+	width := termWidth()
+	var plains []string
+	for _, ln := range strings.Split(strings.Trim(msg, "\n"), "\n") {
+		if strings.TrimSpace(ln) == "" {
+			plains = append(plains, "")
+			continue
+		}
+		plains = append(plains, wrapLine(stepIndent, ln, width, stepIndent)...)
+	}
+	for _, plain := range plains {
+		line := plain
+		if plain != "" {
+			line = stepIndent + w.paint(ansiGray, strings.TrimPrefix(plain, stepIndent))
+			// When colors are off paint returns plain unchanged; keep the
+			// pre-wrapped plain line in that case.
+			if !w.useColor() {
+				line = plain
+			}
+		}
+		fmt.Fprintln(w.out(), line)
 	}
 }
 
-// Warn prints a warning message with [warn] prefix in yellow.
+// Warn prints a warning as one indented line in dim brown.
+// The message is collapsed to a single line and truncated, so a warning
+// never breaks the step layout.
 func (w *Writer) Warn(msg string) {
 	if w.quiet {
 		return
 	}
-	if w.headless {
-		fmt.Fprintf(w.stderr, "[warn] %s\n", msg)
-	} else {
-		warnColor.Printf("[warn] %s\n", msg)
-	}
+	w.clearProgressLine()
+	single := SingleLine(msg, maxWarnChars)
+	plain := stepIndent + "[warn] " + single
+	fmt.Fprintln(w.out(), w.paint(ansiBrown, plain))
 }
 
-// Error prints an error message with [error] prefix in red.
+// Error prints an error as one indented line in dim red, same layout as Warn.
 func (w *Writer) Error(msg string) {
 	if w.quiet {
 		return
 	}
-	if w.headless {
-		fmt.Fprintf(w.stderr, "[error] %s\n", msg)
-	} else {
-		errorColor.Printf("[error] %s\n", msg)
-	}
+	w.clearProgressLine()
+	single := SingleLine(msg, maxErrorChars)
+	plain := stepIndent + "[error] " + single
+	fmt.Fprintln(w.out(), w.paint(ansiDimRed, plain))
 }
 
 // Tool prints a tool execution message with [tool:name] prefix (unused, kept for compatibility).
@@ -251,6 +519,20 @@ func (w *Writer) Assistant(msg string) {
 	}
 }
 
+// Divider separates the step progress from the final report. It carries the
+// turn timing that used to print as a standalone "[39s: 39s llm + ...]" line
+// after the report, so nothing needs to print after the report itself.
+// It goes to the progress stream (stderr when headless), keeping stdout clean
+// for the final answer. Quiet and JSON modes print nothing.
+func (w *Writer) Divider(statsMsg string) {
+	if w.quiet || w.jsonMode {
+		return
+	}
+	w.clearProgressLine()
+	plain := "---------  " + statsMsg + " --------"
+	fmt.Fprintln(w.out(), w.paint(ansiGray, plain))
+}
+
 // Debug prints a debug message in gray, only if verbose mode is enabled.
 func (w *Writer) Debug(msg string) {
 	if w.quiet || w.verboseLines <= 0 {
@@ -275,42 +557,36 @@ func (w *Writer) Agent(msg string) {
 	}
 }
 
-// Thinking prints reasoning/thinking text in gray.
+// Thinking prints one bullet-led step line per model turn: the bullet, the
+// brownish context share, and the message in full white. An empty message
+// still prints "● (ctx)" so every step shows its status. Continuation lines
+// of a multi-line message stay indented and wrapped.
 func (w *Writer) Thinking(context, msg string) {
 	if w.quiet {
 		return
 	}
-	var output string
-	if context != "" {
-		output = fmt.Sprintf("*(%s) %s", context, msg)
-	} else {
-		output = fmt.Sprintf("* %s", msg)
-	}
-	if w.headless {
-		fmt.Fprintln(w.stderr, output)
-	} else {
-		grayColor.Println(output)
+	w.clearProgressLine()
+	for _, plain := range buildThinkingLines(context, msg) {
+		if plain == "" {
+			fmt.Fprintln(w.out())
+			continue
+		}
+		fmt.Fprintln(w.out(), w.paintThinkingLine(plain, context))
 	}
 }
 
-// ToolCall prints a compact tool call representation in gray.
+// ToolCall prints a compact gray tool-call line indented under the step
+// header. The context share lives on the header already, so the context
+// argument is accepted for compatibility and ignored. Success summaries are
+// not shown (see ToolResult); only the call itself appears here.
 func (w *Writer) ToolCall(name, argsDisplay, context string) {
 	if w.quiet {
 		return
 	}
-	// Reset progress tracking since a new tool is starting
-	progressLine = ""
-	progressDotCount = 0
-	var output string
-	if context != "" {
-		output = fmt.Sprintf("  (%s) %s[%s]", context, name, argsDisplay)
-	} else {
-		output = fmt.Sprintf("  %s[%s]", name, argsDisplay)
-	}
-	if w.headless {
-		fmt.Fprintln(w.stderr, output)
-	} else {
-		grayColor.Println(output)
+	_ = context
+	w.clearProgressLine()
+	for _, plain := range buildToolLines(name, argsDisplay) {
+		fmt.Fprintln(w.out(), w.paint(ansiGray, plain))
 	}
 }
 
@@ -406,10 +682,13 @@ func (w *Writer) ToolProgress(dot string) {
 		return
 	}
 
-	// Reset if this is a new progress line (starts with sparkle)
-	if strings.HasPrefix(dot, "✨") {
-		progressLine = ""
+	// A step starts silently: the bullet-led header (Thinking) carries the
+	// status, so a fast turn with no dots prints only that header and no
+	// blank progress line of its own. Dots appear only while waiting.
+	if strings.HasPrefix(dot, "✨") || strings.HasPrefix(dot, stepBullet) {
+		progressLine = stepBullet + " "
 		progressDotCount = 0
+		return
 	}
 
 	// Track dot count for line wrapping
@@ -420,8 +699,8 @@ func (w *Writer) ToolProgress(dot string) {
 			if draw {
 				drawProgress(out, "\r"+progressLine+"\n")
 			}
-			progressLine = "✨ "  // Start new line with sparkle
-			progressDotCount = 1 // Reset counter (this dot counts)
+			progressLine = stepBullet + " " // Start new line with bullet
+			progressDotCount = 1            // Reset counter (this dot counts)
 		}
 	}
 
@@ -434,37 +713,43 @@ func (w *Writer) ToolProgress(dot string) {
 	drawProgress(out, "\n\033[1A") // Newline (flush) + move up
 }
 
-// ToolResult prints a tool result summary in gray.
+// ToolResult finishes a tool line. A slow tool keeps its "...2s" duration in
+// gray; the per-result size summary ("34 lines, 5.2k chars") is intentionally
+// not shown, so step output stays one header plus its calls. Error and
+// pending summaries still print as indented single lines.
 func (w *Writer) ToolResult(summary, duration string) {
 	if w.quiet {
 		return
 	}
-	// Reset progress tracking since tool is done
-	progressLine = ""
-	progressDotCount = 0
-	if w.headless {
-		if duration != "" {
-			fmt.Fprintf(w.stderr, "  %s\n", duration)
-		}
-		fmt.Fprintf(w.stderr, "  → %s\n", summary)
-	} else {
-		if duration != "" {
-			grayColor.Printf("\n  %s\n", duration)
-		}
-		grayColor.Printf("  → %s\n", summary)
+	w.clearProgressLine()
+	if duration != "" {
+		fmt.Fprintln(w.out(), w.paint(ansiGray, stepIndent+SingleLine(duration, 32)))
+	}
+	single := SingleLine(summary, maxErrorChars)
+	if single == "" {
+		return
+	}
+	lower := strings.ToLower(single)
+	switch {
+	case strings.HasPrefix(lower, "pending"):
+		fmt.Fprintln(w.out(), w.paint(ansiBrown, stepIndent+single))
+	case strings.HasPrefix(lower, "error"),
+		strings.HasPrefix(lower, "failed"),
+		strings.HasPrefix(lower, "fatal"),
+		strings.HasPrefix(lower, "blocked"),
+		strings.HasPrefix(lower, "duplicate"),
+		strings.HasPrefix(lower, "unknown"):
+		fmt.Fprintln(w.out(), w.paint(ansiDimRed, stepIndent+single))
+	default:
+		// Success size summaries stay silent by design.
 	}
 }
 
-// ToolContext prints only the context (e.g., token usage) without tool details.
+// ToolContext is kept for compatibility. The context share already leads
+// every step header, so printing it again per tool would repeat the status
+// on each call line.
 func (w *Writer) ToolContext(context string) {
-	if w.quiet || context == "" {
-		return
-	}
-	if w.headless {
-		fmt.Fprintf(w.stderr, "  (%s)\n", context)
-	} else {
-		grayColor.Printf("  (%s)\n", context)
-	}
+	_ = context
 }
 
 // VerboseOutput prints tool output in verbose mode with truncation if needed.
@@ -474,6 +759,7 @@ func (w *Writer) VerboseOutput(output string) bool {
 		return false
 	}
 
+	w.clearProgressLine()
 	// Use existing TruncateContent from tools package
 	// maxLines = verboseLines, maxBytes = large (don't limit by bytes for verbose output)
 	// truncatedLines = verboseLines (half on each side), truncatedBytes = large
@@ -482,14 +768,8 @@ func (w *Writer) VerboseOutput(output string) bool {
 
 	// Indent each line for visual grouping under the tool call
 	lines := strings.Split(truncated, "\n")
-	if w.headless {
-		for _, line := range lines {
-			fmt.Fprintf(w.stderr, "    %s\n", line)
-		}
-	} else {
-		for _, line := range lines {
-			grayColor.Printf("    %s\n", line)
-		}
+	for _, line := range lines {
+		fmt.Fprintln(w.out(), w.paint(ansiGray, stepIndent+stepIndent+line))
 	}
 	return true
 }
@@ -500,6 +780,7 @@ func (w *Writer) ActivePlan(planText string) {
 		return
 	}
 
+	w.clearProgressLine()
 	// Parse and render the plan text line by line
 	lines := splitLines(planText)
 	for _, line := range lines {
@@ -508,25 +789,16 @@ func (w *Writer) ActivePlan(planText string) {
 			continue
 		}
 
-		// In headless mode, just print plain text to stderr
-		if w.headless {
-			fmt.Fprintf(w.stderr, "  %s\n", line)
-			continue
-		}
-
-		// Render lines with appropriate coloring
-		if len(line) > 0 && line[0] >= '0' && line[0] <= '9' {
-			// Step line - check for status symbols
-			if contains(line, "[✓]") {
-				planCompletedColor.Printf("  %s\n", line)
-			} else if contains(line, "[→]") {
-				planActiveColor.Printf("  %s\n", line)
-			} else {
-				grayColor.Printf("  %s\n", line)
-			}
-		} else {
-			// Header lines (Task, Status, etc.)
-			grayColor.Printf("  %s\n", line)
+		plain := stepIndent + line
+		// Completed steps stay struck through; the active step uses the
+		// same dim brown as warnings so it never shouts.
+		switch {
+		case contains(line, "[✓]"):
+			fmt.Fprintln(w.out(), w.paint(ansiStrikeGray, plain))
+		case contains(line, "[→]"):
+			fmt.Fprintln(w.out(), w.paint(ansiBrown, plain))
+		default:
+			fmt.Fprintln(w.out(), w.paint(ansiGray, plain))
 		}
 	}
 }

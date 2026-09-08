@@ -24,7 +24,7 @@ func HandleMetaCommand(
 		return true, nil
 
 	case ":config":
-		fmt.Printf("Model: %s @ %s\n", cfg.LLM.Model, cfg.LLM.BaseURL)
+		fmt.Printf("Model: %s @ %s\n", cfg.ModelDisplay(), cfg.LLM.BaseURL)
 		fmt.Printf("Workspace: %s\n", cfg.Workspace.Root)
 		fmt.Printf("Max iterations: %d\n", cfg.Agent.MaxIterations)
 		fmt.Printf("Temperature: %.2f\n", cfg.LLM.Temperature)

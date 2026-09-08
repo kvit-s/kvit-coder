@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -17,14 +18,22 @@ func MakePrompt(text string) string {
 	return colorStart + text + colorEnd
 }
 
-// FormatToolArgs formats tool arguments for compact display
+// FormatToolArgs formats tool arguments for compact display.
+// Keys are sorted so the terminal line is deterministic.
 func FormatToolArgs(args map[string]any) string {
 	if len(args) == 0 {
 		return ""
 	}
 
+	keys := make([]string, 0, len(args))
+	for key := range args {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
 	var parts []string
-	for key, val := range args {
+	for _, key := range keys {
+		val := args[key]
 		var valStr string
 		switch v := val.(type) {
 		case string:
@@ -214,19 +223,54 @@ func ShortenBlockMessage(blockMsg string) string {
 	return blockMsg
 }
 
-// FormatContextStr formats context usage for display
+// FormatContextStr formats context usage for display.
+// It shows what is used and the share of the window in use, e.g. "8.4k 1%":
+// the raw count on its own never said whether anything needed doing about it.
 func FormatContextStr(totalTokens, contextLimit int) string {
 	if totalTokens <= 0 {
+		if contextLimit > 0 {
+			return "0k 0%"
+		}
 		return "0k"
 	}
 	tokensK := float64(totalTokens) / 1000.0
+	tokensStr := fmt.Sprintf("%.1fk", tokensK)
 	if contextLimit > 0 {
-		// The share of the window in use is the number that says whether
-		// anything needs to be done about it; the raw token count on its own
-		// never told you that.
-		contextK := float64(contextLimit) / 1000.0
 		percent := 100 * float64(totalTokens) / float64(contextLimit)
-		return fmt.Sprintf("%.1fk/%.0fk %.0f%%", tokensK, contextK, percent)
+		return fmt.Sprintf("%s %.0f%%", tokensStr, percent)
 	}
-	return fmt.Sprintf("%.1fk", tokensK)
+	return tokensStr
+}
+
+// SingleLine collapses a message to one display line: newlines, carriage
+// returns and tabs become spaces, runs of whitespace fold to one, and the
+// result is trimmed and truncated to maxChars (with an ellipsis) when maxChars
+// is positive.
+func SingleLine(s string, maxChars int) string {
+	s = strings.ReplaceAll(s, "\r\n", " ")
+	s = strings.ReplaceAll(s, "\n", " ")
+	s = strings.ReplaceAll(s, "\r", " ")
+	s = strings.ReplaceAll(s, "\t", " ")
+	fields := strings.Fields(s)
+	if len(fields) == 0 {
+		return ""
+	}
+	s = strings.Join(fields, " ")
+	if maxChars > 0 && len(s) > maxChars {
+		if maxChars <= 1 {
+			return "…"
+		}
+		// Truncate on a byte boundary that keeps the string valid UTF-8.
+		cut := maxChars - 1
+		for cut > 0 && !isUTF8Boundary(s[cut]) {
+			cut--
+		}
+		s = s[:cut] + "…"
+	}
+	return s
+}
+
+func isUTF8Boundary(b byte) bool {
+	// Continuation bytes have the form 10xxxxxx.
+	return b&0xC0 != 0x80
 }

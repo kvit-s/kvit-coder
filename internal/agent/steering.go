@@ -43,7 +43,7 @@ func (r *Runner) drainInbox(state *runState) {
 		case inbox.KindUserLine:
 			// A person talking mid-turn is a user message, tagged so the model
 			// can tell it from the prompt that started the turn.
-			r.writer.Info(fmt.Sprintf("↩ steering: %s", firstLine(m.Text)))
+			r.writer.Info(fmt.Sprintf("steering: %s", firstLine(m.Text)))
 			state.messages = append(state.messages, llm.Message{
 				Role:    llm.RoleUser,
 				Content: "<user-steering>\n" + m.Text + "\n</user-steering>",

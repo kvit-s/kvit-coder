@@ -35,7 +35,7 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 		sessionName = sess.Name()
 		previous, err := sess.Load()
 		if err != nil {
-			writer.Error(fmt.Sprintf("Failed to load session: %v", err))
+			writer.Error(fmt.Sprintf("cannot load session: %v", err))
 		}
 		// The system prompt is regenerated each turn (tools and config may have
 		// changed), so any system message in the record is dropped.
@@ -91,7 +91,7 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 			writer.Debug(fmt.Sprintf("Failed to record session settings: %v", err))
 		}
 		if err := sess.AppendMessages(stripProjectInstructions([]llm.Message{userMsg}, projectInstructions)); err != nil {
-			writer.Error(fmt.Sprintf("Failed to record prompt: %v", err))
+			writer.Error(fmt.Sprintf("cannot record prompt: %v", err))
 		}
 	}
 
@@ -114,7 +114,7 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 		QuietMode:    quietMode,
 	})
 	if err != nil {
-		writer.Error(fmt.Sprintf("Agent error: %v", err))
+		writer.Error(fmt.Sprintf("agent error: %v", err))
 		return
 	}
 
@@ -131,7 +131,9 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 		}
 	}
 
-	// Output JSON or print stats
+	// In JSON mode the stats ride along in the JSON document on stdout.
+	// Otherwise the turn ends with the report itself: the divider printed
+	// before it already carries the timing, so no stats block follows.
 	if writer.IsJSONMode() {
 		writer.WriteJSONOutput(&ui.JSONStats{
 			Session:          sessionName,
@@ -144,9 +146,6 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 			DurationMs:       result.Stats.TotalAgentTime.Milliseconds(),
 			Steps:            result.Stats.Steps,
 		})
-	} else {
-		// Print stats to stderr
-		result.Stats.PrintTo(os.Stderr)
 	}
 
 	// Print session info (skip in JSON mode - it's included in the JSON output)
