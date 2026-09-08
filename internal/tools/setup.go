@@ -2,6 +2,7 @@ package tools
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/checkpoint"
@@ -33,6 +34,12 @@ type SetupConfig struct {
 	// manager) keeps internal/tools free of any dependency on internal/mcp,
 	// avoiding an import cycle. Nil/empty when MCP is disabled.
 	MCPTools []Tool
+
+	// ToolGroups are the groups from cfg.ToolGroups, already built with their
+	// member sources bound (see group.go). Each is registered as one tool, and
+	// any built-in tool the configuration moved into a group is handed to it
+	// here instead of being registered on its own.
+	ToolGroups []*GroupTool
 }
 
 // SetupRegistry creates and configures the tool registry based on config.
@@ -285,6 +292,44 @@ func SetupRegistry(sc SetupConfig) *Registry {
 	for _, t := range sc.MCPTools {
 		registry.Enable(t)
 		debug(fmt.Sprintf("Enabled MCP tool: %s", t.Name()))
+	}
+
+	// Tool groups. Registered last, after every built-in tool exists, because
+	// a group can claim built-in tools: those are taken back out of the
+	// registry and handed to their group, so they stop being advertised on
+	// every request and are reachable only through it.
+	if len(sc.ToolGroups) > 0 {
+		byName := make(map[string]*GroupTool, len(sc.ToolGroups))
+		for _, g := range sc.ToolGroups {
+			byName[g.Name()] = g
+		}
+
+		claimed := cfg.DeferredBuiltinTools()
+		names := make([]string, 0, len(claimed))
+		for name := range claimed {
+			names = append(names, name)
+		}
+		sort.Strings(names) // deterministic member order, and a stable log
+
+		for _, name := range names {
+			group := byName[claimed[name]]
+			if group == nil {
+				continue
+			}
+			tool := registry.Get(name)
+			if tool == nil {
+				debug(fmt.Sprintf("Tool group %s: no tool named %s to claim", group.Name(), name))
+				continue
+			}
+			registry.Disable(tool.Name())
+			group.AddLocalMembers(tool)
+			debug(fmt.Sprintf("Tool group %s claimed: %s", group.Name(), tool.Name()))
+		}
+
+		for _, g := range sc.ToolGroups {
+			registry.Enable(g)
+			debug(fmt.Sprintf("Enabled tool group: %s", g.Name()))
+		}
 	}
 
 	// Batch can only dispatch once everything it might call is registered.

@@ -300,12 +300,16 @@ mcp:
     # A real browser, for the pages Web.fetch cannot read: anything that builds
     # itself with JavaScript, or answers a plain fetch with a bot check.
     #
-    # The agent is one process per turn, so this server is spawned and killed
-    # every turn and the browser goes with it. ${KVIT_RUN_ID} in the profile
-    # path is what stops that costing a login: Chrome persists cookies and local
-    # storage to that directory itself, so only the open tabs are lost and the
-    # model re-navigates. It is per session because a persistent profile can
-    # only be used by one browser at a time, and sessions run concurrently.
+    # This server belongs to the Web.browsing tool group below, so it is not
+    # dialed at startup: its two dozen tools stay out of every request, and
+    # npx is not spawned on turns that never open a page.
+    #
+    # The agent is one process per turn, so once opened, this server is spawned
+    # and killed every turn and the browser goes with it. ${KVIT_RUN_ID} in the
+    # profile path is what stops that costing a login: Chrome persists cookies
+    # and local storage to that directory itself, so only the open tabs are lost
+    # and the model re-navigates. It is per session because a persistent profile
+    # can only be used by one browser at a time, and sessions run concurrently.
     # docs/web-tools.md section 6 is about removing the respawn entirely.
     - name: playwright
       enabled: true
@@ -323,6 +327,54 @@ mcp:
       # rather than inline, so /tmp being on workspace.allowed_paths is what
       # lets the model Read them without being asked about each one.
       call_timeout: 180   # a page load plus a settle is slower than an API call
+
+# Tool groups: sets of tools the model cannot see until it asks for them.
+#
+# A group is one registered tool. Called with no arguments it answers with its
+# instructions and every tool it holds, each with its parameters; called with a
+# tool name and arguments it runs that tool. Until it is called, the whole set
+# costs one paragraph in the request instead of one schema per tool.
+#
+# The reference arrives as a tool result rather than by changing the tools the
+# request advertises, because the advertised tools sit ahead of the whole
+# conversation in the model provider's prompt cache: changing them mid-session
+# invalidates every message after them, while a tool result is appended at the
+# end where the cache absorbs it. It is written to the session history like any
+# other result, so it is there on later turns without being sent again.
+tool_groups:
+  # Playwright advertises 24 tools whose schemas are about 4,000 tokens, and
+  # they more than double the number of options the model reads before every
+  # decision. Behind this group they cost the description below, and npx is
+  # spawned only once something is actually run.
+  - name: Web.browsing
+    enabled: true
+    category: web
+    description: >
+      Drive a real web browser: click, type, read the page, take screenshots,
+      run JavaScript. Use it for pages Web.fetch cannot read -- anything that
+      builds itself with JavaScript, needs a login, or answers a plain fetch
+      with a bot check -- and after Web.fetch comes back with a near-empty body
+      or a bot check.
+    mcp_servers: [playwright]
+    instructions: |
+      The browser is headless Chromium driven by Playwright.
+
+      Work from a snapshot. browser_snapshot returns the page's accessibility
+      tree with a `ref` for each element, and browser_click, browser_type,
+      browser_hover and browser_select_option all take one of those refs. Take
+      a snapshot after anything that changes the page, because refs from an
+      earlier one are stale.
+
+      Snapshots and screenshots come back as file paths under
+      /tmp/kvit-coder-browser-out/, not as inline content. Read them with Read.
+
+      The browser does not survive the turn. Cookies and local storage do,
+      because Chrome writes them to a profile directory of its own, so a login
+      done in an earlier turn is still good; open tabs and scroll position are
+      not, so navigate again rather than assuming a page is still up.
+
+      Prefer Web.fetch for a page that is plain HTML. This is slower, costs a
+      browser launch, and the accessibility tree of a large page is long.
 
 # Prompt template configuration
 prompts:

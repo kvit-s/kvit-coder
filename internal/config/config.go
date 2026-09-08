@@ -84,6 +84,10 @@ type Config struct {
 
 	MCP MCPConfig `yaml:"mcp"`
 
+	// ToolGroups defines sets of tools whose schemas and documentation reach the
+	// model only when it asks for them. See ToolGroupConfig.
+	ToolGroups []ToolGroupConfig `yaml:"tool_groups"`
+
 	UI UIConfig `yaml:"ui"`
 
 	// Models is the optional multi-model catalog (docs/model-selection.md).
@@ -821,6 +825,13 @@ func Load(path string) (*Config, error) {
 	// The models: catalog is validated here so a typo fails at startup with
 	// the file path and entry number, not mid-session at the API.
 	if err := cfg.validateModels(path); err != nil {
+		return nil, err
+	}
+
+	// Same for tool_groups:, which also reads each group's instructions_file
+	// here so a missing file is a startup error rather than a surprise the
+	// first time the model opens the group.
+	if err := cfg.validateToolGroups(path); err != nil {
 		return nil, err
 	}
 

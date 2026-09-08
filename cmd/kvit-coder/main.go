@@ -537,6 +537,13 @@ func main() {
 			mcpMgr.SetApprovals(approvals)
 		}
 	}
+	// A server that belongs to a tool group is not dialed here. Its tools are
+	// invisible until the model opens the group, so dialing it at startup would
+	// pay the spawn on every turn -- half a second to two seconds for a browser
+	// server -- to make something available that nothing can call yet.
+	if deferred := cfg.DeferredMCPServers(); len(deferred) > 0 {
+		mcpMgr.Defer(deferred)
+	}
 	if err := mcpMgr.Connect(context.Background()); err != nil {
 		writer.Warn(fmt.Sprintf("mcp: some servers failed to connect: %v", err))
 	}
@@ -630,6 +637,42 @@ func main() {
 	}
 
 	// Setup tool registry using the new setup function
+	// Tool groups: a set of tools the model cannot see until it asks for them.
+	// Each is registered as one tool that returns the group's instructions and
+	// a reference to every member when called with no arguments, and runs a
+	// member when called with one. Members backed by an MCP server are resolved
+	// through the manager, which describes them from its cached tool list and
+	// dials only when something is actually run.
+	var toolGroups []*tools.GroupTool
+	for i, g := range cfg.EnabledToolGroups() {
+		g := g
+		// A server switched off in mcp.servers, or MCP switched off entirely,
+		// leaves nothing for the group to hold. Registering it anyway would
+		// offer the model a tool that can only fail.
+		var servers []string
+		for _, name := range g.MCPServers {
+			if mcpMgr.ServerUsable(name) {
+				servers = append(servers, name)
+			} else {
+				writer.Debug(fmt.Sprintf("tool group %s: server %q is unavailable", g.Name, name))
+			}
+		}
+		if len(servers) == 0 && len(g.Tools) == 0 {
+			writer.Debug(fmt.Sprintf("tool group %s has no available members, skipping", g.Name))
+			continue
+		}
+
+		var source tools.GroupMemberSource
+		if len(servers) > 0 {
+			source = func(ctx context.Context) ([]tools.Tool, error) {
+				return mcpMgr.ToolsForServers(ctx, servers)
+			}
+		}
+		// Ordered after the built-in tools of whichever category they sit in.
+		toolGroups = append(toolGroups, tools.NewGroupTool(
+			g.Name, g.Description, g.Instructions, g.GetCategory(), 900+i, source))
+	}
+
 	registry := tools.SetupRegistry(tools.SetupConfig{
 		Cfg:           cfg,
 		CheckpointMgr: checkpointMgr,
@@ -639,6 +682,7 @@ func main() {
 		PlanManager:   planManager,
 		ToolCtx:       toolCtx,
 		MCPTools:      mcpMgr.Tools(),
+		ToolGroups:    toolGroups,
 		ProcRegistry:  procRegistry,
 	})
 

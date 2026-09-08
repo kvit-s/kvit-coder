@@ -27,6 +27,14 @@ type Manager struct {
 	mu      sync.Mutex
 	servers []*serverConn
 
+	// deferred names the servers that belong to a tool group. Connect skips
+	// them and ToolsForServers builds their adapters on demand; see
+	// deferred.go.
+	deferred map[string]bool
+	// lazy holds one on-demand client per deferred server, so two adapters for
+	// the same server share one connection and Close can reach it.
+	lazy map[string]*lazyClient
+
 	// What the last Connect cost, for the question in docs/redesign-mcp.md
 	// section 9: is per-turn reconnection worth building a daemon to avoid?
 	connectTook   time.Duration
@@ -119,6 +127,13 @@ func (m *Manager) Connect(ctx context.Context) error {
 			continue
 		}
 		seen[sc.Name] = true
+		if m.isDeferred(sc.Name) {
+			// Held back for a tool group: its tools are not advertised, so
+			// dialing it now would pay the spawn on every turn to describe
+			// something the model cannot see.
+			m.logger.Debug(fmt.Sprintf("mcp: server %q deferred to a tool group", sc.Name))
+			continue
+		}
 
 		sc := sc // capture
 		wg.Add(1)
@@ -282,11 +297,20 @@ func (m *Manager) Close() error {
 	m.mu.Lock()
 	servers := m.servers
 	m.servers = nil
+	lazy := m.lazy
+	m.lazy = nil
 	m.mu.Unlock()
 
 	for _, sv := range servers {
 		if err := sv.client.Close(); err != nil {
 			m.logger.Debug(fmt.Sprintf("mcp: error closing server %q: %v", sv.name, err))
+		}
+	}
+	// A deferred server that was never called never started, and closing it
+	// is a no-op.
+	for name, c := range lazy {
+		if err := c.Close(); err != nil {
+			m.logger.Debug(fmt.Sprintf("mcp: error closing server %q: %v", name, err))
 		}
 	}
 	return nil

@@ -91,6 +91,16 @@ and the tool's own file. Registered names use dotted namespaces: `Read`, `Edit`,
 `Batch`, `Question`, `Web.search`, `Web.fetch`, `Plan.*`, `Checkpoint.*`,
 `Tasks.*`, and `mcp.<server>.<tool>`.
 
+A **tool group** (`internal/tools/group.go`, configured under `tool_groups:`) is
+one registered tool standing in for a set of tools the model cannot see until it
+asks. Called with no arguments it returns the group's instructions and every
+member with its parameters; called with a name and arguments it runs that member.
+`Web.browsing` is the one group configured, and it holds Playwright's 24 browser
+tools: advertising them costs about 7,400 tokens of schema and 43 tools in every
+request, while behind the group the same configuration costs 20 tools and about
+3,400. Members are held, never registered, so they are absent from
+`Registry.Specs()` and from the system prompt.
+
 ## Things that will mislead you
 
 **`agent.profile` decides whether half of `internal/agent` runs.** `strong` is
@@ -104,6 +114,21 @@ before concluding a change there affects anything.
 **Tool specs are sorted deterministically on purpose.** The prompt prefix must
 stay byte-identical between requests so the server-side cache keeps hitting. Do
 not introduce map-iteration order into prompt generation.
+
+**A tool group's members arrive as a tool result, never by changing the tool
+specs.** The specs sit ahead of the whole conversation in the prompt cache, so
+adding tools mid-session invalidates every message after them — on a long
+conversation that costs far more than carrying the tools would have. Appending
+to the history is what the cache absorbs, and the result replays on later turns
+without being sent again. Do not "fix" this by registering a group's members
+when it is opened.
+
+**A server under a group is not dialed at startup.** `Manager.Defer` holds it
+back and `ToolsForServers` describes its tools from
+`~/.kvit-coder/mcp/tools-<hash>.json`, so opening a group starts nothing; the
+`lazyClient` in `internal/mcp/deferred.go` dials on the first real call. The
+cache key is the resolved command line, and it has a one-week time-to-live
+because a server launched as `@latest` changes its tools when it is updated.
 
 **`KVIT_RUN_ID` pins the backend.** The opencode.ai endpoint routes by the
 `x-opencode-session` header, so two agents running at once must not share a
