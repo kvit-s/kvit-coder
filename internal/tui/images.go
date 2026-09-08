@@ -1,12 +1,14 @@
 package tui
 
 import (
+	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/llm"
 )
@@ -74,15 +76,22 @@ func ExtractImageRefs(input string, exists func(string) bool) []string {
 }
 
 // cmdRunner runs an external clipboard helper. A variable (not a plain func)
-// so tests can stub it.
+// so tests can stub it. The default bounds every helper, so a hung reader
+// (a PowerShell cold start, a Wayland prompt) cannot freeze paste.
 var cmdRunner = func(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, name, args...).Output()
 }
+
+// wslDetect reports whether this process runs under WSL. A variable so tests
+// can drive the Windows fallback without Windows.
+var wslDetect = llm.IsWSL
 
 // ReadClipboardImage returns raw image bytes from the system clipboard, plus
 // a file extension for them. It probes the platform helpers in order —
-// Wayland, X11, then Windows via interop — and reports plainly when none has
-// an image, which is the common case over SSH.
+// Wayland, X11, then (on WSL) Windows via interop — and reports plainly when
+// none has an image, which is the common case over SSH.
 func ReadClipboardImage() (data []byte, ext string, err error) {
 	if out, err := cmdRunner("wl-paste", "--list-types"); err == nil {
 		for _, mime := range []string{"image/png", "image/jpeg"} {
@@ -96,12 +105,13 @@ func ReadClipboardImage() (data []byte, ext string, err error) {
 	if data, err := cmdRunner("xclip", "-selection", "clipboard", "-t", "image/png", "-o"); err == nil && isImageBytes(data) {
 		return data, ".png", nil
 	}
-	if data, err := readWindowsClipboardImage(); err == nil {
-		return data, ".png", nil
+	if wslDetect() {
+		if data, err := readWindowsClipboardImage(); err == nil {
+			return data, ".png", nil
+		}
 	}
 	return nil, "", fmt.Errorf("no image in clipboard (tried wl-paste, xclip, Windows clipboard)")
 }
-
 func mimeExt(mime string) string {
 	if mime == "image/jpeg" {
 		return ".jpg"
@@ -117,35 +127,79 @@ func isImageBytes(data []byte) bool {
 	return ct == "image/png" || ct == "image/jpeg" || ct == "image/gif"
 }
 
+// windowsImagePS prints the Windows clipboard image as one Base64 PNG line,
+// or nothing when the clipboard holds no image. The pixels travel over the
+// helper's stdout, so there is no temp file to map through /mnt and clean up.
+const windowsImagePS = "Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; " +
+	"$img=[System.Windows.Forms.Clipboard]::GetImage(); if($null -eq $img){exit 0}; " +
+	"$ms=New-Object System.IO.MemoryStream; $img.Save($ms,[System.Drawing.Imaging.ImageFormat]::Png); " +
+	"[Convert]::ToBase64String($ms.ToArray())"
+
+// maxClipboardPayload caps the Base64 payload decoded from the Windows
+// clipboard, so a hostile paste cannot grow the process without limit.
+const maxClipboardPayload = 64 << 20
+
+// windowsShells are the Windows shells reachable from WSL via interop, in
+// probe order.
+var windowsShells = []string{"powershell.exe", "pwsh.exe"}
+
 // readWindowsClipboardImage fetches the Windows clipboard image through
-// interop. Under WSL the Linux clipboard tools see only the Linux side, so
-// this shells out to powershell.exe: save the bitmap to a Windows temp file,
-// read it back through the /mnt mapping, and remove both copies.
+// interop. Under WSL the Linux clipboard tools see only the Linux side (and
+// the terminal never delivers image bytes on Ctrl+V at all), so the pixels
+// are pulled from Windows instead. Only called after the Linux helpers miss.
 func readWindowsClipboardImage() ([]byte, error) {
-	name := fmt.Sprintf("kvit-clipboard-%d.png", os.Getpid())
-	winTempOut, err := cmdRunner("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "$env:TEMP")
-	if err != nil {
-		return nil, err
+	for _, shell := range windowsShells {
+		out, err := cmdRunner(shell, "-NoProfile", "-NonInteractive", "-Command", windowsImagePS)
+		if err != nil {
+			continue // shell missing or failed: try the next one
+		}
+		if data, ok := decodeClipboardPayload(out); ok {
+			return data, nil
+		}
+		// Empty output means no image, not a broken shell: stop probing.
+		if len(trimSpace(out)) == 0 {
+			return nil, fmt.Errorf("no image in Windows clipboard")
+		}
 	}
-	winTemp := strings.TrimSpace(string(winTempOut)) + "\\" + name
-	save := fmt.Sprintf(
-		`Add-Type -AssemblyName System.Windows.Forms; `+
-			`$i=[System.Windows.Forms.Clipboard]::GetImage(); `+
-			`if($null -eq $i){exit 42}; `+
-			`$i.Save('%s','Png')`, winTemp)
-	if _, err := cmdRunner("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", save); err != nil {
-		return nil, err
+	return nil, fmt.Errorf("no image in Windows clipboard")
+}
+
+// decodeClipboardPayload turns the helper's stdout into image bytes:
+// surrounding whitespace (PowerShell line endings) is stripped, the rest
+// must be Base64 decoding to sniffable image bytes.
+func decodeClipboardPayload(out []byte) ([]byte, bool) {
+	compact := make([]byte, 0, len(out))
+	for _, b := range out {
+		if b != ' ' && b != '\t' && b != '\r' && b != '\n' {
+			compact = append(compact, b)
+		}
 	}
-	wslPath := llm.NormalizeImagePath(winTemp)
-	defer os.Remove(wslPath)
-	data, err := os.ReadFile(wslPath)
-	if err != nil {
-		return nil, err
+	if len(compact) == 0 || len(compact) > maxClipboardPayload {
+		return nil, false
 	}
-	if !isImageBytes(data) {
-		return nil, fmt.Errorf("clipboard did not yield an image")
+	data, err := base64.StdEncoding.DecodeString(string(compact))
+	if err != nil || len(data) == 0 {
+		return nil, false
 	}
-	return data, nil
+	if !isImageBytes(padForSniff(data)) {
+		return nil, false
+	}
+	return data, true
+}
+
+func trimSpace(b []byte) []byte {
+	return []byte(strings.TrimSpace(string(b)))
+}
+
+// padForSniff extends short payloads so DetectContentType can sniff them;
+// isImageBytes otherwise refuses anything under 512 bytes.
+func padForSniff(data []byte) []byte {
+	if len(data) >= 512 {
+		return data
+	}
+	padded := make([]byte, 512)
+	copy(padded, data)
+	return padded
 }
 
 // SaveClipboardTemp stores pasted bytes where the agent will find them. The
@@ -187,6 +241,5 @@ func StageClipboardImage() (string, error) {
 		os.Remove(path)
 		return "", fmt.Errorf("clipboard contents are %s, not an image", ct)
 	}
-	_ = filepath.Clean(path)
 	return path, nil
 }

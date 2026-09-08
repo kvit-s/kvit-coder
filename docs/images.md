@@ -281,13 +281,18 @@ three producers of the same phase-1 attachment:
    TUI before `runAgent`, or as a `:image foo.png` command alongside `:new`,
    `:switch`, `:sessions`. The stored input history stays text (paths), so the
    history file does not bloat.
-2. **True clipboard image** (Ctrl+V with pixels in the clipboard): a TUI
-   keybinding that shells out to `wl-paste --type image/png` (Wayland),
-   `xclip -selection clipboard -t image/png -o` (X11),
-   `osascript`/`pbpaste` (macOS), or PowerShell (Windows), saves the bytes to
-   the session's `inbox/` or `/tmp`, and attaches the saved file. Probe per OS
-   at keypress time and report "no image in clipboard" plainly — the common
-   case on a remote SSH session, where there is no clipboard to read.
+2. **True clipboard image**: an in-composer paste key that shells out to
+   `wl-paste --type image/png` (Wayland) or
+   `xclip -selection clipboard -t image/png -o` (X11), stages the bytes as a
+   temp file, and attaches it on submit. The key is **Alt+V**, not Ctrl+V:
+   terminals with a text-only paste action (Windows Terminal, the VS Code
+   terminal) intercept Ctrl+V before the app ever sees the keypress, so
+   Ctrl+V cannot be handled no matter what it is bound to — the same reason
+   krok uses Alt+V on Windows and WSL. Success and failure both leave a
+   one-line notice under the input, so a failed paste never reads as a dead
+   key. Probe per OS at keypress time and report "no image in clipboard"
+   plainly — the common case on a remote SSH session, where there is no
+   clipboard to read.
 3. Deliberately **not** OSC 52 / Kitty graphics-protocol inline paste:
    terminal support is spotty, and both end at "bytes the TUI must then save
    to a file anyway" — which is producer 2 with more escape sequences.
@@ -329,10 +334,13 @@ decode/resize is pure Go, and files under both the WSL filesystem and
   producer 2 as written reports "no image" on WSL even with an image copied.
   Fix by detecting WSL (`/proc/version` containing "microsoft", or
   `WSL_INTEROP`/`WSL_DISTRO_NAME` set) and shelling out to Windows instead:
-  `powershell.exe -NoProfile -Command` with `Get-Clipboard -Format Image`
-  saved to a Windows temp file, then pulled across via the `/mnt/c/...`
-  mapping (interop must be enabled; `powershell.exe` startup costs ~0.5–1s,
-  fine for an explicit paste keypress). When interop is off (SSH into the WSL
+  `powershell.exe` (falling back to `pwsh.exe`) runs a one-liner that prints
+  the clipboard bitmap as one Base64 PNG line on stdout; the Linux side
+  strips whitespace, decodes, MIME-sniffs, and stages it like any other
+  paste. Pixels over stdout means no temp file to map through `/mnt/c/...`
+  and clean up — the mapping's absence was the previous implementation's
+  failure mode. (Interop must be enabled; the ~0.5s PowerShell cold start is
+  fine for an explicit paste keypress.) When interop is off (SSH into the WSL
   box, interop disabled) fall back to the plain "no image in clipboard"
   message. Keep the Windows call behind a mockable exec helper so `go test`
   covers path conversion and fallback without a Windows clipboard.

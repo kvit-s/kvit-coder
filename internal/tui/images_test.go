@@ -49,6 +49,9 @@ func TestSplitImageFieldsQuotes(t *testing.T) {
 func TestReadClipboardImageNone(t *testing.T) {
 	old := cmdRunner
 	defer func() { cmdRunner = old }()
+	oldWSL := wslDetect
+	defer func() { wslDetect = oldWSL }()
+	wslDetect = func() bool { return true }
 	cmdRunner = func(string, ...string) ([]byte, error) {
 		return nil, errors.New("no such helper")
 	}
@@ -96,5 +99,57 @@ func TestStageClipboardImageRejectsText(t *testing.T) {
 	// Windows branch runs powershell which also fails here.
 	if _, err := StageClipboardImage(); err == nil {
 		t.Error("expected an error for non-image clipboard")
+	}
+}
+
+func TestReadWindowsClipboardImageBase64(t *testing.T) {
+	old := cmdRunner
+	defer func() { cmdRunner = old }()
+	oldWSL := wslDetect
+	defer func() { wslDetect = oldWSL }()
+	wslDetect = func() bool { return true }
+	// 1x1 PNG with PowerShell-style CRLF around the payload.
+	const tinyB64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+	cmdRunner = func(name string, args ...string) ([]byte, error) {
+		if name != "powershell.exe" {
+			return nil, errors.New("no such helper")
+		}
+		return []byte(tinyB64 + "\r\n"), nil
+	}
+	data, ext, err := ReadClipboardImage()
+	if err != nil {
+		t.Fatalf("clipboard: %v", err)
+	}
+	if ext != ".png" {
+		t.Errorf("ext = %q, want .png", ext)
+	}
+	if len(data) < 8 || string(data[:8]) != "\x89PNG\r\n\x1a\n" {
+		t.Errorf("not a PNG: % x", data[:8])
+	}
+}
+
+func TestReadWindowsClipboardImageEmpty(t *testing.T) {
+	old := cmdRunner
+	defer func() { cmdRunner = old }()
+	oldWSL := wslDetect
+	defer func() { wslDetect = oldWSL }()
+	wslDetect = func() bool { return true }
+	cmdRunner = func(name string, args ...string) ([]byte, error) {
+		if name != "powershell.exe" && name != "pwsh.exe" {
+			return nil, errors.New("no such helper")
+		}
+		return []byte("\r\n"), nil // no image: helper prints nothing
+	}
+	if _, _, err := ReadClipboardImage(); err == nil {
+		t.Error("expected an error for an empty clipboard")
+	}
+}
+
+func TestDecodeClipboardPayloadRejectsText(t *testing.T) {
+	if _, ok := decodeClipboardPayload([]byte("hello world")); ok {
+		t.Error("plain text decoded as an image")
+	}
+	if _, ok := decodeClipboardPayload([]byte("")); ok {
+		t.Error("empty payload decoded as an image")
 	}
 }

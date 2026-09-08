@@ -1,7 +1,9 @@
 package ui
 
 import (
+	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"unicode"
 
@@ -26,6 +28,42 @@ type InputModel struct {
 	quitting      bool
 	lastValueLen  int // Track previous value length to detect paste
 	viewportStart int // Track which line is at the top of the viewport
+	// onImagePaste stages a clipboard image and returns its staged path.
+	// Nil when the host offers no image paste (set by the driver; the model
+	// itself never touches the clipboard).
+	onImagePaste func() (string, error)
+	// pastedImages are clipboard images staged by the paste key this session.
+	pastedImages []string
+	// pasteNotice is the one-line outcome of the last paste attempt, shown
+	// under the input so a failed paste is visible, not silent.
+	pasteNotice string
+}
+
+// SetImagePasteHandler installs the clipboard-image stager behind the paste
+// key. Passing nil disables image paste.
+func (m *InputModel) SetImagePasteHandler(fn func() (string, error)) {
+	m.onImagePaste = fn
+}
+
+// PastedImages returns the clipboard images staged by the paste key.
+func (m InputModel) PastedImages() []string {
+	return append([]string(nil), m.pastedImages...)
+}
+
+// pasteImage stages one clipboard image behind the paste key. Success and
+// failure both leave a one-line notice: a paste that fails silently reads as
+// a broken key, which is the report that started this.
+func (m *InputModel) pasteImage() {
+	if m.onImagePaste == nil {
+		return
+	}
+	path, err := m.onImagePaste()
+	if err != nil {
+		m.pasteNotice = "paste: " + err.Error()
+		return
+	}
+	m.pastedImages = append(m.pastedImages, path)
+	m.pasteNotice = fmt.Sprintf("staged image %d: %s (attaches on submit)", len(m.pastedImages), filepath.Base(path))
 }
 
 // adjustHeight adjusts the textarea height to fit content, up to maxHeight.
@@ -175,7 +213,7 @@ func repeatSpaces(n int) []rune {
 func NewInputModel(prompt string, history []string) InputModel {
 	ta := textarea.New()
 	ta.Prompt = "" // We'll show the prompt separately
-	ta.Placeholder = "(Ctrl+J for newline, Enter to submit)"
+	ta.Placeholder = "(Enter to submit, Ctrl+J newline, Alt+V paste image)"
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0 // No limit
 
@@ -324,11 +362,23 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 
+		// Paste a clipboard image as a staged attachment. Alt+V is the
+		// escape hatch for terminals that intercept Ctrl+V with a text-only
+		// paste (Windows Terminal, the VS Code terminal on WSL): Ctrl+V
+		// never arrives as a keypress there, so it cannot be handled here.
+		case "alt+v":
+			if m.onImagePaste != nil {
+				m.pasteImage()
+				return m, nil
+			}
+			// No handler: let the textarea see the key.
+
 		case "esc":
 			// ESC just clears the current input, doesn't exit
 			m.textarea.SetValue("")
 			m.adjustHeight()
 			m.viewportStart = 0
+			m.pasteNotice = ""
 			return m, nil
 		}
 	}
@@ -444,7 +494,11 @@ func (m InputModel) View() string {
 
 	// Simplified view without borders for better performance
 	// Just show prompt and textarea with scroll indicator
-	return m.prompt + scrollInfo + "\n" + m.textarea.View()
+	out := m.prompt + scrollInfo + "\n" + m.textarea.View()
+	if m.pasteNotice != "" {
+		out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(m.pasteNotice)
+	}
+	return out
 }
 
 // formatScrollInfo creates a compact scroll indicator

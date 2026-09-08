@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 
@@ -103,7 +104,7 @@ func (u *UI) Run() error {
 	fmt.Println()
 
 	for {
-		input, shouldExit, err := u.readInput()
+		input, composerImages, shouldExit, err := u.readInput()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\033[31m[error] Input error: %v\033[0m\n", err)
 			break
@@ -112,7 +113,7 @@ func (u *UI) Run() error {
 			break
 		}
 
-		if input == "" {
+		if input == "" && len(composerImages) == 0 {
 			continue
 		}
 
@@ -129,30 +130,39 @@ func (u *UI) Run() error {
 			continue
 		}
 
-		// Run agent with the prompt
+		// Images staged in the composer (Alt+V) join the staged and @path
+		// ones; takeImages consumes and clears them for this turn.
+		u.pendingImages = append(u.pendingImages, composerImages...)
 		u.runAgent(input, u.takeImages(input))
 	}
 
 	return nil
 }
 
-// readInput reads user input using the BubbleTea-based input model
-func (u *UI) readInput() (string, bool, error) {
+// readInput reads user input using the BubbleTea-based input model. It also
+// returns the clipboard images staged by the paste key (Alt+V) in the
+// composer; the caller merges them with the staged and @path ones.
+func (u *UI) readInput() (string, []string, bool, error) {
 	promptText := u.buildPromptText()
 
 	// Create and run input model
 	inputModel := ui.NewInputModel(promptText, u.history)
+	// Alt+V would type √ on macOS, so the paste key is offered everywhere
+	// except darwin — same exclusion krok uses for its Alt+V escape hatch.
+	if runtime.GOOS != "darwin" {
+		inputModel.SetImagePasteHandler(StageClipboardImage)
+	}
 	p := tea.NewProgram(inputModel)
 	result, err := p.Run()
 
 	if err != nil {
-		return "", false, err
+		return "", nil, false, err
 	}
 
 	// Get the result
 	finalModel := result.(ui.InputModel)
 	if finalModel.Cancelled() || !finalModel.Submitted() {
-		return "", true, nil // User cancelled (Ctrl+C)
+		return "", nil, true, nil // User cancelled (Ctrl+C)
 	}
 
 	input := strings.TrimSpace(finalModel.Value())
@@ -167,7 +177,7 @@ func (u *UI) readInput() (string, bool, error) {
 	}
 	fmt.Println()
 
-	return input, false, nil
+	return input, finalModel.PastedImages(), false, nil
 }
 
 // buildPromptText builds the prompt text with session info
@@ -362,7 +372,9 @@ func (u *UI) showHelp() {
 	fmt.Println("  :paste            Stage the clipboard image for the next turn")
 	fmt.Println()
 	fmt.Println("Enter any other text to send as a prompt to the agent.")
-	fmt.Println("Mention an image as @path/to/shot.png (or drag-drop it) to attach it.")
+	fmt.Println("Attach images: Alt+V pastes the clipboard image, @path/to/shot.png")
+	fmt.Println("(or drag-drop it) attaches a file. Ctrl+V cannot carry images: the")
+	fmt.Println("terminal intercepts it before the app ever sees the keypress.")
 	fmt.Println()
 }
 
