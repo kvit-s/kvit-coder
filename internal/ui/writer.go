@@ -814,14 +814,18 @@ func (w *Writer) ToolCall(name, argsDisplay, context string) {
 // progressLine accumulates the current progress output
 var progressLine string
 
-// progressDotCount tracks dots on current line (for wrapping after 60 dots = 1 minute)
+// progressDotCount tracks dots since the last star (a minute of dots folds
+// into one "*" so a long wait stays on a single redrawn row instead of
+// stacking bullet-led lines that read as model thinking).
 var progressDotCount int
 
 // progressHeld records that an update was dropped because a question was
 // waiting for an answer, so the row is started over once it has been answered.
 var progressHeld bool
 
-// maxDotsPerLine is the maximum number of dots before wrapping to a new line
+// maxDotsPerLine is how many dots (one per second) fold into one "*".
+// A star is a minute, so a ten-minute tool reads as "**********" plus the
+// current minute's dots on one row rather than ten bullet-led lines.
 const maxDotsPerLine = 60
 
 // progressTarget says where a progress indicator should be drawn, and whether
@@ -907,25 +911,26 @@ func (w *Writer) ToolProgress(dot string) {
 		return
 	}
 
-	// A step starts silently: the bullet-led header (Thinking) carries the
-	// status, so a fast turn with no dots prints only that header and no
-	// blank progress line of its own. Dots appear only while waiting.
+	// A wait starts bare: the row is dots and stars only, never bullet-led,
+	// so a tool wait under its gray call line cannot read as model thinking.
+	// "●" is reserved for Thinking step headers. The "● "/"✨ " arguments are
+	// legacy start markers from the caller (see callLLM); both just reset.
 	if strings.HasPrefix(dot, "✨") || strings.HasPrefix(dot, stepBullet) {
-		progressLine = stepBullet + " "
+		progressLine = ""
 		progressDotCount = 0
 		return
 	}
 
-	// Track dot count for line wrapping
+	// A finished minute folds into one "*": the row stays a single redrawn
+	// line ("*..", then "**..") instead of stacking new lines whose leading
+	// "●" reads as model thinking.
+	collapsed := false
 	if dot == "." {
 		progressDotCount++
-		// Wrap to new line after maxDotsPerLine dots (1 minute)
 		if progressDotCount > maxDotsPerLine {
-			if draw {
-				drawProgress(out, "\r"+progressLine+"\n")
-			}
-			progressLine = stepBullet + " " // Start new line with bullet
-			progressDotCount = 1            // Reset counter (this dot counts)
+			progressLine = collapseProgressDots(progressLine)
+			progressDotCount = 1 // this dot starts the next minute
+			collapsed = true
 		}
 	}
 
@@ -934,8 +939,30 @@ func (w *Writer) ToolProgress(dot string) {
 	if !draw {
 		return
 	}
-	drawProgress(out, "\r"+progressLine)
+
+	if collapsed {
+		// The row just shrank by ~59 cells, so clear to end of line or
+		// the old dots linger past the star.
+		drawProgress(out, "\r"+progressLine+"\033[K")
+	} else {
+		drawProgress(out, "\r"+progressLine)
+	}
 	drawProgress(out, "\n\033[1A") // Newline (flush) + move up
+}
+
+// collapseProgressDots folds the trailing minute of dots in s into one "*".
+// Any legacy "● "/"✨ " prefix is stripped, never kept: no wait row starts
+// with a bullet.
+func collapseProgressDots(s string) string {
+	body := s
+	body = strings.TrimPrefix(body, stepBullet+" ")
+	body = strings.TrimPrefix(body, "✨ ")
+	if len(body) >= maxDotsPerLine {
+		body = body[:len(body)-maxDotsPerLine] + "*"
+	} else {
+		body += "*"
+	}
+	return body
 }
 
 // ToolResult finishes a tool line. A slow tool keeps its "...2s" duration in

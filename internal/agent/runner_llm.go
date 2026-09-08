@@ -20,6 +20,8 @@ const slowRequestNotice = 90 * time.Second
 // It returns the response and metadata about what action to take next.
 func (r *Runner) callLLM(ctx context.Context, state *runState) (*llmCallResult, error) {
 	// Silent until the first dot: a fast turn prints only its step header.
+	// The marker only resets the row; the row itself stays bare (no bullet,
+	// which is reserved for Thinking step headers).
 	r.writer.ToolProgress("● ")
 
 	startTime := time.Now()

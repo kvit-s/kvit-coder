@@ -165,22 +165,79 @@ func TestProgressFinalLineIsDrawnOnce(t *testing.T) {
 	}
 }
 
-// TestProgressWrapsAfterAMinute: a command running for minutes must not push a
-// single line off the side of the terminal.
-func TestProgressWrapsAfterAMinute(t *testing.T) {
+// TestProgressFoldsMinuteIntoStar: a command running for minutes stays on one
+// redrawn row. A finished minute of dots folds into "*", so the row never
+// stacks new lines. The row is bare dots and stars: no leading "●", which is
+// reserved for Thinking step headers and reads as model thinking on a wait.
+func TestProgressFoldsMinuteIntoStar(t *testing.T) {
 	w, buf := newProgressWriter(true)
 
 	w.ToolProgress("✨ ")
-	for range maxDotsPerLine + 2 {
+	for range maxDotsPerLine {
+		w.ToolProgress(".")
+	}
+	if strings.Contains(progressLine, "*") {
+		t.Fatalf("a single minute of dots folded early: %q", progressLine)
+	}
+	w.ToolProgress(".")
+	w.ToolProgress(".")
+
+	if progressLine != "*.." {
+		t.Errorf("folded row = %q, want %q (one star, current dots, no bullet)", progressLine, "*..")
+	}
+	if strings.Contains(progressLine, "●") {
+		t.Errorf("wait row %q starts with a thinking bullet", progressLine)
+	}
+	if progressDotCount != 2 {
+		t.Errorf("the dot counter is %d, want 2 for the dots after the star", progressDotCount)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "*") {
+		t.Errorf("the drawn row never showed its star: %q", out)
+	}
+	if !strings.Contains(out, "\033[K") {
+		t.Errorf("the shrinking redraw did not clear to end of line: %q", out)
+	}
+	// Every newline the indicator draws is its "\n\033[1A" flush-and-return;
+	// a bare "\n" would be a second stacked line (the old wrap).
+	if n, flushed := strings.Count(out, "\n"), strings.Count(out, "\n\033[1A"); n != flushed {
+		t.Errorf("the row stacked a second line: %d newlines but %d flush-and-returns in %q", n, flushed, out)
+	}
+}
+
+// TestToolProgressFoldKeepsNoBullet: a tool wait is bare dots and stars —
+// that was the shape that printed "● ..." under a Shell line and read as a
+// thinking step.
+func TestToolProgressFoldKeepsNoBullet(t *testing.T) {
+	w, _ := newProgressWriter(true)
+
+	for range maxDotsPerLine + 1 {
 		w.ToolProgress(".")
 	}
 
-	if !strings.Contains(buf.String(), "\n") {
-		t.Errorf("progress never wrapped after %d dots", maxDotsPerLine)
+	if progressLine != "*." {
+		t.Errorf("folded tool row = %q, want %q (star, dots, no bullet)", progressLine, "*.")
 	}
-	if progressDotCount > maxDotsPerLine {
-		t.Errorf("the dot counter is %d, want it reset by the wrap", progressDotCount)
+	if strings.Contains(progressLine, "●") {
+		t.Errorf("folding added a bullet to a tool row: %q", progressLine)
 	}
+	_ = w
+}
+
+// TestProgressSecondMinuteAddsSecondStar: each finished minute adds one more
+// star, so a long wait reads as elapsed minutes plus current dots.
+func TestProgressSecondMinuteAddsSecondStar(t *testing.T) {
+	w, _ := newProgressWriter(true)
+
+	w.ToolProgress("● ")
+	for range 2*maxDotsPerLine + 2 {
+		w.ToolProgress(".")
+	}
+
+	if progressLine != "**.." {
+		t.Errorf("two-minute row = %q, want %q", progressLine, "**..")
+	}
+	_ = w
 }
 
 // TestThinkingStepHeader is the codex-style step line: bullet, brownish
