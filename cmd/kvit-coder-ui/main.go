@@ -60,10 +60,10 @@ func main() {
 			if len(sessions) == 0 {
 				fmt.Println("No sessions found.")
 			} else {
-				fmt.Printf("%-30s  %-20s  %s\n", "NAME", "MODIFIED", "MESSAGES")
-				fmt.Println("────────────────────────────────────────────────────────────")
+				fmt.Printf("%-30s  %-20s  %-8s  %s\n", "NAME", "MODIFIED", "MESSAGES", "TITLE")
+				fmt.Println("────────────────────────────────────────────────────────────────────────────────")
 				for _, s := range sessions {
-					fmt.Printf("%-30s  %-20s  %d\n", s.Name, s.ModTime.Format("2006-01-02 15:04"), s.MessageCount)
+					fmt.Printf("%-30s  %-20s  %-8d  %s\n", s.Name, s.ModTime.Format("2006-01-02 15:04"), s.MessageCount, s.Title)
 				}
 			}
 			return

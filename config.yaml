@@ -11,6 +11,12 @@
 # that model, or profile: strong to skip it; empty inherits agent.profile
 # below. Switching models with :mN takes the new entry's profile from the
 # next turn on.
+# One entry may set summarizer: true to generate session titles: at the
+# start of a session the agent asks that model for a 3-6 word summary of the
+# first prompt and stores it as the session title (meta.json). The title call
+# runs at the entry's cheapest effort level and never affects model switching.
+# When no entry sets it, or the call fails, the title is the prompt's first
+# 5 words.
 models:
   - id: "spark-go"
     name: "Muse Spark 1.3 Go"

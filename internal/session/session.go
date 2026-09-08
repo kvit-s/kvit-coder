@@ -107,9 +107,15 @@ type Meta struct {
 	Workspace   string    `json:"workspace,omitempty"`
 	Model       string    `json:"model,omitempty"`
 	FirstPrompt string    `json:"first_prompt,omitempty"`
-	Summary     string    `json:"summary,omitempty"`
-	Parent      string    `json:"parent,omitempty"`
-	SucceededBy string    `json:"succeeded_by,omitempty"`
+	// Title is the session's display title: a 3-6 word summary of the
+	// first prompt from the summarizer model, or the prompt's first
+	// words when no summarizer is configured or its call fails. Set once
+	// at the start of a session (see internal/repl/title.go) and left
+	// alone afterwards; Name stays the YYYY-MM-DD-random6 directory label.
+	Title       string `json:"title,omitempty"`
+	Summary     string `json:"summary,omitempty"`
+	Parent      string `json:"parent,omitempty"`
+	SucceededBy string `json:"succeeded_by,omitempty"`
 }
 
 // Session is one open session directory.

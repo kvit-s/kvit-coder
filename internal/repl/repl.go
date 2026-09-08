@@ -62,6 +62,8 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 		if !quietMode && !session.FromUI() {
 			if isNewSession {
 				fmt.Fprintf(os.Stderr, "Starting new session: %s\n\n", sessionName)
+			} else if title := strings.TrimSpace(sess.Meta().Title); title != "" {
+				fmt.Fprintf(os.Stderr, "Continuing session: %s — %s (%d messages)\n\n", sessionName, title, len(previous))
 			} else {
 				fmt.Fprintf(os.Stderr, "Continuing session: %s (%d messages)\n\n", sessionName, len(previous))
 			}
@@ -108,6 +110,14 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 		meta.Model = cfg.ModelDisplay()
 		if meta.FirstPrompt == "" && haveUserMsg {
 			meta.FirstPrompt = promptText
+		}
+		// The title is set once, on the first titled turn: a 3-6 word
+		// summary from the summarizer model, or the prompt's first words
+		// when none is configured or its call fails. It lands in the same
+		// SaveMeta below, so a crashed first turn still leaves a titled
+		// session behind.
+		if title := EnsureSessionTitle(ctx, cfg, sess, promptText, haveUserMsg, writer); title != "" {
+			writer.Debug(fmt.Sprintf("Session title: %s", title))
 		}
 
 		if err := sess.SaveMeta(); err != nil {

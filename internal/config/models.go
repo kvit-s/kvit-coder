@@ -80,6 +80,13 @@ type ModelEntry struct {
 	// interrogation, prose scraping, empty-answer retries, interpreter
 	// one-liner rules); a strong one skips it.
 	Profile string `yaml:"profile"`
+
+	// Summarizer marks the entry used to generate session titles: a short
+	// 3-6 word summary of the first prompt, stored in meta.json. At most
+	// one entry may set it; when none does (or the call fails) the title
+	// falls back to the first words of the prompt. It never affects model
+	// switching — see SummarizerEntry.
+	Summarizer bool `yaml:"summarizer"`
 }
 
 // IsStrongProfile reports whether a profile value selects the strong
@@ -143,6 +150,21 @@ func (c *Config) DefaultModelIndex() int {
 		}
 	}
 	return 0
+}
+
+// SummarizerEntry returns the catalog row flagged `summarizer: true` for
+// session-title generation. It reports false when `models:` is absent (a
+// legacy single-model config has nowhere to flag) or when no entry sets
+// the flag, in which case the caller falls back to the prompt's first
+// words. Validation guarantees at most one entry sets it, so the first
+// match is the only match.
+func (c *Config) SummarizerEntry() (ModelEntry, bool) {
+	for _, e := range c.Models {
+		if e.Summarizer {
+			return e, true
+		}
+	}
+	return ModelEntry{}, false
 }
 
 // ResolveModel finds a catalog row by 1-based index ("1"), id, display name,
@@ -403,8 +425,8 @@ func ParseIndexedCommand(cmd string) (kind byte, n int, ok bool) {
 }
 
 // validateModels checks the `models:` catalog at load: unknown backends or
-// effort values, duplicate or empty ids, an unresolvable default_model, and
-// more than one default effort per entry. Effort values are lowercased in
+// effort values, duplicate or empty ids, an unresolvable default_model, more
+// than one summarizer entry, and more than one default effort per entry. Effort values are lowercased in
 // place so later comparisons stay simple. A nil catalog (legacy single-model
 // config) is valid.
 func (c *Config) validateModels(configPath string) error {
@@ -475,6 +497,15 @@ func (c *Config) validateModels(configPath string) error {
 		if defaults > 1 {
 			return fmt.Errorf("%s (%s): more than one default effort", where, e.ID)
 		}
+	}
+	summarizers := 0
+	for _, e := range c.Models {
+		if e.Summarizer {
+			summarizers++
+		}
+	}
+	if summarizers > 1 {
+		return fmt.Errorf("%s: more than one models entry sets summarizer: true (only one may)", configPath)
 	}
 	if c.DefaultEffortValue != "" && !IsCanonicalEffort(c.DefaultEffortValue) {
 		return fmt.Errorf("%s: unknown default_effort %q; use one of: %s",

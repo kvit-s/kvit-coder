@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -27,6 +28,10 @@ type SessionInfo struct {
 	Name         string
 	ModTime      time.Time
 	MessageCount int
+	// Title is the session's display title from meta.json ("" when the
+	// session predates titles or has none yet). Name stays the
+	// YYYY-MM-DD-random6 directory label.
+	Title string
 }
 
 // NewManager creates a new session manager.
@@ -155,6 +160,7 @@ func (m *Manager) ListSessions() ([]SessionInfo, error) {
 			Name:         name,
 			ModTime:      info.ModTime(),
 			MessageCount: msgCount,
+			Title:        m.readMetaTitle(name),
 		})
 	}
 
@@ -164,6 +170,22 @@ func (m *Manager) ListSessions() ([]SessionInfo, error) {
 	})
 
 	return sessions, nil
+}
+
+// readMetaTitle returns the session's display title from its meta.json,
+// or "" when there is none (a flat-file session from before sessions were
+// directories, a missing or corrupt meta.json, or a session that predates
+// titles). It never creates or migrates anything: listing must stay read-only.
+func (m *Manager) readMetaTitle(name string) string {
+	data, err := os.ReadFile(filepath.Join(m.baseDir, name, metaFile))
+	if err != nil {
+		return ""
+	}
+	var meta Meta
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return ""
+	}
+	return meta.Title
 }
 
 // MostRecent returns the name of the session touched last, or "" when there
@@ -209,6 +231,9 @@ func (m *Manager) ShowSession(name string) (string, error) {
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("Session: %s (%d messages)\n", name, len(messages)))
+	if title := m.readMetaTitle(name); title != "" {
+		sb.WriteString(fmt.Sprintf("Title: %s\n", title))
+	}
 	sb.WriteString(strings.Repeat("─", 50) + "\n\n")
 
 	for _, msg := range messages {
