@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/fatih/color"
+
+	"github.com/kvit-s/kvit-coder/internal/markdown"
 	"github.com/kvit-s/kvit-coder/internal/tools"
 )
 
@@ -83,6 +85,14 @@ type Writer struct {
 	// stderrTTY overrides the check for whether stderr can be redrawn in
 	// place. Tests set it; nil means work it out from the file itself.
 	stderrTTY *bool
+	// stdoutTTY overrides the check for whether the final answer goes to
+	// a terminal. Tests set it; nil means work it out from the file
+	// itself. It only matters for markdown rendering (see
+	// shouldRenderMarkdown); the answer itself always goes to stdout.
+	stdoutTTY *bool
+	// markdownMode selects when the final answer is styled as markdown
+	// (see the markdown package). The zero value is auto.
+	markdownMode markdown.Mode
 	// awaitingAnswer, when set, reports whether a question is on screen
 	// waiting for someone to type an answer. No progress is drawn while one
 	// is.
@@ -101,6 +111,20 @@ func (w *Writer) SetPromptWatcher(fn func() bool) {
 // in place, so a test can exercise both paths without a pseudo-terminal.
 func (w *Writer) SetStderrIsTerminal(isTTY bool) {
 	w.stderrTTY = &isTTY
+}
+
+// SetStdoutIsTerminal overrides the detection of whether the final answer
+// goes to a terminal, so a test can exercise the styled and raw markdown
+// paths without a pseudo-terminal.
+func (w *Writer) SetStdoutIsTerminal(isTTY bool) {
+	w.stdoutTTY = &isTTY
+}
+
+// SetMarkdownMode selects when the final answer is styled as markdown:
+// "auto" (the default), "always", or "never". Empty and unknown values
+// are auto.
+func (w *Writer) SetMarkdownMode(mode string) {
+	w.markdownMode = markdown.ParseMode(mode)
 }
 
 // NewWriter creates a new Writer with the specified verbosity level.
@@ -505,18 +529,78 @@ func (w *Writer) Tool(name, msg string) {
 // Assistant prints an assistant message in white.
 // In headless mode, this goes to stdout (the final answer).
 // In JSON mode, it stores the content to be output later with WriteJSONOutput.
+//
+// The message is markdown, and on a terminal it is styled as such (headings,
+// lists, code, tables) instead of printed verbatim. Piped output, JSON mode,
+// and NO_COLOR/TERM=dumb stay raw markdown, so scripts and logs see exactly
+// what the model wrote. Rendering never fails the turn: on any error the raw
+// message goes through.
 func (w *Writer) Assistant(msg string) {
 	if w.jsonMode {
 		// Store content for later JSON output
 		jsonContent = msg
 		return
 	}
+
+	display := msg
+	if w.shouldRenderMarkdown(msg) {
+		if styled := markdown.Render(msg, termWidth()); styled != msg {
+			display = strings.TrimRight(styled, "\n")
+		}
+	}
+
 	if w.headless {
 		// Plain text final answer to stdout
-		fmt.Fprintf(w.stdout, "%s\n", msg)
+		fmt.Fprintf(w.stdout, "%s\n", display)
+	} else if display != msg {
+		// Already styled; the white wrapper would only reset it.
+		fmt.Fprintf(color.Output, "%s\n\n", display)
 	} else {
 		whiteColor.Printf("%s\n\n", msg)
 	}
+}
+
+// shouldRenderMarkdown reports whether the final answer should be styled.
+// JSON mode never styles (the raw markdown rides in the JSON document).
+// Otherwise the ui.markdown mode decides: never means raw, always means
+// styled subject to the standard opt-outs, and auto (the default) means
+// styled only when the answer goes to a terminal.
+func (w *Writer) shouldRenderMarkdown(msg string) bool {
+	if msg == "" || w.jsonMode {
+		return false
+	}
+	if w.markdownMode == markdown.ModeNever {
+		return false
+	}
+	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	if w.markdownMode == markdown.ModeAlways {
+		return true
+	}
+	return w.answerTTY()
+}
+
+// answerTTY reports whether the final answer stream is a terminal. Headless
+// answers go to w.stdout; interactive ones go through the color package's
+// output. A test override wins over either.
+func (w *Writer) answerTTY() bool {
+	if w.stdoutTTY != nil {
+		return *w.stdoutTTY
+	}
+	out := w.stdout
+	if !w.headless {
+		out = color.Output
+		if out == nil {
+			out = os.Stdout
+		}
+	}
+	if f, ok := out.(*os.File); ok {
+		if info, err := f.Stat(); err == nil {
+			return info.Mode()&os.ModeCharDevice != 0
+		}
+	}
+	return false
 }
 
 // Divider separates the step progress from the final report. It carries the

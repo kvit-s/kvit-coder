@@ -80,6 +80,11 @@ tools:
 ./kvit-coder-ui
 ```
 
+On a terminal the final answer is rendered as styled markdown (headings,
+lists, code, tables) instead of printed verbatim. Piped output and `--json`
+stay raw markdown, as do `NO_COLOR` and `TERM=dumb` runs; `ui.markdown` in
+`config.yaml` (`auto` by default, or `always` / `never`) overrides this.
+
 ## Architecture
 
 **One process per turn.** `kvit-coder` starts, reads the session from disk, runs

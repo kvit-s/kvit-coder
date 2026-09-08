@@ -223,6 +223,10 @@ func main() {
 	// Set verbose level from config
 	writer.SetVerbose(cfg.LLM.Verbose)
 
+	// Style the final answer as markdown on a terminal (auto by default;
+	// piped output and --json stay raw markdown).
+	writer.SetMarkdownMode(cfg.UI.Markdown)
+
 	// Handle --benchmark-list early
 	if *benchmarkList {
 		if err := benchmark.ListBenchmarks(cfg); err != nil {

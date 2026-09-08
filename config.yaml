@@ -205,3 +205,9 @@ diagnostics:
   interrogate_max_per_task: 3         # Hard cap on interrogations per task
   interrogate_log_dir: "benchmarks/.kvit-coder-benchmark/interrogations"  # JSONL episode logs
   interrogate_then_inject: false      # Reserved for the later recovery variant (no-op in v1)
+
+# Final-answer output styling
+ui:
+  markdown: auto  # auto | always | never. auto styles markdown only on a
+                  # terminal; piped output and --json stay raw markdown, and
+                  # NO_COLOR or TERM=dumb disables styling.

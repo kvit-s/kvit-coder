@@ -82,6 +82,17 @@ type Config struct {
 	Thinkbench ThinkbenchConfig `yaml:"thinkbench"`
 
 	MCP MCPConfig `yaml:"mcp"`
+
+	UI UIConfig `yaml:"ui"`
+}
+
+// UIConfig controls terminal output styling.
+type UIConfig struct {
+	// Markdown selects when the final answer is styled as markdown:
+	// "auto" (the default), "always", or "never". Auto styles only on a
+	// terminal; piped output and --json stay raw markdown. Empty and
+	// unknown values are auto.
+	Markdown string `yaml:"markdown"`
 }
 
 // AgentConfig configures the agent loop and startup instruction sources.
