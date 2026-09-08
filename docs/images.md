@@ -300,6 +300,35 @@ Display: echo a summary line under the submitted prompt
 (`[image 1: foo.png (800x600, 120KB)]`), mirroring how the submitted text is
 echoed with its gray background today.
 
+### 5.3 WSL: phase 1 works, clipboard needs a Windows-side branch
+
+Phase 1 needs nothing WSL-specific: the binary is a Linux binary, image
+decode/resize is pure Go, and files under both the WSL filesystem and
+`/mnt/c/...` read through ordinary syscalls. Two WSL-only gaps sit in phase 2:
+
+- **Windows paths.** Drag-drop from Windows Terminal inserts a Windows path
+  (`C:\Users\...\shot.png`, quoted, backslashes) or a `file://` URL, which
+  `NormalizeAndValidatePath` (`internal/tools/path_utils.go:11`) does not
+  understand — under Linux semantics `C:\...` is a relative path and gets
+  joined onto the workspace root. Fix with a small normalizer before that
+  function: strip quotes, accept `file://`, detect `^[A-Za-z]:[\\/]`, and
+  convert via `wslpath -u` with a manual `/mnt/<lower>/...` fallback. Pure
+  string work, unit-testable without WSL.
+- **Clipboard images live on the Windows side.** `wl-paste`/`xclip` (under
+  WSLg, when `WAYLAND_DISPLAY`/`DISPLAY` is even set) see the Linux-side
+  clipboard, not the Windows one, and Windows Terminal does not forward image
+  bytes over the pty on Ctrl+V — the TUI never receives pixels either way. So
+  producer 2 as written reports "no image" on WSL even with an image copied.
+  Fix by detecting WSL (`/proc/version` containing "microsoft", or
+  `WSL_INTEROP`/`WSL_DISTRO_NAME` set) and shelling out to Windows instead:
+  `powershell.exe -NoProfile -Command` with `Get-Clipboard -Format Image`
+  saved to a Windows temp file, then pulled across via the `/mnt/c/...`
+  mapping (interop must be enabled; `powershell.exe` startup costs ~0.5–1s,
+  fine for an explicit paste keypress). When interop is off (SSH into the WSL
+  box, interop disabled) fall back to the plain "no image in clipboard"
+  message. Keep the Windows call behind a mockable exec helper so `go test`
+  covers path conversion and fallback without a Windows clipboard.
+
 ## 6. What this costs and what it does not disturb
 
 - **Prompt cache**: one new cache prefix per image turn (unavoidable); text
