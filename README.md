@@ -65,7 +65,8 @@ workspace:
   root: "."
 
 agent:
-  profile: strong             # "weak" enables the local-model compensation
+  profile: strong             # "weak" enables the local-model compensation;
+                             # a models: entry may override this per model
   max_tool_iterations: 1000
 
 tools:
@@ -564,6 +565,13 @@ one is a tax — a retry that discards good work, a handshake that costs two rou
 trips per edit, a fuzzy match that silently edits the wrong lines, a refusal to
 run a command the model had good reason to run. `profile: strong`, the default,
 skips all of it; `profile: weak` reproduces the earlier behaviour exactly.
+
+`agent.profile` is the default for every model. A `models:` entry may set its
+own `profile:` (`strong` or `weak`) to override it for that model — a strong
+hosted model and a weak local one can share one config that way. Switching
+models with `:mN` (or `--model` headless) takes the new entry's profile from
+the next turn on; `:h` names each entry's effective profile once any entry
+sets one.
 
 ### `tools`
 

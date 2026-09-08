@@ -60,7 +60,8 @@ func (e EffortOption) Display() string {
 
 // ModelEntry is one catalog row: everything about an endpoint that switching
 // models can change. Non-endpoint settings (headers, timeouts,
-// merge_thinking, ...) always come from the `llm:` block.
+// merge_thinking, ...) always come from the `llm:` block — except the agent
+// profile, which an entry may override per model (see ProfileFor).
 type ModelEntry struct {
 	ID         string         `yaml:"id"`
 	Name       string         `yaml:"name"`
@@ -71,7 +72,41 @@ type ModelEntry struct {
 	APIKeyEnv  string         `yaml:"api_key_env"`
 	Context    int            `yaml:"context"`
 	Efforts    []EffortOption `yaml:"efforts"`
+
+	// Profile overrides agent.profile for this entry: "strong" (the default)
+	// or "weak". Empty inherits the global agent.profile. A weak entry keeps
+	// the compensation machinery (backtracking, the duplicate-call kill
+	// switch, the edit confirm handshake, fuzzy matching, anomaly
+	// interrogation, prose scraping, empty-answer retries, interpreter
+	// one-liner rules); a strong one skips it.
+	Profile string `yaml:"profile"`
 }
+
+// IsStrongProfile reports whether a profile value selects the strong
+// behavior. Empty and unknown values are strong: strong is the default, and
+// only an explicit "weak" (case-insensitive) turns the compensation
+// machinery on. Validation rejects unknown values at load, so unknown here
+// means a Config built without Load (tests, benchmarks constructing one by
+// hand), which should behave exactly like the default.
+func IsStrongProfile(p string) bool { return !strings.EqualFold(p, "weak") }
+
+// ProfileFor returns the effective profile for an entry: its own `profile:`
+// when set, else the global agent.profile default. The result is normalized
+// to lowercase ("strong", "weak", or "" for the default-strong), so callers
+// can compare or display it directly.
+func (c *Config) ProfileFor(entry ModelEntry) string {
+	if entry.Profile != "" {
+		return strings.ToLower(strings.TrimSpace(entry.Profile))
+	}
+	if c.defaultProfile != "" {
+		return c.defaultProfile
+	}
+	return strings.ToLower(strings.TrimSpace(c.Agent.Profile))
+}
+
+// IsStrongFor reports whether the effective profile for an entry skips the
+// weak-model compensation machinery.
+func (c *Config) IsStrongFor(entry ModelEntry) bool { return IsStrongProfile(c.ProfileFor(entry)) }
 
 // ModelList returns the catalog: `models:` in file order, or one entry
 // synthesized from the `llm:` block when `models:` is absent. It never
@@ -293,17 +328,29 @@ func EntryAPIKey(entry ModelEntry) string {
 // (headers, timeouts, merge_thinking, ...) stays from the `llm:` block.
 // Downstream code (client construction, session records, context accounting)
 // reads cfg.LLM, so it follows the selection with no other change.
+//
+// It also makes the entry's effective profile (see ProfileFor) the active
+// one, so a :mN switch to a weak model turns the compensation machinery
+// back on for the next turn, and switching back to a strong one turns it
+// off again. The agent is one process per turn, so this runs once per turn
+// in resolveModelSelection; ApplyProfile restores from the pre-profile
+// snapshot, so repeated calls are idempotent.
 func (c *Config) ApplyModel(entry ModelEntry, effort string) {
+
 	c.LLM.Model = entry.Model
+
 	if entry.BaseURL != "" {
 		c.LLM.BaseURL = entry.BaseURL
 	}
+
 	if entry.APIBackend != "" {
 		c.LLM.APIBackend = entry.APIBackend
 	}
+
 	if entry.Context != 0 {
 		c.LLM.Context = entry.Context
 	}
+
 	if entry.APIKeyEnv != "" || entry.APIKey != "" {
 		c.LLM.APIKeyEnv = entry.APIKeyEnv
 		c.LLM.APIKey = EntryAPIKey(entry)
@@ -311,7 +358,10 @@ func (c *Config) ApplyModel(entry ModelEntry, effort string) {
 		c.LLM.APIKeyEnv = ""
 		c.LLM.APIKey = ""
 	}
+
 	c.LLM.ReasoningEffort = effort
+
+	c.ApplyProfile(c.ProfileFor(entry))
 }
 
 // EntryDisplay is ModelDisplay for a catalog row: "model:effort" when an
@@ -358,36 +408,59 @@ func ParseIndexedCommand(cmd string) (kind byte, n int, ok bool) {
 // place so later comparisons stay simple. A nil catalog (legacy single-model
 // config) is valid.
 func (c *Config) validateModels(configPath string) error {
+
 	if len(c.Models) == 0 {
 		if c.DefaultModel != "" {
 			return fmt.Errorf("%s: default_model %q with no models: list", configPath, c.DefaultModel)
 		}
+
 		if c.DefaultEffortValue != "" && !IsCanonicalEffort(c.DefaultEffortValue) {
 			return fmt.Errorf("%s: unknown default_effort %q; use one of: %s",
 				configPath, c.DefaultEffortValue, strings.Join(CanonicalEfforts, ", "))
 		}
+
 		return nil
 	}
+
 	seen := map[string]int{}
+
 	for i := range c.Models {
+
 		e := &c.Models[i]
+
 		where := fmt.Sprintf("%s: models entry %d", configPath, i+1)
+
 		if e.ID == "" {
 			return fmt.Errorf("%s: missing id", where)
 		}
+
 		if key := strings.ToLower(e.ID); seen[key] > 0 {
 			return fmt.Errorf("%s: duplicate id %q", configPath, e.ID)
 		} else {
 			seen[key] = i + 1
 		}
+
 		if e.Model == "" {
 			return fmt.Errorf("%s (%s): missing model wire id", where, e.ID)
 		}
+
 		if !ValidBackend(e.APIBackend) {
 			return fmt.Errorf("%s (%s): unknown api_backend %q; use %q or %q",
 				where, e.ID, e.APIBackend, llm.BackendChatCompletions, llm.BackendResponses)
 		}
+
+		if e.Profile != "" {
+			v := strings.ToLower(strings.TrimSpace(e.Profile))
+			if v != "strong" && v != "weak" {
+				return fmt.Errorf("%s (%s): unknown profile %q; use \"strong\" or \"weak\"",
+					where, e.ID, e.Profile)
+			}
+
+			e.Profile = v
+		}
+
 		defaults := 0
+
 		for j := range e.Efforts {
 			v := strings.ToLower(strings.TrimSpace(e.Efforts[j].Value))
 			if !IsCanonicalEffort(v) {

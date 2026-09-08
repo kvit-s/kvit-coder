@@ -102,6 +102,17 @@ type Config struct {
 	// DefaultEffortValue is the effort fallback after an entry's own
 	// `default: true` row and llm.reasoning_effort.
 	DefaultEffortValue string `yaml:"default_effort"`
+
+	// defaultProfile is the global agent.profile normalized at load
+	// (lowercase, "" for the default-strong). ProfileFor falls back to it
+	// for entries without their own `profile:`, so ApplyModel switching
+	// between entries never loses the global default.
+	defaultProfile string
+
+	// profileRaw snapshots the file's weak-model machinery settings before
+	// any profile is applied, so switching profiles (at load for the
+	// default model, per turn in ApplyModel) restores rather than destroys.
+	profileRaw *profileSnapshot
 }
 
 // UIConfig controls terminal output styling.
@@ -115,6 +126,7 @@ type UIConfig struct {
 
 // AgentConfig configures the agent loop and startup instruction sources.
 type AgentConfig struct {
+
 	// Profile says how much the loop should compensate for the model.
 	//
 	// "weak" keeps every mechanism that exists to catch a model getting
@@ -128,15 +140,112 @@ type AgentConfig struct {
 	// those mistakes, each mechanism is a tax: a retry that discards good
 	// work, a handshake that costs two round trips per edit, a fuzzy match
 	// that silently edits the wrong lines.
-	Profile             string                    `yaml:"profile"`
-	MaxIterations       int                       `yaml:"max_tool_iterations"`
-	AgentFile           string                    `yaml:"agent_file"`
+	//
+	// This is the default for models without their own `profile:` — see
+	// ModelEntry.Profile and Config.ProfileFor.
+	Profile string `yaml:"profile"`
+
+	MaxIterations int `yaml:"max_tool_iterations"`
+
+	AgentFile string `yaml:"agent_file"`
+
 	ProjectInstructions ProjectInstructionsConfig `yaml:"project_instructions"`
 }
 
 // IsStrong reports whether the loop should skip the machinery that exists to
 // compensate for a weak model. It is the default.
-func (a AgentConfig) IsStrong() bool { return !strings.EqualFold(a.Profile, "weak") }
+//
+// After ApplyModel runs (once per turn, for the selected catalog entry) this
+// reflects the selected model's effective profile — see ProfileFor — so the
+// places that read it follow a :mN switch with no other change.
+func (a AgentConfig) IsStrong() bool { return IsStrongProfile(a.Profile) }
+
+// profileSnapshot is the file's weak-model machinery settings before any
+// profile is applied. The strong profile forces each of these off; the weak
+// profile leaves the file exactly as written. Snapshotting first means
+// switching from a strong entry to a weak one restores what the file said
+// instead of keeping the forced-off values.
+type profileSnapshot struct {
+	backtrackEnabled bool
+
+	previewMode bool
+
+	smartFirstLineIndent bool
+
+	maxAutoindentFix int
+
+	exactMatchOnly bool
+
+	fuzzyThreshold float64
+
+	interrogateOnAnomaly bool
+}
+
+// snapshotProfileRaw records the current machinery settings as the file's
+// own, before any profile is applied.
+func (c *Config) snapshotProfileRaw() {
+
+	c.profileRaw = &profileSnapshot{
+		backtrackEnabled:     c.Backtrack.Enabled,
+		previewMode:          c.Tools.Edit.PreviewMode,
+		smartFirstLineIndent: c.Tools.Edit.SmartFirstLineIndent,
+		maxAutoindentFix:     c.Tools.Edit.MaxAutoindentFix,
+		exactMatchOnly:       c.Tools.Edit.ExactMatchOnly,
+		fuzzyThreshold:       c.Tools.Edit.FuzzyThreshold,
+		interrogateOnAnomaly: c.Diagnostics.InterrogateOnAnomaly,
+	}
+}
+
+// ApplyProfile makes a profile value the active one: it sets Agent.Profile
+// and forces the weak-model machinery off (strong) or restores the file's
+// own settings (weak). It is idempotent — calling it for the same profile
+// twice, or alternating between profiles, always converges — because the
+// weak branch restores from the snapshot taken before any profile ran,
+// never from the current (possibly forced-off) values.
+//
+// Configs built without Load (tests constructing Config by hand) have no
+// snapshot yet; the first call snapshots the current values as the file's
+// own, so a manual Config behaves like a file that said exactly that.
+func (c *Config) ApplyProfile(profile string) {
+
+	if c.profileRaw == nil {
+		c.snapshotProfileRaw()
+	}
+
+	profile = strings.ToLower(strings.TrimSpace(profile))
+	c.Agent.Profile = profile
+
+	if IsStrongProfile(profile) {
+		// Backtracking discards an assistant turn and retries after a semantic
+		// tool error. On a model that reads the error and corrects itself, it
+		// throws away work and pays for the same tokens twice.
+		c.Backtrack.Enabled = false
+		// The confirm handshake makes every edit two tool calls, and with it
+		// go the indentation repair and first-line-indent guessing that only
+		// run alongside it.
+		c.Tools.Edit.PreviewMode = false
+		c.Tools.Edit.SmartFirstLineIndent = false
+		c.Tools.Edit.MaxAutoindentFix = 0
+		// Fuzzy matching edits the closest thing it can find to what the model
+		// asked for, which is a silent wrong edit when the model was right and
+		// the file had moved on.
+		c.Tools.Edit.ExactMatchOnly = true
+		c.Tools.Edit.FuzzyThreshold = 0
+		// Interrogation makes an extra model call to ask the model why it did
+		// something odd. It is a diagnostic for a model that does odd things.
+		c.Diagnostics.InterrogateOnAnomaly = false
+		return
+	}
+
+	raw := c.profileRaw
+	c.Backtrack.Enabled = raw.backtrackEnabled
+	c.Tools.Edit.PreviewMode = raw.previewMode
+	c.Tools.Edit.SmartFirstLineIndent = raw.smartFirstLineIndent
+	c.Tools.Edit.MaxAutoindentFix = raw.maxAutoindentFix
+	c.Tools.Edit.ExactMatchOnly = raw.exactMatchOnly
+	c.Tools.Edit.FuzzyThreshold = raw.fuzzyThreshold
+	c.Diagnostics.InterrogateOnAnomaly = raw.interrogateOnAnomaly
+}
 
 // ProjectInstructionsConfig controls the Claude-Code-style project instruction
 // file loaded for headless -p runs.
@@ -870,31 +979,29 @@ func Load(path string) (*Config, error) {
 		cfg.Tools.Checkpoint.MaxTurns = 100
 	}
 
-	// The strong profile turns off the machinery written to compensate for a
-	// weak model. Applying it here, once, rather than at each of the twenty
-	// places that read these settings, means none of them can be missed — and
-	// it is why "profile: weak" reproduces the old behaviour exactly: it
-	// changes nothing at all.
-	if cfg.Agent.IsStrong() {
-		// Backtracking discards an assistant turn and retries after a semantic
-		// tool error. On a model that reads the error and corrects itself, it
-		// throws away work and pays for the same tokens twice.
-		cfg.Backtrack.Enabled = false
-		// The confirm handshake makes every edit two tool calls, and with it
-		// go the indentation repair and first-line-indent guessing that only
-		// run alongside it.
-		cfg.Tools.Edit.PreviewMode = false
-		cfg.Tools.Edit.SmartFirstLineIndent = false
-		cfg.Tools.Edit.MaxAutoindentFix = 0
-		// Fuzzy matching edits the closest thing it can find to what the model
-		// asked for, which is a silent wrong edit when the model was right and
-		// the file had moved on.
-		cfg.Tools.Edit.ExactMatchOnly = true
-		cfg.Tools.Edit.FuzzyThreshold = 0
-		// Interrogation makes an extra model call to ask the model why it did
-		// something odd. It is a diagnostic for a model that does odd things.
-		cfg.Diagnostics.InterrogateOnAnomaly = false
+	// The profile turns off the machinery written to compensate for a weak
+	// model. Applying it here, once, rather than at each of the places that
+	// read these settings, means none of them can be missed — and it is why
+	// "profile: weak" reproduces the old behaviour exactly: it changes
+	// nothing at all.
+	//
+	// With a `models:` catalog the default entry's effective profile wins
+	// over the global agent.profile, so a config that mixes strong and weak
+	// models starts on the right behavior; ApplyModel re-applies for the
+	// selected entry on every turn. The file's own settings are snapshotted
+	// first, so switching back to a weak entry restores them.
+	cfg.defaultProfile = strings.ToLower(strings.TrimSpace(cfg.Agent.Profile))
+	cfg.snapshotProfileRaw()
+	initialProfile := cfg.defaultProfile
+	if len(cfg.Models) > 0 {
+		list := cfg.ModelList()
+		idx := cfg.DefaultModelIndex()
+		if idx < 0 || idx >= len(list) {
+			idx = 0
+		}
+		initialProfile = cfg.ProfileFor(list[idx])
 	}
+	cfg.ApplyProfile(initialProfile)
 
 	if cfg.LLM.RequestTimeout == 0 {
 		cfg.LLM.RequestTimeout = 600

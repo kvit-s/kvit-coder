@@ -519,18 +519,54 @@ func (u *UI) activeBaseURL() string {
 // alone: the prompt cache is keyed per model server-side, and a new ID would
 // also drop the shared prefix.
 func (u *UI) switchModel(n int) {
+
 	if n < 1 || n > len(u.models) {
 		fmt.Printf("unknown model :m%d; use one of :m1-:m%d\n\n", n, len(u.models))
 		return
 	}
+
 	u.currentModel = n - 1
+
 	u.currentEffort = ""
+
 	e := u.currentEntry()
+
 	shown := u.effectiveEffort()
 	if shown == "" {
 		shown = "no effort"
 	}
+
+	if u.catalogUsesProfiles() {
+		fmt.Printf("Switched to %s (%s:%s) [%s] @ %s\n\n", e.Name, e.Model, shown, u.profileDisplay(e), u.activeBaseURL())
+		return
+	}
+
 	fmt.Printf("Switched to %s (%s:%s) @ %s\n\n", e.Name, e.Model, shown, u.activeBaseURL())
+}
+
+// catalogUsesProfiles reports whether any catalog row sets its own profile.
+// The :h list and the :mN confirmation name the effective profile only then,
+// so configs from before per-model profiles read exactly as before.
+func (u *UI) catalogUsesProfiles() bool {
+
+	for _, e := range u.models {
+		if e.Profile != "" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// profileDisplay is the effective profile for a row for display: "weak" or
+// "strong" (the default-strong normalizes the empty value).
+func (u *UI) profileDisplay(e config.ModelEntry) string {
+
+	if prof := u.cfg.ProfileFor(e); prof != "" {
+		return prof
+	}
+
+	return "strong"
 }
 
 // setEffortIndex handles :eN: the Nth row of the current model's menu, in
@@ -576,21 +612,34 @@ func (u *UI) setEffortValue(value string) {
 // list :h promises. Numbering is 1-based config-file order, with * on the
 // active row like :sessions.
 func (u *UI) showModels() {
+
 	fmt.Println("Models (:mN to switch):")
+
+	showProfile := u.catalogUsesProfiles()
+
 	for i, e := range u.models {
+
 		marker := " "
 		if i == u.currentModel {
 			marker = "*"
 		}
+
 		eff := u.effortFor(i)
 		if eff != "" {
 			eff = " :" + eff
 		}
+
+		prof := ""
+		if showProfile {
+			prof = " [" + u.profileDisplay(e) + "]"
+		}
+
 		base := e.BaseURL
 		if base == "" {
 			base = u.cfg.LLM.BaseURL
 		}
-		fmt.Printf("  :m%d %s %s (%s)%s @ %s\n", i+1, marker, e.Name, e.Model, eff, base)
+
+		fmt.Printf("  :m%d %s %s (%s)%s%s @ %s\n", i+1, marker, e.Name, e.Model, eff, prof, base)
 	}
 	e := u.currentEntry()
 	menu := u.cfg.EffortOptions(e)

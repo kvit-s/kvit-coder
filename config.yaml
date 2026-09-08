@@ -6,6 +6,11 @@
 # entry's effort default (xhigh on spark-go keeps the previous
 # llm.reasoning_effort default). An entry without efforts: is a non-reasoning
 # model: it has no :eN menu, and switching to it clears the effort.
+# An entry may set profile: weak to keep the local-model compensation
+# machinery (backtracking, edit confirm handshake, fuzzy matching, ...) on
+# that model, or profile: strong to skip it; empty inherits agent.profile
+# below. Switching models with :mN takes the new entry's profile from the
+# next turn on.
 models:
   - id: "spark-go"
     name: "Muse Spark 1.3 Go"
@@ -51,6 +56,7 @@ models:
     base_url: "http://192.168.138.186:8090/v1"
     api_backend: "chat_completions"
     context: 262144
+    profile: "weak"   # local model: keep the compensation machinery on here
     efforts:
       - value: "low"
       - value: "medium"
@@ -125,6 +131,8 @@ agent:
   # and interpreter one-liners away from a model that would use them instead of
   # the Edit tool. "strong" skips all of it: on a model that does not make those
   # mistakes each one is a tax.
+  # This is the default for models without their own `profile:`; a models:
+  # entry may override it per model (qwen-local above does).
   profile: strong
   max_tool_iterations: 1000
   project_instructions:
