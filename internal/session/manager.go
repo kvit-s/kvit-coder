@@ -158,6 +158,20 @@ func (m *Manager) ListSessions() ([]SessionInfo, error) {
 	return sessions, nil
 }
 
+// MostRecent returns the name of the session touched last, or "" when there
+// are none. It is what "continue where I left off" resolves to.
+func (m *Manager) MostRecent() (string, error) {
+	sessions, err := m.ListSessions()
+	if err != nil {
+		return "", err
+	}
+	if len(sessions) == 0 {
+		return "", nil
+	}
+	// ListSessions already sorts newest first.
+	return sessions[0].Name, nil
+}
+
 // DeleteSession removes a session and everything it holds: history, metadata,
 // checkpoints, and the temp files whose cleanup now happens here rather than
 // at process exit.

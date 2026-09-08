@@ -24,6 +24,7 @@ func main() {
 	configPath := flag.String("config", "config.yaml", "path to config file")
 	agentPath := flag.String("agent-path", "", "path to kvit-coder binary (auto-detected if not specified)")
 	sessionName := flag.String("s", "", "session name: continue existing session or create new one")
+	continueLast := flag.Bool("c", false, "continue the most recent session")
 	showVersion := flag.Bool("version", false, "show version information and exit")
 
 	// Session management flags (pass-through to kvit-coder)
@@ -120,6 +121,16 @@ func main() {
 	// Without a session name the UI spawns every turn with no -s, so nothing
 	// the agent learns survives to the next prompt. Name the session up front.
 	currentSession := *sessionName
+	if currentSession == "" && *continueLast {
+		recent, err := sessionMgr.MostRecent()
+		if err != nil {
+			log.Fatalf("Failed to find the most recent session: %v", err)
+		}
+		if recent == "" {
+			fmt.Fprintln(os.Stderr, "No previous session to continue; starting a new one.")
+		}
+		currentSession = recent
+	}
 	if currentSession == "" {
 		currentSession = sessionMgr.GenerateSessionName()
 	}

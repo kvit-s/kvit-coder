@@ -193,6 +193,21 @@ func (u *UI) handleCommand(input string) bool {
 		u.pinRunID()
 		fmt.Printf("Started new session: %s\n\n", u.currentSession)
 
+	case "resume", "last":
+		recent, err := u.sessionMgr.MostRecent()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error finding the most recent session: %v\n\n", err)
+			return false
+		}
+		if recent == "" {
+			fmt.Println("No previous session to resume.")
+			fmt.Println()
+			return false
+		}
+		u.currentSession = recent
+		u.pinRunID()
+		fmt.Printf("Resumed session: %s\n\n", recent)
+
 	case "switch":
 		if len(parts) < 2 {
 			fmt.Println("Usage: :switch <session-name>")
@@ -271,6 +286,7 @@ func (u *UI) showHelp() {
 	fmt.Println("  :quit, :q        Exit the UI")
 	fmt.Println("  :new             Start a new session")
 	fmt.Println("  :switch <name>   Switch to an existing session")
+	fmt.Println("  :resume          Continue the most recent session")
 	fmt.Println("  :sessions        List all sessions")
 	fmt.Println("  :history         Show current session history")
 	fmt.Println("  :clear           Clear the terminal")

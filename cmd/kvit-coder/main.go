@@ -77,6 +77,7 @@ func main() {
 
 	// Session flags
 	sessionName := flag.String("s", "", "session name: continue existing session or create new one with this name")
+	continueLast := flag.Bool("c", false, "continue the most recent session")
 	sessionList := flag.Bool("sessions", false, "list all sessions and exit")
 	sessionDelete := flag.String("session-delete", "", "delete a session and exit")
 	sessionShow := flag.String("session-show", "", "show session history and exit")
@@ -349,6 +350,16 @@ func main() {
 			log.Fatalf("Failed to create session manager: %v", err)
 		}
 		name := *sessionName
+		if name == "" && *continueLast {
+			recent, err := sessionMgr.MostRecent()
+			if err != nil {
+				log.Fatalf("Failed to find the most recent session: %v", err)
+			}
+			if recent == "" {
+				writer.Warn("no previous session to continue; starting a new one")
+			}
+			name = recent
+		}
 		if name == "" {
 			name = sessionMgr.GenerateSessionName()
 		}

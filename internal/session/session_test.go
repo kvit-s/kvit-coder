@@ -323,3 +323,38 @@ func TestRollbackCannotUnderflow(t *testing.T) {
 		t.Errorf("loaded %d messages, want none", len(loaded))
 	}
 }
+
+// TestMostRecentIsWhatContinueResolvesTo: "-c" has to land on the session you
+// were last using, not merely on one that exists.
+func TestMostRecentIsWhatContinueResolvesTo(t *testing.T) {
+	mgr := setupTestManager(t)
+
+	if name, err := mgr.MostRecent(); err != nil || name != "" {
+		t.Errorf("with no sessions MostRecent gave (%q, %v), want empty and no error", name, err)
+	}
+
+	writeSession(t, mgr, "older", []llm.Message{{Role: llm.RoleUser, Content: "first"}})
+	time.Sleep(20 * time.Millisecond)
+	writeSession(t, mgr, "newer", []llm.Message{{Role: llm.RoleUser, Content: "second"}})
+
+	name, err := mgr.MostRecent()
+	if err != nil {
+		t.Fatalf("MostRecent: %v", err)
+	}
+	if name != "newer" {
+		t.Errorf("MostRecent gave %q, want the session used last", name)
+	}
+
+	// Adding to the older one makes it the most recent.
+	time.Sleep(20 * time.Millisecond)
+	older, err := mgr.Open("older")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if err := older.AppendMessages([]llm.Message{{Role: llm.RoleUser, Content: "again"}}); err != nil {
+		t.Fatalf("AppendMessages: %v", err)
+	}
+	if name, _ := mgr.MostRecent(); name != "older" {
+		t.Errorf("after using it again MostRecent gave %q, want \"older\"", name)
+	}
+}
