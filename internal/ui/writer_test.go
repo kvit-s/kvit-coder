@@ -58,8 +58,8 @@ func TestProgressHoldsWhileAQuestionIsWaiting(t *testing.T) {
 	if progressDotCount != 1 {
 		t.Errorf("the dot counter is %d, want the row restarted at 1", progressDotCount)
 	}
-	if progressLine != "." {
-		t.Errorf("the resumed row is %q, want it to start over at a single dot", progressLine)
+	if progressLine != stepIndent+"." {
+		t.Errorf("the resumed row is %q, want it indented under its call line", progressLine)
 	}
 }
 
@@ -99,8 +99,8 @@ func TestProgressHoldsWhilePauseRequested(t *testing.T) {
 	if progressDotCount != 1 {
 		t.Errorf("the dot counter is %d, want the row restarted at 1", progressDotCount)
 	}
-	if progressLine != "." {
-		t.Errorf("the resumed row is %q, want it to start over at a single dot", progressLine)
+	if progressLine != stepIndent+"." {
+		t.Errorf("the resumed row is %q, want it indented under its call line", progressLine)
 	}
 }
 
@@ -125,6 +125,34 @@ func TestHeadlessProgressReachesATerminal(t *testing.T) {
 	}
 	if !strings.Contains(out, "\r") {
 		t.Errorf("progress is not redrawn in place: %q", out)
+	}
+	if !strings.Contains(out, "\r"+stepIndent) {
+		t.Errorf("progress row %q is not indented under its tool-call line", out)
+	}
+}
+
+// TestProgressIndentedUnderToolCall is the reported shape:
+//
+//	Shell[go test ./... 2>&1 | tail -30]
+//	*..................
+//
+// The activity row must align under the tool-call line that owns it (both
+// lead with stepIndent), not start at column zero.
+func TestProgressIndentedUnderToolCall(t *testing.T) {
+	w, buf := newProgressWriter(true)
+
+	w.ToolCall("Shell", "go test ./... 2>&1 | tail -30", "")
+	buf.Reset()
+	for range 3 {
+		w.ToolProgress(".")
+	}
+
+	if progressLine != stepIndent+"..." {
+		t.Errorf("progress row = %q, want indented %q", progressLine, stepIndent+"...")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "\r"+stepIndent+"...") {
+		t.Errorf("drawn row %q does not align under its tool-call line", out)
 	}
 }
 
@@ -167,8 +195,8 @@ func TestProgressFinalLineIsDrawnOnce(t *testing.T) {
 
 // TestProgressFoldsMinuteIntoStar: a command running for minutes stays on one
 // redrawn row. A finished minute of dots folds into "*", so the row never
-// stacks new lines. The row is bare dots and stars: no leading "●", which is
-// reserved for Thinking step headers and reads as model thinking on a wait.
+// stacks new lines. The row is indented dots and stars under its call line:
+// no leading "●", which is reserved for Thinking step headers.
 func TestProgressFoldsMinuteIntoStar(t *testing.T) {
 	w, buf := newProgressWriter(true)
 
@@ -182,11 +210,14 @@ func TestProgressFoldsMinuteIntoStar(t *testing.T) {
 	w.ToolProgress(".")
 	w.ToolProgress(".")
 
-	if progressLine != "*.." {
-		t.Errorf("folded row = %q, want %q (one star, current dots, no bullet)", progressLine, "*..")
+	if progressLine != stepIndent+"*.." {
+		t.Errorf("folded row = %q, want %q (indented star, current dots, no bullet)", progressLine, stepIndent+"*..")
 	}
 	if strings.Contains(progressLine, "●") {
 		t.Errorf("wait row %q starts with a thinking bullet", progressLine)
+	}
+	if !strings.HasPrefix(progressLine, stepIndent) {
+		t.Errorf("wait row %q is not indented under its call line", progressLine)
 	}
 	if progressDotCount != 2 {
 		t.Errorf("the dot counter is %d, want 2 for the dots after the star", progressDotCount)
@@ -205,9 +236,8 @@ func TestProgressFoldsMinuteIntoStar(t *testing.T) {
 	}
 }
 
-// TestToolProgressFoldKeepsNoBullet: a tool wait is bare dots and stars —
-// that was the shape that printed "● ..." under a Shell line and read as a
-// thinking step.
+// TestToolProgressFoldKeepsNoBullet: a tool wait is indented dots and stars
+// under its call line — never "● ...", which reads as a thinking step.
 func TestToolProgressFoldKeepsNoBullet(t *testing.T) {
 	w, _ := newProgressWriter(true)
 
@@ -215,17 +245,21 @@ func TestToolProgressFoldKeepsNoBullet(t *testing.T) {
 		w.ToolProgress(".")
 	}
 
-	if progressLine != "*." {
-		t.Errorf("folded tool row = %q, want %q (star, dots, no bullet)", progressLine, "*.")
+	if progressLine != stepIndent+"*." {
+		t.Errorf("folded tool row = %q, want %q (indented star, dots, no bullet)", progressLine, stepIndent+"*.")
 	}
 	if strings.Contains(progressLine, "●") {
 		t.Errorf("folding added a bullet to a tool row: %q", progressLine)
+	}
+	if !strings.HasPrefix(progressLine, stepIndent) {
+		t.Errorf("folded tool row %q is not indented under its call line", progressLine)
 	}
 	_ = w
 }
 
 // TestProgressSecondMinuteAddsSecondStar: each finished minute adds one more
-// star, so a long wait reads as elapsed minutes plus current dots.
+// star, so a long wait reads as elapsed minutes plus current dots, aligned
+// under the tool-call line.
 func TestProgressSecondMinuteAddsSecondStar(t *testing.T) {
 	w, _ := newProgressWriter(true)
 
@@ -234,8 +268,8 @@ func TestProgressSecondMinuteAddsSecondStar(t *testing.T) {
 		w.ToolProgress(".")
 	}
 
-	if progressLine != "**.." {
-		t.Errorf("two-minute row = %q, want %q", progressLine, "**..")
+	if progressLine != stepIndent+"**.." {
+		t.Errorf("two-minute row = %q, want %q", progressLine, stepIndent+"**..")
 	}
 	_ = w
 }
