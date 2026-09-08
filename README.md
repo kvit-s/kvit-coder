@@ -146,6 +146,8 @@ Plan/Checkpoint tools and Tasks tools are mutually exclusive — enable one grou
 | `-log <path>` | Log file (empty to disable) | `kvit-coder.log` |
 | `--json` | Structured JSON output to stderr | false |
 | `-s <name>` | Continue or create named session | - |
+| `-c` | Continue the most recent session | - |
+| `--yolo` | Read and write anywhere on the filesystem, without asking | false |
 | `--sessions` | List sessions | - |
 | `--session-show <name>` | Show session history | - |
 | `--session-delete <name>` | Delete a session | - |
@@ -158,6 +160,8 @@ Plan/Checkpoint tools and Tasks tools are mutually exclusive — enable one grou
 | `-config <path>` | Config file path | `config.yaml` |
 | `-agent-path <path>` | Path to kvit-coder binary | auto-detected |
 | `-s <name>` | Continue or create named session | - |
+| `-c` | Continue the most recent session | - |
+| `--yolo` | Read and write anywhere on the filesystem, without asking (passed to each turn) | false |
 
 ## Sessions
 
@@ -437,7 +441,8 @@ cache. Setting `KVIT_RUN_ID` in the environment pins a value instead.
 | Key | Description |
 |-----|-------------|
 | `root` | Workspace root directory |
-| `path_safety_mode` | `block`, `warn`, `ask_once` (default), `ask_always` |
+| `lock` | Refuse to start when another agent is working in this directory (default: `false`) |
+| `path_safety_mode` | `allow` (same as `--yolo`), `block`, `warn`, `ask_once` (default), `ask_always` |
 | `allowed_paths` / `allowed_read_paths` | Paths allowed outside workspace |
 | `denied_paths` | Explicitly denied paths |
 

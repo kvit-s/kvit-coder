@@ -25,6 +25,7 @@ func main() {
 	agentPath := flag.String("agent-path", "", "path to kvit-coder binary (auto-detected if not specified)")
 	sessionName := flag.String("s", "", "session name: continue existing session or create new one")
 	continueLast := flag.Bool("c", false, "continue the most recent session")
+	yolo := flag.Bool("yolo", false, "read and write anywhere on the filesystem, without asking")
 	showVersion := flag.Bool("version", false, "show version information and exit")
 
 	// Session management flags (pass-through to kvit-coder)
@@ -142,6 +143,7 @@ func main() {
 		SessionName: currentSession,
 		SessionMgr:  sessionMgr,
 		Config:      cfg,
+		Yolo:        *yolo,
 	})
 
 	if err := ui.Run(); err != nil {

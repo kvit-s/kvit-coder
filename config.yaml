@@ -37,7 +37,24 @@ llm:
 
 workspace:
   root: "."
-  path_safety_mode: "ask_once"  # "block", "warn", "ask_once", "ask_always"
+  # Refuse to start when another agent is already working in this directory.
+  # Off by default. The lock is held for a whole turn, so a turn that stops to
+  # ask a permission question blocks every other agent here until it is
+  # answered, and the one that cannot get the lock exits instead of waiting.
+  # Turn it on if two agents editing one checkout at once worries you more.
+  lock: false
+  # What happens when a tool touches a path outside the workspace. "ask_once"
+  # asks the first time and remembers, "ask_always" asks every time, "warn"
+  # says so and allows it, "block" refuses. "allow" is what --yolo sets: the
+  # whole filesystem, read and write, with nothing asked and nothing said.
+  path_safety_mode: "ask_once"  # "allow", "block", "warn", "ask_once", "ask_always"
+  # Paths outside the workspace that need no permission prompt. allowed_paths
+  # grants read and write to every tool; allowed_read_paths grants reading to
+  # the tools that only read (Read, Search, Glob) and never to Shell, which
+  # could write. /tmp is here because a scratch build or a throwaway config is
+  # what it is for, and asking about each one interrupts a turn for nothing.
+  allowed_paths:
+    - "/tmp"
 
 agent:
   # strong (default) or weak. "weak" keeps every mechanism written to catch a

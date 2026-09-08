@@ -72,6 +72,10 @@ func (c *Config) CheckPathPermission(path string, accessType AccessType) (Permis
 	// Path is outside workspace and not in any allowed list
 	// Check path_safety_mode to determine how to handle
 	switch c.Workspace.PathSafetyMode {
+	case "allow":
+		// --yolo. denied_paths was checked at the top and still wins, because
+		// it is a list somebody wrote on purpose.
+		return PermissionGranted, nil
 	case "block":
 		return PermissionDenied, fmt.Errorf("path outside workspace")
 	case "warn", "ask_once", "ask_always":

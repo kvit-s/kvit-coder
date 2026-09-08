@@ -452,6 +452,15 @@ func TestAllowedPathsSuppressThePrompt(t *testing.T) {
 	if err := cfg.CheckPathSafety("edit", "/home/u/.kvit-coder/sessions/s1/tmp/shell-123"); err == nil {
 		t.Error("a read-only allowance permitted an edit")
 	}
+	// Nor a shell command, which is why the session directory itself has to be
+	// on allowed_paths: a shell command can write, so it never qualifies for
+	// the read-only list, and reading spilled output with cat asked every time.
+	if err := cfg.CheckPathSafety("shell", "/home/u/.kvit-coder/sessions/s1/tmp/shell-123"); err == nil {
+		t.Error("a read-only allowance permitted a shell command")
+	}
+	if err := cfg.CheckPathSafety("shell", "/srv/shared/build.sh"); err != nil {
+		t.Errorf("a shell command in an allowed_paths directory was refused: %v", err)
+	}
 	// Anything not allowed is still caught.
 	if err := cfg.CheckPathSafety("read", "/etc/shadow"); err == nil {
 		t.Error("a path outside every allowance was permitted")
@@ -459,5 +468,62 @@ func TestAllowedPathsSuppressThePrompt(t *testing.T) {
 	// And a sibling that merely shares a name prefix is not inside.
 	if err := cfg.CheckPathSafety("read", "/srv/shared-secrets/keys"); err == nil {
 		t.Error("a directory sharing an allowed path's name prefix was permitted")
+	}
+}
+
+// TestWorkspaceLockIsOptIn: one agent at a time per working directory is a
+// choice, not the default. The lock is held for a whole turn, so a turn
+// waiting on a permission question used to block every other agent in the
+// directory, and the one that could not get the lock exited rather than waited.
+func TestWorkspaceLockIsOptIn(t *testing.T) {
+	dir := t.TempDir()
+
+	write := func(name, body string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+		return path
+	}
+
+	cfg, err := Load(write("silent.yaml", "llm:\n  model: test\nworkspace:\n  root: \".\"\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Workspace.Lock {
+		t.Error("a config that says nothing about locking got the lock anyway")
+	}
+
+	cfg, err = Load(write("locked.yaml", "llm:\n  model: test\nworkspace:\n  root: \".\"\n  lock: true\n"))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Workspace.Lock {
+		t.Error("workspace.lock: true did not turn the lock on")
+	}
+}
+
+// TestYoloAllowsEverything: --yolo sets path_safety_mode to "allow", which
+// removes the workspace boundary for every tool -- no prompt, no warning, no
+// difference between a tool that reads and one that writes. An explicit
+// denied_paths entry still wins, because that list was written on purpose.
+func TestYoloAllowsEverything(t *testing.T) {
+	cfg := &Config{}
+	cfg.Workspace.Root = "/work/project"
+	cfg.Workspace.PathSafetyMode = "allow"
+	cfg.Tools.SafetyConfirmations = map[string]SafetyConfirmation{}
+
+	for _, tool := range []string{"read", "edit", "search", "glob", "shell", "write"} {
+		if err := cfg.CheckPathSafety(tool, "/etc/hosts"); err != nil {
+			t.Errorf("%s was refused a path outside the workspace: %v", tool, err)
+		}
+	}
+	if got, err := cfg.CheckPathPermission("/var/lib/anything", AccessWrite); got != PermissionGranted {
+		t.Errorf("writing outside the workspace gave %v (%v), want granted", got, err)
+	}
+
+	cfg.Workspace.DeniedPaths = []string{"/etc/ssh"}
+	if got, _ := cfg.CheckPathPermission("/etc/ssh/sshd_config", AccessRead); got != PermissionDenied {
+		t.Errorf("a denied_paths entry gave %v, want denied even under --yolo", got)
 	}
 }

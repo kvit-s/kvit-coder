@@ -78,6 +78,7 @@ func main() {
 	// Session flags
 	sessionName := flag.String("s", "", "session name: continue existing session or create new one with this name")
 	continueLast := flag.Bool("c", false, "continue the most recent session")
+	yolo := flag.Bool("yolo", false, "read and write anywhere on the filesystem, without asking")
 	sessionList := flag.Bool("sessions", false, "list all sessions and exit")
 	sessionDelete := flag.String("session-delete", "", "delete a session and exit")
 	sessionShow := flag.String("session-show", "", "show session history and exit")
@@ -240,6 +241,14 @@ func main() {
 	if *agentFile != "" {
 		cfg.Agent.AgentFile = *agentFile
 	}
+	// --yolo drops the workspace boundary for the whole run: every file tool
+	// and every shell command may read and write anywhere, with no prompt and
+	// no warning. It is set here, before the benchmark overrides below, so a
+	// benchmark run keeps its sandbox whatever the flag says.
+	if *yolo {
+		cfg.Workspace.PathSafetyMode = "allow"
+		writer.Warn("--yolo: reading and writing anywhere on the filesystem, without asking")
+	}
 
 	// Override workspace for benchmark mode - set BEFORE tools are initialized
 	// Store original workspace root for finding benchmarks.yaml
@@ -303,12 +312,18 @@ func main() {
 	defer cancelRun()
 	installInterruptHandler(cancelRun)
 
-	// Acquire workspace lock to prevent multiple instances on same workspace
-	workspaceLock, err := workspace.AcquireLock(cfg.Workspace.Root)
-	if err != nil {
-		log.Fatalf("Failed to acquire workspace lock: %v", err)
+	// One agent at a time per working directory, when workspace.lock asks for
+	// it. It is off by default: the lock is held for the whole of a turn, so a
+	// turn that stops to ask a permission question blocks every other agent in
+	// the directory until it is answered, and the second agent dies rather than
+	// waits. Running two agents on one checkout is a normal thing to want.
+	if cfg.Workspace.Lock {
+		workspaceLock, err := workspace.AcquireLock(cfg.Workspace.Root)
+		if err != nil {
+			log.Fatalf("Failed to acquire workspace lock: %v", err)
+		}
+		defer workspaceLock.Release()
 	}
-	defer workspaceLock.Release()
 
 	// Initialize LLM client
 	llmClient := llm.NewClient(cfg.LLM.BaseURL, cfg.LLM.APIKey,
@@ -379,9 +394,23 @@ func main() {
 		defer sessionUnlock()
 	}
 
-	// Spilled tool output lives in the session, which is outside the
-	// workspace, so the model needs read permission for the paths it is told.
-	cfg.Workspace.AllowedReadPaths = append(cfg.Workspace.AllowedReadPaths, sess.TmpDir())
+	// The session directory sits outside the workspace and the model is handed
+	// paths into it: spilled tool output in tmp/, its own history, its inbox.
+	// Only tmp/ used to be allowed, and only on the read list, which no shell
+	// command qualifies for because a shell command can write. So the model
+	// asked permission every time it looked at its own output with cat. The
+	// whole session directory now goes on allowed_paths, read and write: it is
+	// the agent's own scratch space, and the workspace root -- the source code
+	// being edited -- is already fully writable without asking.
+	//
+	// A benchmark run keeps the narrower grant. Its workspace is a sandbox with
+	// path_safety_mode=block and both allow lists cleared, and only reading the
+	// spilled output has to survive that.
+	if thinkbenchEnabled {
+		cfg.Workspace.AllowedReadPaths = append(cfg.Workspace.AllowedReadPaths, sess.TmpDir())
+	} else {
+		cfg.Workspace.AllowedPaths = append(cfg.Workspace.AllowedPaths, sess.Dir())
+	}
 
 	// Say which process is running this session's turn, so "kvit-coder steer"
 	// with no -s can find it.

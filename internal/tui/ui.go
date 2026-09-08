@@ -23,6 +23,8 @@ type Options struct {
 	SessionName string
 	SessionMgr  *session.Manager
 	Config      *config.Config
+	// Yolo passes --yolo to every turn: read and write anywhere, no prompts.
+	Yolo bool
 }
 
 // UI manages the interactive terminal interface
@@ -32,6 +34,7 @@ type UI struct {
 	currentSession string
 	sessionMgr     *session.Manager
 	cfg            *config.Config
+	yolo           bool
 	history        []string
 	historyFile    string
 }
@@ -50,6 +53,7 @@ func New(opts Options) *UI {
 		currentSession: opts.SessionName,
 		sessionMgr:     opts.SessionMgr,
 		cfg:            opts.Config,
+		yolo:           opts.Yolo,
 		history:        history,
 		historyFile:    historyFile,
 	}
@@ -308,6 +312,11 @@ func (u *UI) runAgent(prompt string) {
 	// Pass session if set
 	if u.currentSession != "" {
 		args = append(args, "-s", u.currentSession)
+	}
+
+	// The UI took the flag, but the agent it spawns is what enforces paths.
+	if u.yolo {
+		args = append(args, "-yolo")
 	}
 
 	// Ctrl-C at the terminal signals every process in the foreground group,

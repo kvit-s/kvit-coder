@@ -59,7 +59,8 @@ type Config struct {
 
 	Workspace struct {
 		Root                  string   `yaml:"root"`
-		PathSafetyMode        string   `yaml:"path_safety_mode"` // "block", "warn", "ask_once", "ask_always"
+		Lock                  bool     `yaml:"lock"`             // Refuse to start when another agent is working in this directory (default: false)
+		PathSafetyMode        string   `yaml:"path_safety_mode"` // "allow", "block", "warn", "ask_once", "ask_always"
 		AllowOutsideWorkspace bool     `yaml:"allow_outside_workspace"`
 		AllowedPaths          []string `yaml:"allowed_paths"`
 		AllowedReadPaths      []string `yaml:"allowed_read_paths"`
@@ -906,6 +907,14 @@ func (c *Config) pathIsPermitted(absPath string, readOnly bool) bool {
 }
 
 func (c *Config) CheckPathSafety(toolName, identifier string) error {
+	// "allow" is what --yolo sets: the whole filesystem is in scope, read and
+	// write, with nothing asked about and nothing warned about. Everything
+	// below is about paths outside the workspace, and in this mode there is no
+	// outside.
+	if c.Workspace.PathSafetyMode == "allow" {
+		return nil
+	}
+
 	// For filesystem tools, check if path is outside workspace
 	if strings.HasPrefix(toolName, "read") || strings.HasPrefix(toolName, "edit") ||
 		strings.HasPrefix(toolName, "restore") || toolName == "glob" || toolName == "shell" ||
