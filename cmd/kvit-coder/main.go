@@ -719,22 +719,48 @@ func startStdinReader(steering *inbox.Inbox, writer *ui.Writer) bool {
 		scanner := bufio.NewScanner(os.Stdin)
 		scanner.Buffer(make([]byte, 0, 4096), 1024*1024)
 		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" {
-				continue
-			}
-			// A prompt waiting for an answer will take this line, so saying it
-			// was queued for the model would be wrong — and reads as the
-			// answer having been swallowed, which is what it looked like
-			// before this check existed.
-			answering := steering.Awaiting()
-			steering.Push(inbox.Message{Kind: inbox.KindUserLine, Text: line})
-			if !answering {
-				writer.Info("→ queued")
-			}
+			routeStdinLine(scanner.Text(), steering, writer)
 		}
 	}()
 	return true
+}
+
+// routeStdinLine handles one line from the terminal: empty Enter pauses or
+// resumes, anything else is steering or a prompt's answer as before. It is a
+// separate function so a test can drive the empty-line truth table without a
+// terminal.
+func routeStdinLine(text string, steering *inbox.Inbox, writer *ui.Writer) {
+	line := strings.TrimSpace(text)
+	if line == "" {
+		switch {
+		case steering.PauseMode():
+			// The pause prompt is up: empty is a valid answer (resume).
+			// Ask returns "" answered for it — it only checks the kind
+			// and the timestamp, not the text.
+			steering.Push(inbox.Message{Kind: inbox.KindUserLine, Text: ""})
+		case steering.Awaiting():
+			// A Question or permission prompt is up: keep ignoring empty
+			// lines, otherwise "" would become a free-text answer, which
+			// is impossible today.
+		default:
+			if steering.RequestPause() {
+				writer.Info("pause requested — will pause at next steerable point")
+			}
+		}
+		return
+	}
+
+	// A prompt waiting for an answer will take this line, so saying it
+	// was queued for the model would be wrong — and reads as the
+	// answer having been swallowed, which is what it looked like
+	// before this check existed.
+	// While the pause prompt is up Awaiting is true (Ask holds it), so a
+	// steering answer is consumed by Ask and never reports queued.
+	answering := steering.Awaiting()
+	steering.Push(inbox.Message{Kind: inbox.KindUserLine, Text: line})
+	if !answering {
+		writer.Info("→ queued")
+	}
 }
 
 // stdinIsATerminal reports whether there is a person on the other end of

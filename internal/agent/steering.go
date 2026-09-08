@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/inbox"
 	"github.com/kvit-s/kvit-coder/internal/llm"
@@ -58,6 +60,37 @@ func (r *Runner) drainInbox(state *runState) {
 	if len(lines) > 0 {
 		reminder := "\n\n<system-reminder>\n" + strings.Join(lines, "\n") + "\n</system-reminder>"
 		appendReminder(state, reminder)
+	}
+}
+
+// checkPause stops at the iteration boundary when an empty Enter asked for a
+// pause, and takes steering before the next model call. Output has stopped by
+// now, so the line typed after is echoed cleanly. It reports whether the turn
+// was cancelled while paused: then the caller ends the run as cancelled.
+func (r *Runner) checkPause(ctx context.Context) bool {
+	if r.inbox == nil || !r.inbox.TakePause() {
+		return false
+	}
+	r.inbox.SetPauseMode(true)
+	defer r.inbox.SetPauseMode(false)
+	r.writer.Info("paused — type steering, Enter to resume (empty resumes):")
+	// Waiting for a person is not the tool being slow, so pause time is
+	// kept out of the next tool's timeout, like every other prompt.
+	started := time.Now()
+	text, outcome := r.inbox.Ask(ctx, nil, "", 0)
+	r.toolCtx.AddPromptWait(time.Since(started))
+	switch outcome {
+	case inbox.AskCancelled:
+		return true
+	case inbox.AskAnswered:
+		if strings.TrimSpace(text) != "" {
+			// Ask consumed the line, so push it back for the drain below
+			// to pick up through the ordinary <user-steering> path.
+			r.inbox.Push(inbox.Message{Kind: inbox.KindUserLine, Text: text})
+		}
+		return false
+	default: // AskTimedOut cannot happen with a zero timeout; resume anyway.
+		return false
 	}
 }
 

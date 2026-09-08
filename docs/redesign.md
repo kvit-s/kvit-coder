@@ -307,6 +307,11 @@ so the model may treat it as a new instruction rather than a correction; wrappin
 it in a marker such as `<user-steering>` and saying in the system prompt what
 that means is worth doing from the start.
 
+(Note, added later: raw mode was rejected after it caused too many issues, and
+the echo problem is handled without it instead — an empty `Enter` pauses the
+turn at its next iteration boundary and prompts for steering, so the line is
+typed while no output flows. See `steer-pause.md` in the repository root.)
+
 ## 6. Questions
 
 The model needs to ask sometimes: which of two approaches to take, whether a

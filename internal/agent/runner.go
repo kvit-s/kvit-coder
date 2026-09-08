@@ -281,6 +281,16 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 		// Ask the background processes what has happened; whatever they say
 		// goes into the inbox, so an exit reaches the model the same way a
 		// typed line does.
+		//
+		// An empty Enter at the terminal asks for a pause first: stop here,
+		// at the boundary, and take steering before the next model call,
+		// while no output flows. The current call always finishes first.
+		if r.checkPause(ctx) {
+			budgetExhausted = false
+			result.Cancelled = true
+			result.FinalMessages = state.messages
+			break
+		}
 		r.pollProcesses()
 
 		// Anything that arrived since the last iteration goes in before the

@@ -65,6 +65,15 @@ type Inbox struct {
 	// steering, which read as the answer having been swallowed.
 	asking int
 
+	// pauseRequested is set by an empty Enter at the terminal: the turn
+	// should stop at its next iteration boundary and ask for steering.
+	// The loop consumes it with TakePause.
+	pauseRequested bool
+	// pauseMode is true only while the pause prompt's Ask is blocked, so
+	// the line reader can tell an empty Enter that resumes the pause from
+	// one that must stay ignored (a Question) or request a pause.
+	pauseMode bool
+
 	// Log, when set, is called for something worth saying out loud: an inbox
 	// file too large to read, or one that could not be read at all.
 	Log func(string)
@@ -84,6 +93,46 @@ func (i *Inbox) Awaiting() bool {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	return i.asking > 0
+}
+
+// RequestPause asks the turn to stop at its next iteration boundary and take
+// steering. It reports whether the request is new, so the reader prints its
+// notice once rather than on every empty Enter.
+func (i *Inbox) RequestPause() bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if i.pauseRequested {
+		return false
+	}
+	i.pauseRequested = true
+	return true
+}
+
+// TakePause consumes a pause request, reporting whether one was pending. The
+// loop calls it at each iteration boundary.
+func (i *Inbox) TakePause() bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	if !i.pauseRequested {
+		return false
+	}
+	i.pauseRequested = false
+	return true
+}
+
+// SetPauseMode records whether the pause prompt is up waiting for a line.
+func (i *Inbox) SetPauseMode(on bool) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.pauseMode = on
+}
+
+// PauseMode reports whether the pause prompt is up. An empty Enter then is a
+// resume answer; otherwise it requests a pause or stays ignored.
+func (i *Inbox) PauseMode() bool {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	return i.pauseMode
 }
 
 // Dir is the directory this inbox picks files up from.

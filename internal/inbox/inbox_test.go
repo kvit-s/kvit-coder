@@ -142,9 +142,47 @@ func TestQueueIsBounded(t *testing.T) {
 	for i := range maxQueued + 50 {
 		in.Push(Message{Kind: KindUserLine, Text: string(rune('a' + i%26))})
 	}
+
 	got := in.Drain()
 	if len(got) != maxQueued {
 		t.Errorf("the queue holds %d messages, want it capped at %d", len(got), maxQueued)
+	}
+}
+
+// TestPauseRequestTakeConsume: an empty Enter's request waits until the loop
+// takes it at its next iteration boundary, and taking clears it.
+func TestPauseRequestTakeConsume(t *testing.T) {
+	in := New("")
+	if in.TakePause() {
+		t.Fatal("TakePause is true before anything was requested")
+	}
+	if !in.RequestPause() {
+		t.Fatal("the first RequestPause is not new")
+	}
+	if in.RequestPause() {
+		t.Error("a second RequestPause is new, want it a no-op")
+	}
+	if !in.TakePause() {
+		t.Fatal("TakePause missed the pending request")
+	}
+	if in.TakePause() {
+		t.Error("TakePause is still true after taking, want it cleared")
+	}
+}
+
+// TestPauseModeToggle: pause mode is only up while the pause prompt waits.
+func TestPauseModeToggle(t *testing.T) {
+	in := New("")
+	if in.PauseMode() {
+		t.Fatal("PauseMode is true on a fresh inbox")
+	}
+	in.SetPauseMode(true)
+	if !in.PauseMode() {
+		t.Fatal("PauseMode is false after setting it")
+	}
+	in.SetPauseMode(false)
+	if in.PauseMode() {
+		t.Error("PauseMode is still true after clearing it")
 	}
 }
 
