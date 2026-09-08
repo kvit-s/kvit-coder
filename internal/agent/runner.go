@@ -166,6 +166,12 @@ type runState struct {
 	// persistedUpTo is how much of messages has already reached the session.
 	// Everything after it is what the current iteration has produced.
 	persistedUpTo int
+	// responsesSeen and reasoningSeen answer the question "merge_thinking is on,
+	// so where is the thinking?". Not every model returns readable reasoning,
+	// and one that does not leaves the setting looking broken.
+	responsesSeen  int
+	reasoningSeen  bool
+	thinkingWarned bool
 	// contextWarned stops the "running out of context" warning repeating every
 	// iteration once it has been said.
 	contextWarned bool

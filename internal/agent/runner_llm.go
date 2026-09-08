@@ -205,6 +205,13 @@ func (r *Runner) processLLMResponse(ctx context.Context, resp *llm.ChatResponse,
 
 	assistantMsg := resp.Choices[0].Message
 
+	// Note whether the model gave us anything readable to merge, before the
+	// normalizer folds it away.
+	state.responsesSeen++
+	if assistantMsg.ReasoningContent != "" {
+		state.reasoningSeen = true
+	}
+
 	// Apply response normalization middleware
 	toolCallsExtracted := state.normalizer.NormalizeResponse(&assistantMsg)
 	if toolCallsExtracted {
@@ -230,6 +237,7 @@ func (r *Runner) processLLMResponse(ctx context.Context, resp *llm.ChatResponse,
 		state.agentStats.MaxContextUsed = state.totalTokens
 	}
 	r.checkContextBudget(promptTokens, state)
+	r.checkThinkingArrives(state)
 
 	// Ask the endpoint for cost and native token counts. This is OpenRouter's
 	// /generation endpoint and 404s elsewhere, so it is opt-in; it is also the
@@ -329,4 +337,33 @@ func (r *Runner) checkContextBudget(promptTokens int, state *runState) {
 		"the conversation is using %d of the model's %d token window (%.0f%%). "+
 			"Finish what is in progress; a new session will start from a clean context",
 		promptTokens, limit, 100*float64(promptTokens)/float64(limit)))
+}
+
+// thinkingSilenceLimit is how many answers to wait for before concluding that
+// this model is not going to send readable reasoning.
+const thinkingSilenceLimit = 3
+
+// checkThinkingArrives says so, once, when merge_thinking is on but the model
+// never sends anything to merge.
+//
+// A reasoning model returns its thinking as encrypted blocks, which kvit-coder
+// can replay but nobody can read, plus an optional summary — and the summary is
+// the only readable part. Whether one is sent is the provider's choice: on the
+// endpoint this was written against, summaries arrive on most turns that answer
+// directly and on few that call a tool, which is nearly every turn of an agent.
+// Without this notice the setting simply appears to do nothing.
+func (r *Runner) checkThinkingArrives(state *runState) {
+	if !r.cfg.LLM.MergeThinking || state.reasoningSeen || state.thinkingWarned {
+		return
+	}
+	if state.responsesSeen < thinkingSilenceLimit {
+		return
+	}
+	state.thinkingWarned = true
+	r.writer.Warn(fmt.Sprintf(
+		"merge_thinking is on, but this model has sent no readable reasoning in %d answers. "+
+			"Its thinking is encrypted and only a summary can be read, which the provider "+
+			"sends at its own discretion — often not on turns that call a tool. Nothing is "+
+			"wrong with the setting; there is simply nothing to merge",
+		state.responsesSeen))
 }
