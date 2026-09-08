@@ -54,10 +54,6 @@ func ParseMode(s string) Mode {
 	}
 }
 
-// headingBlue is the 256-color bright blue used for all heading levels:
-// distinct from the HiWhite body text, readable on a dark terminal.
-const headingBlue = "12"
-
 // bodyGray is the dark-style body text color, reused as the inline-code
 // foreground so `code` reads as gray background only, without the stock
 // dark style's red foreground.
@@ -67,7 +63,6 @@ const bodyGray = "252"
 const codeBackground = "236"
 
 func stringPtr(s string) *string { return &s }
-func boolPtr(b bool) *bool       { return &b }
 func uintPtr(u uint) *uint       { return &u }
 
 // kvitStyle starts from the stock dark style and applies the program's
@@ -78,11 +73,8 @@ func uintPtr(u uint) *uint       { return &u }
 //     Margin*2), so a 100-column terminal only gets 96 columns of prose
 //     and every line carries a 2-space indent for no reason. Full-width
 //     left-aligned prose wraps where the terminal does.
-//   - headings: all six levels blue bold with no background. Stock h1 is
-//     yellow on a purple full-width bar and h6 is green non-bold, so
-//     titles render inconsistently; h2-h5 already inherit blue bold from
-//     heading but are pinned explicitly so the contract does not depend
-//     on inheritance.
+//   - headings: stock dark (h1 yellow on a purple full-width bar, h2-h5
+//     blue bold, h6 green). Left untouched on purpose.
 //   - inline code: gray background only. Stock is red foreground (203) on
 //     gray (236) with extra padding spaces around the span, which renders
 //     as double spaces ("no  ttyline  package") once combined with the
@@ -92,26 +84,6 @@ func kvitStyle() ansi.StyleConfig {
 	cfg := styles.DarkStyleConfig
 
 	cfg.Document.Margin = uintPtr(0)
-
-	cfg.Heading.Color = stringPtr(headingBlue)
-	cfg.Heading.Bold = boolPtr(true)
-
-	cfg.H1.Color = stringPtr(headingBlue)
-	cfg.H1.BackgroundColor = nil
-	cfg.H1.Bold = boolPtr(true)
-	cfg.H1.Prefix = ""
-	cfg.H1.Suffix = ""
-
-	cfg.H2.Color = stringPtr(headingBlue)
-	cfg.H2.Bold = boolPtr(true)
-	cfg.H3.Color = stringPtr(headingBlue)
-	cfg.H3.Bold = boolPtr(true)
-	cfg.H4.Color = stringPtr(headingBlue)
-	cfg.H4.Bold = boolPtr(true)
-	cfg.H5.Color = stringPtr(headingBlue)
-	cfg.H5.Bold = boolPtr(true)
-	cfg.H6.Color = stringPtr(headingBlue)
-	cfg.H6.Bold = boolPtr(true)
 
 	cfg.Code.Color = stringPtr(bodyGray)
 	cfg.Code.BackgroundColor = stringPtr(codeBackground)

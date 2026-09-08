@@ -184,8 +184,9 @@ fixes `-p`, `-pq` (on a TTY), and interactive UI sessions at once. No
 - Width: reuse existing `termWidth()` (`COLUMNS`, 40–250, default 100) and
   pass to glamour word wrap. No new width plumbing.
 - Style: dark-derived custom style (`kvitStyle` in `internal/markdown`):
-  all headings blue bold with no background bar (stock h1 is yellow on
-  purple, h6 green non-bold); inline code gray background only
+  headings stock dark (h1 yellow on a purple bar, h2-h5 blue bold, h6
+  green — reverted from the all-blue-bold experiment, kept because the
+  distinct levels read better); inline code gray background only
   (stock red foreground removed, affix padding spaces cleared so source
   single spaces stay single); document margin 0 so prose uses the full
   width left-aligned instead of a 2-space indent with 4 columns lost.
@@ -214,8 +215,8 @@ Environment (`NO_COLOR`, `TERM`, `COLUMNS`) overrides style/width as usual.
    `glamour@v0.9.1` with a dark-derived custom style (`kvitStyle`) and word
    wrap. v0.9.1 was chosen because it matches the repo's
    `lipgloss v1.1.0` / `termenv v0.16.0` exactly; v0.10.0/v1.0.0 would drag
-   lipgloss to a pseudo-version. The style pins all headings to blue bold
-   (256-color 12 → SGR 94) with no h1 background bar, inline code to body
+   lipgloss to a pseudo-version. The style keeps stock dark headings (h1
+   yellow on purple, h2-h5 blue bold, h6 green), pins inline code to body
    gray (252) on gray background (236) with no affix spaces, and document
    margin 0 for full-width prose. `Render` ANSI-aware right-trims every
    line (glamour pads to the wrap width) and returns the input unchanged
@@ -237,7 +238,7 @@ Environment (`NO_COLOR`, `TERM`, `COLUMNS`) overrides style/width as usual.
    sample in `config.yaml`.
 4. Tests: `internal/markdown/markdown_test.go` (headings, emphasis, fences,
    tables, lists, quotes, empty/oversized input, width clamps, wrap
-   behavior, plus blue-bold headings on all levels, gray-only inline code
+   behavior, plus stock-dark headings check, gray-only inline code
    with single spaces, no trailing padding on the regression paragraph,
    full-width prose, and `trimRightANSI` unit cases);
    `internal/ui/writer_markdown_test.go` (pipe/TTY ×
@@ -249,7 +250,7 @@ Environment (`NO_COLOR`, `TERM`, `COLUMNS`) overrides style/width as usual.
    phrases.
 5. Docs: this file; `README.md` usage note; `config.yaml` comments. The
    `markdown_style` custom-style option from the sketch was deferred — the
-   built-in `kvitStyle` derivation covers the palette (blue bold titles,
+   built-in `kvitStyle` derivation covers the palette (stock titles,
    gray-background code) without a user-supplied style file.
 
 ### 3.8 Risks

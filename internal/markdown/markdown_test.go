@@ -137,32 +137,21 @@ func TestRenderWidthWraps(t *testing.T) {
 	}
 }
 
-// TestRenderHeadingsBlueBold: every heading level renders blue bold with
-// no stock background bar (h1 yellow/purple) or off-palette level color
-// (h6 green non-bold).
-func TestRenderHeadingsBlueBold(t *testing.T) {
-	for _, src := range []string{
-		"# H1\n",
-		"## H2\n",
-		"### H3\n",
-		"#### H4\n",
-		"##### H5\n",
-		"###### H6\n",
-	} {
-		out := Render(src, 80)
-		// Bright blue: termenv renders 256-color "12" as SGR 94.
-		if !strings.Contains(out, "\x1b[94") {
-			t.Errorf("%q: heading has no blue code: %q", src, out)
-		}
-		if !strings.Contains(out, ";1m") && !strings.Contains(out, "[1m") {
-			t.Errorf("%q: heading has no bold code: %q", src, out)
-		}
-	}
+// TestRenderHeadingsStockDark: headings keep the stock dark look (h1
+// yellow on a purple bar, h2 blue bold, h6 green) — reverted from the
+// all-blue-bold experiment on purpose.
+func TestRenderHeadingsStockDark(t *testing.T) {
 	h1 := Render("# Title\n", 80)
-	for _, banned := range []string{"48;5;63", "38;5;228"} {
-		if strings.Contains(h1, banned) {
-			t.Errorf("h1 kept stock yellow/purple style %q: %q", banned, h1)
-		}
+	if !strings.Contains(h1, "48;5;63") || !strings.Contains(h1, "38;5;228") {
+		t.Errorf("h1 lost its stock yellow/purple style: %q", h1)
+	}
+	h2 := Render("## Sub\n", 80)
+	if !strings.Contains(h2, "39") {
+		t.Errorf("h2 lost its stock blue style: %q", h2)
+	}
+	h6 := Render("###### Tiny\n", 80)
+	if !strings.Contains(h6, "35") {
+		t.Errorf("h6 lost its stock green style: %q", h6)
 	}
 }
 
