@@ -185,6 +185,8 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 			CacheReadTokens:  result.Stats.TotalCacheReadTokens,
 			TotalCost:        result.Stats.TotalCost,
 			CacheDiscount:    result.Stats.CacheDiscount,
+			ContextUsed:      result.Stats.MaxContextUsed,
+			ContextWindow:    cfg.LLM.Context,
 			DurationMs:       result.Stats.TotalAgentTime.Milliseconds(),
 			Steps:            result.Stats.Steps,
 		})
@@ -202,6 +204,11 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 			fmt.Fprintln(os.Stderr)
 			fmt.Fprintln(os.Stderr, strings.Repeat("─", 50))
 			fmt.Fprintf(os.Stderr, "Session: %s%s\n", sessionName, backgroundSuffix(sess))
+			// The window is the selected model's, so the share is the same
+			// number the per-step status lines were counting toward.
+			if used := result.Stats.MaxContextUsed; used > 0 {
+				fmt.Fprintf(os.Stderr, "Context: %s\n", ui.FormatContextUsed(used, cfg.LLM.Context))
+			}
 		}
 	}
 	reportPersistent(writer, sess, turnPersistent, quietMode)

@@ -475,6 +475,55 @@ func TestFormatContextStrWithProcs(t *testing.T) {
 	}
 }
 
+// TestFormatContextUsed: the turn-end footing line, the same numbers the
+// per-step status was counting toward — used over the window with the
+// share, and the bare count when no window is configured.
+func TestFormatContextUsed(t *testing.T) {
+	if got := FormatContextUsed(8400, 1048576); got != "8.4k / 1.0M (1%)" {
+		t.Errorf("typical turn = %q", got)
+	}
+	// A heavier turn keeps the same scale and shares the same rounding.
+	if got := FormatContextUsed(500000, 1048576); got != "500k / 1.0M (48%)" {
+		t.Errorf("heavy turn = %q", got)
+	}
+	if got := FormatContextUsed(10, 1048576); got != "10 / 1.0M (0%)" {
+		t.Errorf("small turn = %q", got)
+	}
+	if got := FormatContextUsed(0, 1048576); got != "0 / 1.0M (0%)" {
+		t.Errorf("zero = %q, want the zeroed shape", got)
+	}
+	// No configured window: the bare count, like the step lines do.
+	if got := FormatContextUsed(8400, 0); got != "8.4k" {
+		t.Errorf("no window = %q, want the bare count", got)
+	}
+	// A sub-1M window stays on the k scale.
+	if got := FormatContextUsed(262144, 262144); got != "262k / 262k (100%)" {
+		t.Errorf("full 256k window = %q", got)
+	}
+}
+
+// TestFormatTokens: the k/M scale the window count uses.
+func TestFormatTokens(t *testing.T) {
+	cases := []struct {
+		n    int
+		want string
+	}{
+		{999, "999"},
+		{1000, "1.0k"},
+		{8400, "8.4k"},
+		{128000, "128k"},
+		{262144, "262k"},
+		{999999, "1.0M"},
+		{1048576, "1.0M"},
+		{1310720, "1.3M"},
+	}
+	for _, c := range cases {
+		if got := FormatTokens(c.n); got != c.want {
+			t.Errorf("FormatTokens(%d) = %q, want %q", c.n, got, c.want)
+		}
+	}
+}
+
 // TestFormatContextStrWithProcs2: ephemeral ride blue as ★N, persistent red
 // as ★N!, and zero of each keeps the header byte-identical.
 func TestFormatContextStrWithProcs2(t *testing.T) {

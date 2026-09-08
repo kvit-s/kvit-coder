@@ -223,6 +223,36 @@ func ShortenBlockMessage(blockMsg string) string {
 	return blockMsg
 }
 
+// FormatTokens renders a token count on a k/M scale: "8.4k", "128k", "1.0M".
+// The M scale starts just under a million so 999999 rounds to "1.0M" rather
+// than an unreadable "1000k".
+func FormatTokens(n int) string {
+	switch {
+	case n >= 995000:
+		return fmt.Sprintf("%.1fM", float64(n)/1000000)
+	case n >= 100000:
+		return fmt.Sprintf("%.0fk", float64(n)/1000)
+	case n >= 1000:
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
+// FormatContextUsed reports how much of the window a turn's peak context
+// reached, e.g. "8.4k / 1.0M (1%)". The used count and the window share the
+// same k/M scale (FormatTokens), and the share rounds the way
+// FormatContextStr rounds it. No configured window (window <= 0) leaves the
+// bare used count, mirroring how the per-step status drops the percent.
+func FormatContextUsed(used, window int) string {
+	count := FormatTokens(used)
+	if window <= 0 {
+		return count
+	}
+	pct := 100 * float64(used) / float64(window)
+	return fmt.Sprintf("%s / %s (%.0f%%)", count, FormatTokens(window), pct)
+}
+
 // FormatContextStr formats context usage for display.
 // It shows what is used and the share of the window in use, e.g. "8.4k 1%":
 // the raw count on its own never said whether anything needed doing about it.

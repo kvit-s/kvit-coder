@@ -74,8 +74,12 @@ type JSONStats struct {
 	CacheReadTokens  int     `json:"cache_read_tokens,omitempty"`
 	TotalCost        float64 `json:"total_cost_usd,omitempty"`
 	CacheDiscount    float64 `json:"cache_discount_usd,omitempty"`
-	DurationMs       int64   `json:"duration_ms"`
-	Steps            int     `json:"steps"`
+	// The turn's peak context, and the window it was measured against, so a
+	// consumer of the document can tell a small turn from a near-full one.
+	ContextUsed   int   `json:"context_used"`
+	ContextWindow int   `json:"context_window"`
+	DurationMs    int64 `json:"duration_ms"`
+	Steps         int   `json:"steps"`
 }
 
 // Writer provides formatted output with consistent prefixes and optional colors.
