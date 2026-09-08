@@ -21,7 +21,7 @@ var (
 
 func main() {
 	// Parse flags
-	configPath := flag.String("config", "config.yaml", "path to config file")
+	configPath := flag.String("config", "", "path to config file (default: the first of $KVIT_CODER_CONFIG, ./config.yaml, ~/.kvit-coder/config.yaml, config.yaml beside the binary)")
 	agentPath := flag.String("agent-path", "", "path to kvit-coder binary (auto-detected if not specified)")
 	sessionName := flag.String("s", "", "session name: continue existing session or create new one")
 	continueLast := flag.Bool("c", false, "continue the most recent session")
@@ -93,8 +93,22 @@ func main() {
 		}
 	}
 
+	// With no -config, look for the file in the usual places rather than only
+	// in the directory the UI was started from, so it runs from anywhere. The
+	// path is made absolute because every turn's agent process is given it.
+	resolvedConfig, note, err := config.ResolvePath(*configPath)
+	if note != "" {
+		fmt.Fprintln(os.Stderr, note)
+	}
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	if abs, err := filepath.Abs(resolvedConfig); err == nil {
+		resolvedConfig = abs
+	}
+
 	// Load config to display info
-	cfg, err := config.Load(*configPath)
+	cfg, err := config.Load(resolvedConfig)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
@@ -170,7 +184,7 @@ func main() {
 	// Create and run UI
 	ui := tui.New(tui.Options{
 		AgentPath:        agentBinary,
-		ConfigPath:       *configPath,
+		ConfigPath:       resolvedConfig,
 		SessionName:      currentSession,
 		SessionMgr:       sessionMgr,
 		Config:           cfg,

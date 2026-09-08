@@ -35,6 +35,14 @@ parsing shell commands into a syntax tree.
 answer). `./kvit-coder-ui` is the interactive front end; it does not link the
 agent, it spawns `kvit-coder` as a child process per turn.
 
+`scripts/install.sh` symlinks both binaries into `~/.local/bin`, plus `kc` for
+the front end, so a session can be started in any directory. With no `-config`,
+both binaries take the first of `$KVIT_CODER_CONFIG`, `./config.yaml`,
+`~/.kvit-coder/config.yaml`, and `config.yaml` beside the binary with symlinks
+resolved (`internal/config/discover.go`); a `config.yaml` with no `llm:` or
+`models:` section is skipped as another program's file. The directory the command
+runs in is the workspace, because `workspace.root` is `"."`.
+
 ## The two facts that shape everything
 
 **One operating-system process per turn.** The agent starts, reads the session

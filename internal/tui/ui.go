@@ -663,7 +663,7 @@ func (u *UI) runAgent(prompt string, images []string) {
 	}
 
 	// Pass config file
-	if u.configPath != "" && u.configPath != "config.yaml" {
+	if u.configPath != "" {
 		args = append(args, "-config", u.configPath)
 	}
 

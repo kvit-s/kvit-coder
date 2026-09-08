@@ -2,6 +2,7 @@ package agent
 
 import (
 	"os"
+	"path/filepath"
 	"time"
 
 	"go.uber.org/zap"
@@ -23,7 +24,14 @@ func NewLogger(logPath string, development bool) (*Logger, error) {
 		return &Logger{zap: zap.NewNop()}, nil
 	}
 
-	// Open log file
+	// Open log file. The default lives under ~/.kvit-coder/logs so that running
+	// the agent in a project directory does not drop a log file in it, and that
+	// directory will not exist on a first run.
+	if dir := filepath.Dir(logPath); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return nil, err
+		}
+	}
 	logFile, err := os.OpenFile(logPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return nil, err

@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -38,7 +37,7 @@ func (c *Config) CheckPathPermission(path string, accessType AccessType) (Permis
 
 	// Check denied paths first (highest priority)
 	for _, denied := range c.Workspace.DeniedPaths {
-		deniedAbs, _ := filepath.Abs(expandPath(denied))
+		deniedAbs, _ := filepath.Abs(ExpandHome(denied))
 		if pathWithin(deniedAbs, absPath) {
 			return PermissionDenied, fmt.Errorf("path is in denied_paths")
 		}
@@ -52,7 +51,7 @@ func (c *Config) CheckPathPermission(path string, accessType AccessType) (Permis
 
 	// Check allowed_paths (read+write)
 	for _, allowed := range c.Workspace.AllowedPaths {
-		allowedAbs, _ := filepath.Abs(expandPath(allowed))
+		allowedAbs, _ := filepath.Abs(ExpandHome(allowed))
 		if pathWithin(allowedAbs, absPath) {
 			return PermissionGranted, nil
 		}
@@ -60,7 +59,7 @@ func (c *Config) CheckPathPermission(path string, accessType AccessType) (Permis
 
 	// Check allowed_read_paths (read-only)
 	for _, allowedRead := range c.Workspace.AllowedReadPaths {
-		allowedReadAbs, _ := filepath.Abs(expandPath(allowedRead))
+		allowedReadAbs, _ := filepath.Abs(ExpandHome(allowedRead))
 		if pathWithin(allowedReadAbs, absPath) {
 			if accessType == AccessWrite {
 				return PermissionReadOnly, fmt.Errorf("path is read-only")
@@ -105,12 +104,4 @@ func pathWithin(parent, child string) bool {
 		return false
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-func expandPath(path string) string {
-	if strings.HasPrefix(path, "~/") {
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, path[2:])
-	}
-	return path
 }

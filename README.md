@@ -31,6 +31,21 @@ go build -o kvit-coder ./cmd/kvit-coder
 go build -o kvit-coder-ui ./cmd/kvit-coder-ui
 ```
 
+### Install
+
+```bash
+scripts/install.sh
+```
+
+That builds both binaries and links them from `~/.local/bin` (or `$KVIT_BIN_DIR`,
+or `--bin-dir <dir>`) back into the checkout, under three names: `kc` and
+`kvit-coder-ui` for the interactive front end, `kvit-coder` for the headless
+agent. They are symlinks, so a later `scripts/build.sh` is all it takes to update
+them. `scripts/install.sh --uninstall` removes them again.
+
+Once they are on the `$PATH`, `kc` starts a session in whatever directory it is
+run from, and that directory is the workspace the model reads and writes.
+
 ### Configure
 
 The repository's own `config.yaml` is a working example. A minimal one:
@@ -67,17 +82,31 @@ tools:
     enabled: true
 ```
 
+Without `-config`, both binaries take the first of these that exists:
+`$KVIT_CODER_CONFIG`, `config.yaml` in the directory the command was run in,
+`~/.kvit-coder/config.yaml`, and `config.yaml` next to the binary itself. The
+last one is what the installed `kc` normally uses, since the symlink resolves
+into the checkout; a file at `~/.kvit-coder/config.yaml` overrides it everywhere,
+and a `config.yaml` in a project directory overrides it for that project. A
+`config.yaml` belonging to some other program is passed over rather than loaded,
+with a line on stderr saying so — the file has to have an `llm:` or `models:`
+section to count as one of ours.
+
 ### Run
 
 ```bash
+# Interactive, in any directory once scripts/install.sh has run;
+# the directory it starts in is the workspace
+kc
+
+# The same thing from the checkout, without installing
+./kvit-coder-ui
+
 # Headless mode (single prompt, exits after completion)
 ./kvit-coder -p "Find all TODO comments in the codebase"
 
 # Quiet mode (only print final answer)
 ./kvit-coder -pq "What does main.go do?"
-
-# Interactive TUI
-./kvit-coder-ui
 ```
 
 On a terminal the final answer is rendered as styled markdown (headings,
@@ -148,11 +177,11 @@ Plan/Checkpoint tools and Tasks tools are mutually exclusive — enable one grou
 | `-p <prompt>` | Run with prompt and exit | - |
 | `-pq <prompt>` | Quiet mode: only print final response | - |
 | `-image <path>` | Attach an image file to the prompt (repeatable) | - |
-| `-config <path>` | Config file path | `config.yaml` |
+| `-config <path>` | Config file path | first found (see [Configure](#configure)) |
 | `-model <name>` | Override model | from config |
 | `-base-url <url>` | Override LLM endpoint | from config |
 | `-agent-file <path>` | Append file content to system prompt | - |
-| `-log <path>` | Log file (empty to disable) | `kvit-coder.log` |
+| `-log <path>` | Log file (empty to disable) | `~/.kvit-coder/logs/kvit-coder.log` |
 | `--json` | Structured JSON output to stderr | false |
 | `-s <name>` | Continue or create named session | - |
 | `-c` | Continue the most recent session | - |
@@ -166,7 +195,7 @@ Plan/Checkpoint tools and Tasks tools are mutually exclusive — enable one grou
 
 | Flag | Description | Default |
 |------|-------------|---------|
-| `-config <path>` | Config file path | `config.yaml` |
+| `-config <path>` | Config file path | first found (see [Configure](#configure)) |
 | `-agent-path <path>` | Path to kvit-coder binary | auto-detected |
 | `-s <name>` | Continue or create named session | - |
 | `-c` | Continue the most recent session | - |

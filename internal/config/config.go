@@ -998,7 +998,7 @@ func readOnlyTool(toolName string) bool {
 // through allowed_paths or — for a tool that only reads — allowed_read_paths.
 func (c *Config) pathIsPermitted(absPath string, readOnly bool) bool {
 	for _, allowed := range c.Workspace.AllowedPaths {
-		if allowedAbs, err := filepath.Abs(expandPath(allowed)); err == nil && pathWithin(allowedAbs, absPath) {
+		if allowedAbs, err := filepath.Abs(ExpandHome(allowed)); err == nil && pathWithin(allowedAbs, absPath) {
 			return true
 		}
 	}
@@ -1006,7 +1006,7 @@ func (c *Config) pathIsPermitted(absPath string, readOnly bool) bool {
 		return false
 	}
 	for _, allowed := range c.Workspace.AllowedReadPaths {
-		if allowedAbs, err := filepath.Abs(expandPath(allowed)); err == nil && pathWithin(allowedAbs, absPath) {
+		if allowedAbs, err := filepath.Abs(ExpandHome(allowed)); err == nil && pathWithin(allowedAbs, absPath) {
 			return true
 		}
 	}

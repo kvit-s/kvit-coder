@@ -46,7 +46,7 @@ func main() {
 	}
 
 	// Parse flags
-	configPath := flag.String("config", "config.yaml", "path to config file")
+	configPath := flag.String("config", "", "path to config file (default: the first of $KVIT_CODER_CONFIG, ./config.yaml, ~/.kvit-coder/config.yaml, config.yaml beside the binary)")
 	model := flag.String("model", "", "select model: :mN, index, id, name or wire id from models:, with optional :effort (e.g. --model m3:xhigh)")
 	modelShort := flag.String("m", "", "shorthand for --model")
 	baseURL := flag.String("base-url", "", "override LLM base URL")
@@ -55,7 +55,7 @@ func main() {
 	flag.Var(effort, "effort", "reasoning effort for the selected model (empty clears it)")
 	effortShort := &stringFlag{}
 	flag.Var(effortShort, "e", "shorthand for --effort")
-	logFile := flag.String("log", "kvit-coder.log", "log file path (empty to disable)")
+	logFile := flag.String("log", "~/.kvit-coder/logs/kvit-coder.log", "log file path (empty to disable)")
 	execPrompt := flag.String("p", "", "exec mode: run with this prompt and exit after completion")
 	quietPrompt := flag.String("pq", "", "quiet exec mode: run with this prompt and only print final LLM response")
 	wakeOnly := flag.Bool("wake", false, "inbox-only turn: skip the user message and process pending inbox/proc events")
@@ -214,7 +214,7 @@ func main() {
 	}
 
 	// Initialize logger
-	logger, err := agent.NewLogger(*logFile, false)
+	logger, err := agent.NewLogger(config.ExpandHome(*logFile), false)
 	if err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
@@ -222,7 +222,6 @@ func main() {
 
 	// Determine config path - if benchmark mode has a suffix, use config-{suffix}.yaml
 	// Use "." for no suffix (plain benchmark mode)
-	actualConfigPath := *configPath
 	benchmarkEnabled := *benchmarkMode != ""
 	benchmarkSuffix := *benchmarkMode
 	if benchmarkSuffix == "." {
@@ -243,12 +242,24 @@ func main() {
 	}
 
 	// Use config-{suffix}.yaml if suffix is provided (from any benchmark mode)
-	if benchmarkSuffix != "" && *configPath == "config.yaml" {
-		actualConfigPath = fmt.Sprintf("config-%s.yaml", benchmarkSuffix)
-	} else if haystackSuffix != "" && *configPath == "config.yaml" {
-		actualConfigPath = fmt.Sprintf("config-%s.yaml", haystackSuffix)
-	} else if thinkbenchSuffix != "" && *configPath == "config.yaml" {
-		actualConfigPath = fmt.Sprintf("config-%s.yaml", thinkbenchSuffix)
+	configName := config.DefaultConfigName
+	switch {
+	case benchmarkSuffix != "":
+		configName = fmt.Sprintf("config-%s.yaml", benchmarkSuffix)
+	case haystackSuffix != "":
+		configName = fmt.Sprintf("config-%s.yaml", haystackSuffix)
+	case thinkbenchSuffix != "":
+		configName = fmt.Sprintf("config-%s.yaml", thinkbenchSuffix)
+	}
+
+	// With no -config, look for the file in the usual places rather than only
+	// in the directory the agent was started from, so it runs from anywhere.
+	actualConfigPath, note, err := config.ResolveNamed(*configPath, configName)
+	if note != "" {
+		fmt.Fprintln(os.Stderr, note)
+	}
+	if err != nil {
+		log.Fatalf("%v", err)
 	}
 
 	// Load config
