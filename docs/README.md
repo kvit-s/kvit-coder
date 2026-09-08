@@ -12,6 +12,7 @@ repository root's `README.md`; these are the documents behind its current shape.
 | [`redesign-plan.md`](redesign-plan.md) | How `redesign.md` was implemented, stage by stage. All eleven stages are committed; the header records what is left. |
 | [`redesign-mcp.md`](redesign-mcp.md) | A proposal, not yet built. One process per turn tears down MCP server connections every turn, which costs more than the reconnect time for servers holding per-connection state. Proposes a separate long-running program that holds them. |
 | [`bench-refactor.md`](bench-refactor.md) | A proposal, not yet built. Moving the benchmark harness out of the agent binary into its own command. |
+| [`tools-stats.md`](tools-stats.md) | Which tools the model actually calls, measured from the saved sessions, with the script that regenerates the numbers. A snapshot to decide from later, not a recommendation. |
 | [`agents-ram.md`](agents-ram.md) | Measured memory cost of one session of each coding agent on this machine, September 2026. Reference for how many can run at once, not about kvit-coder's design. |
 
 ## Archive

@@ -431,6 +431,15 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 	return result, nil
 }
 
+// ToolNames is what this run offered the model, for the record a session keeps
+// of the settings a turn ran with.
+func (r *Runner) ToolNames() []string {
+	if r.registry == nil {
+		return nil
+	}
+	return r.registry.ListTools()
+}
+
 // toolCallExtractor returns the registry when tool calls should be scraped out
 // of the model's prose, and nil when they should not. Under the strong profile
 // the model is expected to emit proper tool calls, and reading its prose for

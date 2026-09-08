@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -20,7 +21,7 @@ func TestAppendLoadRoundTrip(t *testing.T) {
 		t.Fatalf("Open: %v", err)
 	}
 
-	if err := sess.Settings("test-model", false); err != nil {
+	if err := sess.Settings("test-model", false, []string{"Read", "Shell"}); err != nil {
 		t.Fatalf("Settings: %v", err)
 	}
 	messages := []llm.Message{
@@ -356,5 +357,45 @@ func TestMostRecentIsWhatContinueResolvesTo(t *testing.T) {
 	}
 	if name, _ := mgr.MostRecent(); name != "older" {
 		t.Errorf("after using it again MostRecent gave %q, want \"older\"", name)
+	}
+}
+
+// TestSettingsRecordTheToolsOnOffer: which tools a turn ran with is the only
+// thing that says what the model could have called, and the configuration that
+// produced it changes between sessions. Counting calls against today's config
+// would answer a question about today rather than about the session being read.
+func TestSettingsRecordTheToolsOnOffer(t *testing.T) {
+	mgr := setupTestManager(t)
+	sess, err := mgr.Open("tools-recorded")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	offered := []string{"Read", "Shell", "Question"}
+	if err := sess.Settings("test-model", false, offered); err != nil {
+		t.Fatalf("Settings: %v", err)
+	}
+
+	line, err := os.ReadFile(filepath.Join(mgr.BaseDir(), "tools-recorded", "history.jsonl"))
+	if err != nil {
+		t.Fatalf("read history: %v", err)
+	}
+	var ev Event
+	if err := json.Unmarshal(bytes.TrimSpace(line), &ev); err != nil {
+		t.Fatalf("parse the settings line: %v", err)
+	}
+	if ev.Kind != KindSettings {
+		t.Fatalf("first line is %q, want the settings event", ev.Kind)
+	}
+	if strings.Join(ev.Tools, ",") != strings.Join(offered, ",") {
+		t.Errorf("recorded tools %v, want %v", ev.Tools, offered)
+	}
+
+	// A settings line still carries no conversation.
+	loaded, err := sess.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if len(loaded) != 0 {
+		t.Errorf("Load returned %d messages from a settings-only session, want none", len(loaded))
 	}
 }

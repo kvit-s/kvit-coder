@@ -87,7 +87,7 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 		if err := sess.SaveMeta(); err != nil {
 			writer.Debug(fmt.Sprintf("Failed to write session metadata: %v", err))
 		}
-		if err := sess.Settings(cfg.LLM.Model, cfg.LLM.MergeThinking); err != nil {
+		if err := sess.Settings(cfg.LLM.Model, cfg.LLM.MergeThinking, runner.ToolNames()); err != nil {
 			writer.Debug(fmt.Sprintf("Failed to record session settings: %v", err))
 		}
 		if err := sess.AppendMessages(stripProjectInstructions([]llm.Message{userMsg}, projectInstructions)); err != nil {

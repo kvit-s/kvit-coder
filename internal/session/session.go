@@ -82,9 +82,14 @@ type Event struct {
 	// Text accompanies KindNotice.
 	Text string `json:"text,omitempty"`
 
-	// Model and MergeThinking accompany KindSettings.
-	Model         string `json:"model,omitempty"`
-	MergeThinking *bool  `json:"merge_thinking,omitempty"`
+	// Model, MergeThinking and Tools accompany KindSettings. Tools is what was
+	// registered for the turn, which is the only record of what the model was
+	// offered: the configuration that produced it can change between one
+	// session and the next, so counting calls against today's config answers
+	// a question about today rather than about the session being read.
+	Model         string   `json:"model,omitempty"`
+	MergeThinking *bool    `json:"merge_thinking,omitempty"`
+	Tools         []string `json:"tools,omitempty"`
 
 	// Dropped accompanies KindRollback: how many messages at the end of the
 	// history so far are no longer part of the conversation.
@@ -321,9 +326,14 @@ func (s *Session) Notice(text string) error {
 }
 
 // Settings records what this turn ran with, so a transcript read weeks later
-// says which model and options produced it.
-func (s *Session) Settings(model string, mergeThinking bool) error {
-	return s.Append(Event{Kind: KindSettings, Model: model, MergeThinking: &mergeThinking})
+// says which model, options and tools produced it.
+func (s *Session) Settings(model string, mergeThinking bool, tools []string) error {
+	return s.Append(Event{
+		Kind:          KindSettings,
+		Model:         model,
+		MergeThinking: &mergeThinking,
+		Tools:         tools,
+	})
 }
 
 // Load returns the conversation, in order, as the messages to send to the
