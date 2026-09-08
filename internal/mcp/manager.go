@@ -26,6 +26,20 @@ type Manager struct {
 
 	mu      sync.Mutex
 	servers []*serverConn
+
+	// What the last Connect cost, for the question in docs/redesign-mcp.md
+	// section 9: is per-turn reconnection worth building a daemon to avoid?
+	connectTook   time.Duration
+	slowestServer string
+}
+
+// ConnectCost reports how long the last Connect took -- the wall clock of its
+// slowest server, since they are dialed concurrently -- and which server that
+// was. Zero when nothing was dialed.
+func (m *Manager) ConnectCost() (time.Duration, string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.connectTook, m.slowestServer
 }
 
 // serverConn is one connected server and the tools it advertised.
@@ -85,6 +99,7 @@ func (m *Manager) Connect(ctx context.Context) error {
 		conn *serverConn
 		err  error
 		name string
+		took time.Duration
 	}
 
 	var wg sync.WaitGroup
@@ -109,8 +124,9 @@ func (m *Manager) Connect(ctx context.Context) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			started := time.Now()
 			conn, err := m.connectOne(ctx, sc)
-			results <- result{conn: conn, err: err, name: sc.Name}
+			results <- result{conn: conn, err: err, name: sc.Name, took: time.Since(started)}
 		}()
 	}
 
@@ -121,14 +137,27 @@ func (m *Manager) Connect(ctx context.Context) error {
 
 	var failed []string
 	var conns []*serverConn
+	// How long the slowest server took, and which it was. Under one process per
+	// turn this is paid on every instruction, so it is the number the daemon in
+	// docs/redesign-mcp.md would remove -- worth observing rather than
+	// estimating before deciding to build one.
+	var slowest time.Duration
+	var slowestName string
 	for r := range results {
+		if r.took > slowest {
+			slowest, slowestName = r.took, r.name
+		}
 		if r.err != nil {
-			m.logger.Warn(fmt.Sprintf("mcp: server %q failed to connect: %v", r.name, r.err))
+			m.logger.Warn(fmt.Sprintf("mcp: server %q failed to connect after %s: %v", r.name, r.took.Round(time.Millisecond), r.err))
 			failed = append(failed, r.name)
 			continue
 		}
-		m.logger.Debug(fmt.Sprintf("mcp: server %q connected, %d tools", r.conn.name, len(r.conn.descs)))
+		m.logger.Debug(fmt.Sprintf("mcp: server %q connected in %s, %d tools", r.conn.name, r.took.Round(time.Millisecond), len(r.conn.descs)))
 		conns = append(conns, r.conn)
+	}
+	if slowestName != "" {
+		m.connectTook, m.slowestServer = slowest, slowestName
+		m.logger.Debug(fmt.Sprintf("mcp: connecting cost %s this turn, slowest was %q", slowest.Round(time.Millisecond), slowestName))
 	}
 
 	// Stable order by server name keeps tool ordering deterministic for prompt

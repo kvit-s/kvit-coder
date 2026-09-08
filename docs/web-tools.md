@@ -541,6 +541,35 @@ memory** — and refusing at the door is what makes the lease below worth statin
 because a guarantee that a later arrival can revoke is not one the model can plan
 against.
 
+#### What the per-turn respawn actually costs, measured
+
+Configuring the server made two numbers available that the argument for the
+daemon had to guess at before.
+
+**Bringing the server up costs 583 ms per turn** (574, 581 and 593 ms over three
+runs: `npx`, node start, the `initialize` handshake and `tools/list` for 24
+tools). That is the bottom of the half-second-to-two-seconds range
+`redesign-mcp.md:3.1` estimated, and that section's own conclusion applies
+unchanged: half a second at the front of an instruction is noticeable and is not,
+on its own, worth a second program to avoid. Against a turn whose model calls run
+to tens of seconds at `reasoning_effort: xhigh`, it is a few percent.
+
+**Most of the state loss can be bought back without a daemon at all.** Pointing
+the server at `--user-data-dir=/tmp/kvit-coder-browser/${KVIT_RUN_ID}` gives each
+session its own profile directory, and Chrome persists cookies and local storage
+into it. The process still dies at the turn boundary, but the login does not.
+What is actually lost per turn is the open tabs and the live DOM, which costs a
+re-navigation.
+
+That weakens the case in `redesign-mcp.md:3.2` considerably, because the items on
+its list were led by "a server that holds an authenticated session
+re-authenticates, which in the case of an interactive sign-in means it cannot be
+used." With a persistent profile that one is gone. What remains for the daemon is
+the 583 ms, the re-navigation, and the supervision and per-server log from its
+section 4.3 — a real list, and a shorter one than the document was written
+against. The honest reading is that the daemon should now be argued for on
+evidence from use rather than from this section.
+
 #### The server already does the isolation
 
 Playwright MCP handles multiple concurrent clients itself: `--isolated` gives
@@ -722,13 +751,14 @@ later ones. Steps 1 to 3 are built; the rest are not.
    exist; search returns descriptions rather than content, so fetch what you
    choose; `Web.fetch` sees static HTML only and will say when a page needed a
    browser.
-4. **Move MCP approval memory into the session directory** (an hour). Independent
-   of everything else, and a prerequisite for any MCP server being pleasant to
-   use.
-5. **Configure a browser MCP server** — Playwright MCP or Chrome DevTools MCP,
-   stdio transport, headless Chromium inside WSL — and use it as-is, paying the
-   per-turn respawn. A week of that answers the question the daemon exists to
-   answer, and answers it with observation rather than argument.
+4. **Move MCP approval memory into the session directory** — done. Approvals go
+   to `<session>/mcp-approvals.json`, so `ask_once` means once per session
+   rather than once per turn.
+5. **Configure a browser MCP server** — done. Playwright MCP over stdio against
+   a headless Chromium inside WSL, 24 tools, with a per-session profile
+   directory so the respawn costs a re-navigation rather than a login. Use it as
+   is and see what the respawn actually costs in practice; the measurement above
+   says the daemon is no longer the obvious next step.
 6. **Build the daemon** per `redesign-mcp.md`, with the page budget and the
    three-step reclaim from section 6 above. The isolation itself comes from the
    server rather than the daemon, so what the daemon owes is the cap, the idle
