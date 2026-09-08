@@ -160,7 +160,7 @@ tools:
     usage_log: "~/.kvit-coder/web/usage.jsonl"
 
     search:
-      enabled: false
+      enabled: true
       count: 5                  # results per query
       # Tries before giving up on a 429. The provider allows one request per
       # second, shared with every other program using the key, and refuses the
@@ -172,7 +172,7 @@ tools:
       timeout: 20               # seconds for one request, retries included
 
     fetch:
-      enabled: false
+      enabled: true
       timeout: 30               # a page can be slow in a way an API is not
       max_bytes: 5242880        # stop reading the response after this much HTML
       user_agent: ""            # blank uses the built-in one naming this tool

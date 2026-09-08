@@ -296,6 +296,59 @@ func TestWebFetchReportsHTTPErrorsWithoutFailingTheTurn(t *testing.T) {
 	}
 }
 
+func TestWebFetchSaysWhenTheDownloadCeilingCutThePage(t *testing.T) {
+	// Truncated HTML converts to a fragment that looks like a small page, so
+	// the ceiling biting has to be reported rather than left to be inferred.
+	var body strings.Builder
+	body.WriteString("<html><head><title>Big</title></head><body>")
+	for i := 0; i < 200; i++ {
+		fmt.Fprintf(&body, "<h2>Section %d</h2><p>%s</p>", i, strings.Repeat("filler. ", 40))
+	}
+	body.WriteString("</body></html>")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, body.String())
+	}))
+	defer srv.Close()
+
+	cfg := webCfg(t)
+	cfg.Tools.Web.Fetch.MaxBytes = 4096
+	tool := NewWebFetchTool(cfg, NewTempFileManager(t.TempDir()))
+
+	res := call(t, tool, map[string]any{"url": srv.URL})
+	if res["source_truncated"] != true {
+		t.Errorf("a page cut off by the ceiling should say so, got %v", res)
+	}
+	if w, _ := res["warning"].(string); !strings.Contains(w, "max_bytes") {
+		t.Errorf("the warning should name the setting to raise, got %q", w)
+	}
+}
+
+func TestWebFetchIgnoresACallerSuppliedByteCap(t *testing.T) {
+	// max_bytes is deliberately not in the schema: it caps the source download,
+	// and a caller reading it as a cap on the result truncates the document
+	// mid-tree. An argument that slips through anyway must not shrink the read.
+	var body strings.Builder
+	body.WriteString("<html><body>")
+	for i := 0; i < 60; i++ {
+		fmt.Fprintf(&body, "<h2>Heading %d</h2><p>%s</p>", i, strings.Repeat("substantive text. ", 20))
+	}
+	body.WriteString("</body></html>")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, body.String())
+	}))
+	defer srv.Close()
+
+	res := call(t, newFetchTool(t), map[string]any{"url": srv.URL, "max_bytes": 500})
+	if res["source_truncated"] == true {
+		t.Error("a max_bytes argument should be ignored, not honoured as a source cap")
+	}
+	if lines, _ := res["lines"].(int); lines < 20 {
+		t.Errorf("only %d lines came back; the whole page should have been read", lines)
+	}
+}
+
 func TestWebFetchRefusesNonHTTPSchemes(t *testing.T) {
 	for _, bad := range []string{"file:///etc/passwd", "ftp://example.com/x", "", "not a url at all"} {
 		raw, _ := json.Marshal(map[string]any{"url": bad})

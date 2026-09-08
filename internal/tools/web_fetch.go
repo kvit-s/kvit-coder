@@ -89,10 +89,6 @@ func (t *WebFetchTool) JSONSchema() map[string]any {
 				"type":        "string",
 				"description": "Absolute http:// or https:// URL to fetch",
 			},
-			"max_bytes": map[string]any{
-				"type":        "integer",
-				"description": "Stop reading the response after this many bytes of HTML",
-			},
 		},
 		"required": []string{"url"},
 	}
@@ -124,8 +120,7 @@ need no rendering and no browser.`
 
 func (t *WebFetchTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
 	var params struct {
-		URL      string `json:"url"`
-		MaxBytes int64  `json:"max_bytes"`
+		URL string `json:"url"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return nil, err
@@ -136,10 +131,13 @@ func (t *WebFetchTool) Call(ctx context.Context, args json.RawMessage) (any, err
 		return nil, err
 	}
 
-	maxBytes := params.MaxBytes
-	if maxBytes <= 0 {
-		maxBytes = t.config.Tools.Web.Fetch.MaxBytes
-	}
+	// The ceiling on how much source is downloaded is a safety limit from the
+	// config, not something the caller chooses. It used to be a parameter, and
+	// a model that read it as a cap on the *result* set it to 20 KB, truncating
+	// a 50 KB document mid-tree into a fragment that converted to almost
+	// nothing. The size control the caller actually wants is the outline and a
+	// Read of the lines it names.
+	maxBytes := t.config.Tools.Web.Fetch.MaxBytes
 	if maxBytes <= 0 {
 		maxBytes = defaultFetchMaxBytes
 	}
@@ -181,6 +179,8 @@ func (t *WebFetchTool) Call(ctx context.Context, args json.RawMessage) (any, err
 		}, nil
 	}
 
+	sourceTruncated := int64(len(raw)) >= maxBytes
+
 	markdown, title, err := t.convert(resp.Header.Get("Content-Type"), raw)
 	if err != nil {
 		return nil, err
@@ -196,7 +196,13 @@ func (t *WebFetchTool) Call(ctx context.Context, args json.RawMessage) (any, err
 		// Losing the file is not worth losing the page: what fits is still
 		// returned, just without somewhere to read the rest from.
 	}
-	return t.present(target.String(), finalURL, resp.StatusCode, title, markdown, path, len(raw), false), nil
+	out := t.present(target.String(), finalURL, resp.StatusCode, title, markdown, path, len(raw), false)
+	if sourceTruncated {
+		out["source_truncated"] = true
+		out["warning"] = fmt.Sprintf(
+			"the page is larger than the %d-byte download ceiling, so its HTML was cut off part-way and what follows is incomplete. Raise tools.web.fetch.max_bytes if this page matters.", maxBytes)
+	}
+	return out, nil
 }
 
 // convert turns the response body into markdown. Content that is already text
