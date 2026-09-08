@@ -152,7 +152,12 @@ backend. That is a fallback to reach for on evidence, not something to build now
 - **A permission tier that already covers fetching.** `curl` and `wget` are
   `ask` rules with a stated reason (`internal/permissions/builtin.go:85`), so
   reaching the network is a decision the user already makes once and grants for
-  the session, the project, or everywhere.
+  the session, the project, or everywhere. The web tools do **not** route
+  through it, and the reason is a distinction worth stating: the shell asks per
+  command because the shell can run anything, so which command matters. These
+  two can only search and fetch, so enabling one in the config is the decision,
+  the way it is for every other tool in the program. Making `Web.fetch` the one
+  tool that also asks per call would buy nothing.
 - **Spill-to-temp-file for large tool output**, via `TempFileManager`, and the
   truncation caps the Read tool uses — 150 lines or 24 KB before the rest goes
   to a file whose path comes back in the result.
@@ -703,17 +708,17 @@ not depend on the daemon.
 ## 7. Order of work
 
 Each step leaves a working program, and the early ones do not depend on the
-later ones.
+later ones. Steps 1 to 3 are built; the rest are not.
 
-1. **`Web.fetch`** (half a day). Native, static HTML to structured text, spilling
+1. **`Web.fetch`** — done. Native, static HTML to structured text, spilling
    to the session `tmp/` and capped like Read. This is the single most useful
    piece and it depends on nothing.
-2. **`Web.search`** (half a day). Port the request shaping and the JSONL usage
+2. **`Web.search`** — done. Port the request shaping and the JSONL usage
    log from llama-swap-plus's `internal/brave/client.go`; leave its rate limiter
    and quota counter behind, since both assume a single long-lived process that
    holds the key alone. Read the limits from the response headers, bound the
    retry, strip HTML from descriptions.
-3. **Prompt sections for both** (an hour). Prefer plain-text URLs where they
+3. **Prompt sections for both** — done. Prefer plain-text URLs where they
    exist; search returns descriptions rather than content, so fetch what you
    choose; `Web.fetch` sees static HTML only and will say when a page needed a
    browser.

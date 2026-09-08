@@ -171,6 +171,22 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		}
 	}
 
+	// Web tools. Enabling one in the config is the decision to let the agent
+	// reach the network -- unlike a shell curl, which needs approving per
+	// command because the shell can run anything, these two can only search
+	// and fetch.
+	if cfg.Tools.Web.Search.Enabled {
+		webSearchTool := NewWebSearchTool(cfg)
+		registry.Enable(webSearchTool)
+		debug(fmt.Sprintf("Enabled tool: %s", webSearchTool.Name()))
+	}
+
+	if cfg.Tools.Web.Fetch.Enabled {
+		webFetchTool := NewWebFetchTool(cfg, sc.TempFileMgr)
+		registry.Enable(webFetchTool)
+		debug(fmt.Sprintf("Enabled tool: %s", webFetchTool.Name()))
+	}
+
 	// Batch dispatches through the registry that holds it, so it is registered
 	// first and given the registry once everything else is in.
 	var batchTool *BatchTool

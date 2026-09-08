@@ -445,9 +445,46 @@ type ToolsConfig struct {
 	Plan        PlanToolsConfig       `yaml:"plan"`
 	Checkpoint  CheckpointToolsConfig `yaml:"checkpoint"`
 	Tasks       TasksToolsConfig      `yaml:"tasks"`
+	Web         WebToolsConfig        `yaml:"web"`
 
 	// Safety confirmations (runtime only, not persisted)
 	SafetyConfirmations map[string]SafetyConfirmation `yaml:"-"`
+}
+
+// WebToolsConfig configures the tools that reach the network: Web.search, which
+// queries the Brave Search API, and Web.fetch, which retrieves one page and
+// converts it to markdown. The key is named rather than written here, the way
+// llm.api_key_env does it, because the same key is usually shared with other
+// programs and this file is checked in.
+type WebToolsConfig struct {
+	APIKeyEnv string `yaml:"api_key_env"`
+	BaseURL   string `yaml:"base_url"`
+	UsageLog  string `yaml:"usage_log"`
+
+	Search WebSearchToolConfig `yaml:"search"`
+	Fetch  WebFetchToolConfig  `yaml:"fetch"`
+}
+
+// WebSearchToolConfig configures Web.search.
+//
+// MaxAttempts is a setting rather than a constant because the right value
+// depends on a rate limit this program does not control. Four suits one request
+// per second, where a collision clears in about a second and retrying quietly
+// beats handing the model a failure to reason about; a backend without a
+// per-second limit wants one.
+type WebSearchToolConfig struct {
+	Enabled     bool `yaml:"enabled"`
+	Count       int  `yaml:"count"`
+	MaxAttempts int  `yaml:"max_attempts"`
+	Timeout     int  `yaml:"timeout"`
+}
+
+// WebFetchToolConfig configures Web.fetch.
+type WebFetchToolConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Timeout   int    `yaml:"timeout"`
+	MaxBytes  int64  `yaml:"max_bytes"`
+	UserAgent string `yaml:"user_agent"`
 }
 
 // ReadToolConfig configures the read tool

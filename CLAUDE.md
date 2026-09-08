@@ -27,7 +27,7 @@ target name (`coder` or `ui`) to build only one. It is the same two
 `go build -o <name> ./cmd/<name>` commands with the git version stamped in.
 `scripts/release.sh` is the tagged-release build and refuses a dirty tree.
 
-Go 1.24. Direct dependencies are bubbletea/bubbles/lipgloss for the terminal UI,
+Go 1.25. Direct dependencies are bubbletea/bubbles/lipgloss for the terminal UI,
 zap for logging, yaml.v3, go-difflib, fatih/color, and `mvdan.cc/sh/v3` for
 parsing shell commands into a syntax tree.
 
@@ -80,7 +80,8 @@ See `internal/session/session.go` for the authoritative version of this.
 Tools are registered in `internal/tools/setup.go`. Adding one touches that file
 and the tool's own file. Registered names use dotted namespaces: `Read`, `Edit`,
 `Edit.confirm`, `Search`, `Shell`, `Shell.start`, `Shell.output`, `Observe.wait`,
-`Batch`, `Question`, `Plan.*`, `Checkpoint.*`, `Tasks.*`, and `mcp.<server>.<tool>`.
+`Batch`, `Question`, `Web.search`, `Web.fetch`, `Plan.*`, `Checkpoint.*`,
+`Tasks.*`, and `mcp.<server>.<tool>`.
 
 ## Things that will mislead you
 

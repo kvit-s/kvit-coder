@@ -134,3 +134,34 @@ seconds pass, and says which of those it returned for. It also returns as soon
 as someone types, so you are not left waiting for something that no longer
 matters.`
 }
+
+// ShortPromptSection says what Web.search cannot express in its schema: what a
+// result is for, and that the two refusals mean different things.
+func (t *WebSearchTool) ShortPromptSection() string {
+	return `### Web.search
+
+A result is a title, a URL and a couple of sentences -- enough to choose a page
+with, not the page itself. Read what you choose with Web.fetch.
+
+One request per second and a fixed monthly allowance, shared with other programs
+using the same key. A per-second collision is waited out and retried here, so it
+never reaches you. An exhausted month does, and it will not clear for weeks:
+answer from what you know rather than trying again. Each result says how many
+searches are left in the month.`
+}
+
+// ShortPromptSection says what Web.fetch cannot express in its schema: the two
+// result shapes, and the one failure that looks like success.
+func (t *WebFetchTool) ShortPromptSection() string {
+	return `### Web.fetch
+
+The page is converted to markdown and written to a file. A short page comes back
+whole in content; a long one comes back as head plus an outline of its headings
+with line numbers, and you Read the file at those offsets for the rest.
+
+Static HTML only. A page that builds itself with JavaScript, or answers with a
+bot check, comes back nearly empty with a warning saying so -- that is not a
+page with nothing on it. Prefer an address that needs no rendering where one
+exists: raw.githubusercontent.com over the GitHub file view, pkg.go.dev over a
+rendered doc site, an llms.txt or .txt variant where published.`
+}

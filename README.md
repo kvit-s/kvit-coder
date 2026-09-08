@@ -130,6 +130,8 @@ The design behind this is written up in [`docs/`](docs/) — start with
 | **restore_file** | Restore a file to its state at session start. |
 | **search** (grep) | Search file contents with regex patterns and glob filters. Uses ripgrep. |
 | **shell** | Execute shell commands with configurable timeouts, working directory, and command allow/blocklists. |
+| **Web.search** | Search the web through the Brave Search API. Returns titles, URLs and short descriptions. Off by default; needs an API key named by `tools.web.api_key_env`. |
+| **Web.fetch** | Fetch one page and convert it to markdown, dropping navigation and scripts. A long page is written to the session's `tmp/` and comes back as a heading outline with line numbers to `Read`. Static HTML only. Off by default. |
 | **plan.\*** | Multi-step plan management: create, add/remove/reorder steps, mark complete. |
 | **checkpoint.\*** | Turn-based file history: list, restore, diff, undo. Auto-checkpoints after each turn. |
 | **Tasks.\*** | Context compression: wrap exploratory work in tasks so intermediate steps can be collapsed. Includes diff review (accept/decline) and rollback. |
@@ -534,6 +536,10 @@ Each tool group has `enabled: true/false` plus tool-specific options:
 - **`procs.kill_on_exit`** — Stop everything the session started when a turn is interrupted (default true)
 - **`question.enabled`** — Let the model ask you a question and wait for the answer
 - **`question.timeout`** — Seconds a run with no terminal waits for an answer (default 0: fall back at once)
+- **`web.api_key_env`** — Name of the environment variable holding the search API key (default `BRAVE_API_KEY`). The key is named rather than written into the file because it is usually shared with other programs
+- **`web.search.max_attempts`** — Tries before giving up on a rate-limit refusal (default 4). The provider allows one request per second shared across everything using the key, and refuses the excess rather than queueing it; a refusal costs no quota, so retrying is cheap next to handing the model a failure
+- **`web.usage_log`** — JSONL record of what was searched and when. Not a counter: the quota is account-wide and only the provider can see what other machines spent, which is why the response's `x-ratelimit-*` headers are read instead
+- **`web.fetch.max_bytes`** / **`web.fetch.timeout`** — Ceiling on HTML read, and seconds for one page (defaults 5 MB and 30)
 - **`checkpoint.max_turns`** — Max checkpoints before rotating (default: 100)
 - **`tasks.collapse`** — Enable context collapsing (stage 2)
 - **`tasks.plan`** — Enable plan-based task tools (stage 3)

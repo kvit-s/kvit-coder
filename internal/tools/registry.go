@@ -34,6 +34,7 @@ var CategoryHeaders = map[string]string{
 	"shell":      "## Shell Tool",
 	"plan":       "## Plan Management Tools",
 	"checkpoint": "## Checkpoints and Undo",
+	"web":        "## Web Tools",
 	"mcp":        "## MCP Tools (external servers)",
 }
 
@@ -583,7 +584,7 @@ func (r *Registry) ToolsInCategory(category string) []Tool {
 
 // EnabledCategories returns the list of categories that have enabled tools
 func (r *Registry) EnabledCategories() []string {
-	categoryOrder := []string{"filesystem", "shell", "plan", "checkpoint", "mcp"}
+	categoryOrder := []string{"filesystem", "shell", "web", "plan", "checkpoint", "mcp"}
 	var enabled []string
 	for _, cat := range categoryOrder {
 		if len(r.ToolsInCategory(cat)) > 0 {

@@ -61,6 +61,14 @@ func (m *TempFileManager) CreateTempFile() (*os.File, error) {
 	return f, nil
 }
 
+// TempDir returns the directory spilled output is written to, which is the
+// session's tmp/. A tool that names its own files rather than asking for an
+// anonymous one -- Web.fetch keys a page on its URL so a second fetch is free
+// -- needs the directory rather than a handle.
+func (m *TempFileManager) TempDir() string {
+	return m.tempDir
+}
+
 // CleanupAll removes all tracked temp files (called at session end)
 func (m *TempFileManager) CleanupAll() {
 	m.mu.Lock()
