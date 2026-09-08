@@ -136,3 +136,117 @@ func TestRenderWidthWraps(t *testing.T) {
 		t.Errorf("width 40 gave %d lines, width 200 gave %d, want more lines when narrow", narrow, wide)
 	}
 }
+
+// TestRenderHeadingsBlueBold: every heading level renders blue bold with
+// no stock background bar (h1 yellow/purple) or off-palette level color
+// (h6 green non-bold).
+func TestRenderHeadingsBlueBold(t *testing.T) {
+	for _, src := range []string{
+		"# H1\n",
+		"## H2\n",
+		"### H3\n",
+		"#### H4\n",
+		"##### H5\n",
+		"###### H6\n",
+	} {
+		out := Render(src, 80)
+		// Bright blue: termenv renders 256-color "12" as SGR 94.
+		if !strings.Contains(out, "\x1b[94") {
+			t.Errorf("%q: heading has no blue code: %q", src, out)
+		}
+		if !strings.Contains(out, ";1m") && !strings.Contains(out, "[1m") {
+			t.Errorf("%q: heading has no bold code: %q", src, out)
+		}
+	}
+	h1 := Render("# Title\n", 80)
+	for _, banned := range []string{"48;5;63", "38;5;228"} {
+		if strings.Contains(h1, banned) {
+			t.Errorf("h1 kept stock yellow/purple style %q: %q", banned, h1)
+		}
+	}
+}
+
+// TestRenderInlineCodeGrayBackgroundOnly: `code` keeps the gray background
+// but loses the stock red foreground, and the stock affix spaces (which
+// double up with source spaces) are gone.
+func TestRenderInlineCodeGrayBackgroundOnly(t *testing.T) {
+	out := Render("Fixed `writer.go` foo\n", 80)
+	if !strings.Contains(out, "48;5;236") {
+		t.Errorf("inline code lost its gray background: %q", out)
+	}
+	if strings.Contains(out, "203") {
+		t.Errorf("inline code kept the stock red foreground: %q", out)
+	}
+	visible := stripANSI(out)
+	if !strings.Contains(visible, "Fixed writer.go foo") {
+		t.Errorf("inline code spacing is wrong, want single spaces: %q", visible)
+	}
+	if strings.Contains(visible, "  ") {
+		t.Errorf("inline code left double spaces: %q", visible)
+	}
+}
+
+// TestRenderNoTrailingPadding: glamour pads every line to the wrap width
+// with styled spaces; the renderer must strip them so short lines do not
+// carry dozens of trailing spaces and lonely wrapped words do not look
+// broken.
+func TestRenderNoTrailingPadding(t *testing.T) {
+	src := "Tradeoff vs raw mode, stated plainly: this is modal. You can't type ahead while " +
+		"watching output flow — you pause, then type. Type-ahead (garbled but functional) and " +
+		"second-terminal `steer` stay as-is for that. Given you don't want raw mode back, that's " +
+		"the right trade: no `ttyline` package, no `Writer` funnel mutex over ~15 methods, no " +
+		"restore-on-panic audit, no parent/child raw-ownership fight.\n"
+	out := Render(src, 100)
+	for i, ln := range strings.Split(out, "\n") {
+		if vis := stripANSI(ln); vis != strings.TrimRight(vis, " \t") {
+			t.Errorf("line %d has trailing padding: %q", i, vis)
+		}
+	}
+	// The regression case: stock rendering left "stay", "ownership" and
+	// "fight." each alone on a padded line (7 display lines). Full-width
+	// prose plus single-spaced code fits the same paragraph in 4.
+	lines := strings.Split(strings.Trim(strings.TrimRight(stripANSI(out), "\n"), "\n"), "\n")
+	nonEmpty := 0
+	for _, ln := range lines {
+		if strings.TrimSpace(ln) != "" {
+			nonEmpty++
+		}
+	}
+	if nonEmpty > 5 {
+		t.Errorf("paragraph wrapped to %d lines, want <= 5 without orphan padding lines:\n%s", nonEmpty, stripANSI(out))
+	}
+}
+
+// TestRenderFullWidthProse: the stock document margin 2 indents every
+// paragraph and shrinks usable width by four; prose starts at column zero.
+func TestRenderFullWidthProse(t *testing.T) {
+	out := Render("Hello world\n", 80)
+	for _, ln := range strings.Split(stripANSI(out), "\n") {
+		if strings.TrimSpace(ln) == "" {
+			continue
+		}
+		if strings.HasPrefix(ln, "  ") {
+			t.Errorf("prose kept the stock 2-space document indent: %q", ln)
+		}
+		if ln != "Hello world" {
+			t.Errorf("prose line = %q, want %q", ln, "Hello world")
+		}
+		break
+	}
+}
+
+// TestTrimRightANSI: unit cases for the padding stripper, including styled
+// trailing spaces, blank styled lines, and clean lines left untouched.
+func TestTrimRightANSI(t *testing.T) {
+	styledPad := "\x1b[38;5;252mhi\x1b[0m\x1b[38;5;252m \x1b[0m\x1b[38;5;252m \x1b[0m"
+	if got := trimRightANSI(styledPad); got != "\x1b[38;5;252mhi\x1b[0m" {
+		t.Errorf("styled padding trim = %q, want text plus reset", got)
+	}
+	if got := trimRightANSI("\x1b[38;5;252m \x1b[0m\x1b[38;5;252m \x1b[0m"); got != "" {
+		t.Errorf("blank padded line trim = %q, want empty", got)
+	}
+	clean := "\x1b[38;5;252mhi\x1b[0m"
+	if got := trimRightANSI(clean); got != clean {
+		t.Errorf("clean line changed: %q", got)
+	}
+}

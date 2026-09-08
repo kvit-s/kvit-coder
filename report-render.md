@@ -183,9 +183,16 @@ fixes `-p`, `-pq` (on a TTY), and interactive UI sessions at once. No
 
 - Width: reuse existing `termWidth()` (`COLUMNS`, 40–250, default 100) and
   pass to glamour word wrap. No new width plumbing.
-- Style: start from glamour's dark style; tune headings/bold to HiWhite,
-  secondary text to our gray, code background subtle, links underlined.
+- Style: dark-derived custom style (`kvitStyle` in `internal/markdown`):
+  all headings blue bold with no background bar (stock h1 is yellow on
+  purple, h6 green non-bold); inline code gray background only
+  (stock red foreground removed, affix padding spaces cleared so source
+  single spaces stay single); document margin 0 so prose uses the full
+  width left-aligned instead of a 2-space indent with 4 columns lost.
   Keep the existing pre-report `Divider` and step palette untouched.
+  Rendered lines are ANSI-aware right-trimmed: glamour's padding writer
+  pads every line to the wrap width, so short lines otherwise carry
+  dozens of trailing spaces.
 - Keep `fatih/color` behavior: rendering must respect `color.NoColor` the
   same way `useColor()` does, so existing flags/pipes keep working.
 
@@ -204,11 +211,16 @@ Environment (`NO_COLOR`, `TERM`, `COLUMNS`) overrides style/width as usual.
 
 1. `internal/markdown` (`markdown.go`): `Mode` (`auto`/`always`/`never`),
    `ParseMode` (empty/unknown → auto), and `Render(src, width)` on
-   `glamour@v0.9.1` with the dark style and word wrap. v0.9.1 was chosen
-   because it matches the repo's `lipgloss v1.1.0` / `termenv v0.16.0`
-   exactly; v0.10.0/v1.0.0 would drag lipgloss to a pseudo-version.
-   `Render` returns the input unchanged on empty input, input over
-   `MaxInputBytes` (256 KiB), or any renderer error — it never fails a turn.
+   `glamour@v0.9.1` with a dark-derived custom style (`kvitStyle`) and word
+   wrap. v0.9.1 was chosen because it matches the repo's
+   `lipgloss v1.1.0` / `termenv v0.16.0` exactly; v0.10.0/v1.0.0 would drag
+   lipgloss to a pseudo-version. The style pins all headings to blue bold
+   (256-color 12 → SGR 94) with no h1 background bar, inline code to body
+   gray (252) on gray background (236) with no affix spaces, and document
+   margin 0 for full-width prose. `Render` ANSI-aware right-trims every
+   line (glamour pads to the wrap width) and returns the input unchanged
+   on empty input, input over `MaxInputBytes` (256 KiB), or any renderer
+   error — it never fails a turn.
 2. `internal/ui/writer.go`: `Writer` gained `markdownMode`,
    `stdoutTTY` (test override), `SetMarkdownMode` / `SetStdoutIsTerminal`,
    and the gate `shouldRenderMarkdown` + `answerTTY`. `Assistant` renders
@@ -225,7 +237,10 @@ Environment (`NO_COLOR`, `TERM`, `COLUMNS`) overrides style/width as usual.
    sample in `config.yaml`.
 4. Tests: `internal/markdown/markdown_test.go` (headings, emphasis, fences,
    tables, lists, quotes, empty/oversized input, width clamps, wrap
-   behavior); `internal/ui/writer_markdown_test.go` (pipe/TTY ×
+   behavior, plus blue-bold headings on all levels, gray-only inline code
+   with single spaces, no trailing padding on the regression paragraph,
+   full-width prose, and `trimRightANSI` unit cases);
+   `internal/ui/writer_markdown_test.go` (pipe/TTY ×
    auto/always/never × `NO_COLOR`/`TERM=dumb` × quiet × JSON, oversized
    fallback byte-identical to legacy, empty answer); `internal/config/ui_test.go`
    (YAML parsing, absent section). `go test ./...` green (17 packages),
@@ -234,7 +249,8 @@ Environment (`NO_COLOR`, `TERM`, `COLUMNS`) overrides style/width as usual.
    phrases.
 5. Docs: this file; `README.md` usage note; `config.yaml` comments. The
    `markdown_style` custom-style option from the sketch was deferred — the
-   stock dark style matches the palette well enough for v1.
+   built-in `kvitStyle` derivation covers the palette (blue bold titles,
+   gray-background code) without a user-supplied style file.
 
 ### 3.8 Risks
 
