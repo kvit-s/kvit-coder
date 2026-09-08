@@ -63,6 +63,7 @@ models:
     api_backend: "chat_completions"
     context: 262144
     profile: "weak"   # local model: keep the compensation machinery on here
+    summarizer: true
     efforts:
       - value: "low"
       - value: "medium"
