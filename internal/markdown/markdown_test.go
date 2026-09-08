@@ -239,3 +239,90 @@ func TestTrimRightANSI(t *testing.T) {
 		t.Errorf("clean line changed: %q", got)
 	}
 }
+
+// visibleLines returns the non-blank visible lines of rendered output.
+func visibleLines(out string) []string {
+	var lines []string
+	for _, ln := range strings.Split(out, "\n") {
+		if s := strings.TrimSpace(stripANSI(ln)); s != "" {
+			lines = append(lines, s)
+		}
+	}
+	return lines
+}
+
+// TestRenderJoinsDoubleWrapOrphan is the reported "to" on its own line:
+// "… Shell.start hint / to / push the model …" at width 100. A paragraph is
+// wrapped twice (reflow undercounts '-' so the first pass overflows by one,
+// x/ansi then moves the last word off), and the second pass preserves the
+// newline. The orphan fits easily with its neighbor, so it rejoins.
+func TestRenderJoinsDoubleWrapOrphan(t *testing.T) {
+	src := "Want me to restart the 3-min ticker so you can watch ★1 live again, or change the Shell.start hint to push the model toward Observe.wait?"
+	for _, width := range []int{80, 97, 100} {
+		lines := visibleLines(Render(src, width))
+		for _, ln := range lines {
+			if ln == "to" || ln == "hint" || ln == "the" {
+				t.Errorf("width %d still orphans %q in %q", width, ln, lines)
+			}
+		}
+	}
+	// Width 100 packs the sentence into two full lines.
+	if lines := visibleLines(Render(src, 100)); len(lines) != 2 {
+		t.Errorf("width 100 gave %d lines %q, want 2 without an orphan", len(lines), lines)
+	} else if lines[1] != "to push the model toward Observe.wait?" {
+		t.Errorf("width 100 second line = %q, want the orphan rejoined", lines[1])
+	}
+}
+
+// TestRenderOrphanWithCode is the same sentence with inline code spans: the
+// styling must not stop the orphan rejoining.
+func TestRenderOrphanWithCode(t *testing.T) {
+	src := "Want me to restart the 3-min ticker so you can watch ★1 live again, or change the `Shell.start` hint to push the model toward `Observe.wait`?"
+	for _, ln := range visibleLines(Render(src, 100)) {
+		if ln == "to" {
+			t.Errorf("coded orphan survived: %q", visibleLines(Render(src, 100)))
+		}
+	}
+}
+
+// TestRenderOrphanPreservesStructure: lists, code blocks, quotes and tables
+// never rejoin, even when a short line sits next to one that would fit.
+func TestRenderOrphanPreservesStructure(t *testing.T) {
+	list := Render("- first item here\n- second item here\n", 80)
+	if lines := visibleLines(list); len(lines) != 2 || !strings.HasPrefix(lines[0], "• ") {
+		t.Errorf("list rejoined: %q", lines)
+	}
+
+	code := Render("Prose.\n\n```go\nline one\nline two\n```\n", 80)
+	if vis := stripANSI(code); strings.Contains(vis, "line one line two") {
+		t.Errorf("code lines rejoined: %q", vis)
+	}
+
+	quote := Render("> a note here\n", 80)
+	if vis := stripANSI(quote); !strings.Contains(vis, "│") {
+		t.Errorf("quote lost its bar: %q", vis)
+	}
+
+	table := Render("| a | b |\n|---|---|\n| 1 | 2 |\n", 80)
+	if vis := stripANSI(table); strings.Contains(vis, "a b") {
+		t.Errorf("table rejoined: %q", vis)
+	}
+
+	paras := Render("First paragraph here.\n\nSecond paragraph here.\n", 80)
+	if lines := visibleLines(paras); len(lines) != 2 {
+		t.Errorf("paragraphs rejoined across a blank line: %q", lines)
+	}
+}
+
+// TestIsProseWrapLine rejects the structural lines the orphan joiner must
+// never touch.
+func TestIsProseWrapLine(t *testing.T) {
+	for _, ln := range []string{"• foo", "1. foo", "  code", "│ quote", "| a |", "```go", "# head", "- foo"} {
+		if isProseWrapLine(ln) {
+			t.Errorf("%q looks like prose", ln)
+		}
+	}
+	if !isProseWrapLine("Want me to restart the ticker") || !isProseWrapLine("push the model onward") {
+		t.Errorf("plain prose rejected")
+	}
+}

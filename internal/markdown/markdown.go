@@ -17,6 +17,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/glamour/styles"
+	"github.com/mattn/go-runewidth"
 )
 
 // MaxInputBytes caps the answer Render will style. Above it the raw
@@ -123,9 +124,9 @@ func trimRightANSI(line string) string {
 	// spaces ("<color> <reset>" repeats) can be dropped without touching
 	// the text's own styling.
 	type token struct {
-		raw   string
+		raw    string
 		isANSI bool
-		r     rune
+		r      rune
 	}
 	var tokens []token
 	for len(line) > 0 {
@@ -176,6 +177,87 @@ func trimPadding(out string) string {
 	return strings.Join(lines, "\n")
 }
 
+// maxOrphanWidth caps the visible width of a line eligible for orphan
+// rejoining. Double-wrap orphans are always one word ("to", "hint", "the"),
+// well under this; intentional short lines (poetry, addresses) are usually
+// longer or multi-word and must be left alone.
+const maxOrphanWidth = 20
+
+// isProseWrapLine reports whether a rendered line looks like wrapped prose
+// that is safe to rejoin: no indent (code, list continuations), no table or
+// quote bars, and none of the structural prefixes lists, headings, fences,
+// rules and task markers render with.
+func isProseWrapLine(line string) bool {
+	vis := stripANSI(line)
+	if vis == "" || strings.TrimSpace(vis) == "" {
+		return false
+	}
+	if strings.HasPrefix(vis, " ") || strings.HasPrefix(vis, "\t") {
+		return false
+	}
+	if strings.Contains(vis, "│") {
+		return false
+	}
+	trimmed := strings.TrimSpace(vis)
+	for _, p := range []string{"• ", "- ", "* ", "+ ", ">", "#", "```", "|", "┌", "├", "└", "┬", "┴", "─", "═", "---"} {
+		if strings.HasPrefix(trimmed, p) {
+			return false
+		}
+	}
+	if strings.HasPrefix(trimmed, "[") {
+		return false
+	}
+	// Ordered list item ("1. ", "12) ").
+	i := 0
+	for i < len(trimmed) && trimmed[i] >= '0' && trimmed[i] <= '9' {
+		i++
+	}
+	if i > 0 && i+1 < len(trimmed) && (trimmed[i] == '.' || trimmed[i] == ')') && trimmed[i+1] == ' ' {
+		return false
+	}
+	return true
+}
+
+// joinOrphanWords rejoins the single-word lines glamour's double wrap leaves
+// behind. A paragraph is wrapped twice — once by muesli/reflow (which does
+// not count '-' toward the line length, so a line with "3-min" overflows by
+// one) and once by x/ansi (which counts correctly and moves the overflowing
+// last word onto its own line). The middle line ("to", "hint", "the") fits
+// easily with its neighbor but the second pass preserves newlines, so it
+// stays orphaned. Rejoining it when the combination fits restores the greedy
+// packing the first pass intended.
+//
+// Only single short prose words rejoin, and only with the immediately
+// following prose line when the combination fits the wrap width. Lists,
+// code, tables, quotes and blank-separated paragraphs are untouched, as are
+// intentional multi-word short lines.
+func joinOrphanWords(out string, width int) string {
+	lines := strings.Split(out, "\n")
+	res := make([]string, 0, len(lines))
+	i := 0
+	for i < len(lines) {
+		cur := lines[i]
+		if i+1 >= len(lines) || !isProseWrapLine(cur) || !isProseWrapLine(lines[i+1]) {
+			res = append(res, cur)
+			i++
+			continue
+		}
+		curVis := strings.TrimSpace(stripANSI(cur))
+		nextVis := strings.TrimSpace(stripANSI(lines[i+1]))
+		if curVis == "" || nextVis == "" ||
+			strings.Contains(curVis, " ") || strings.Contains(curVis, "\t") ||
+			runewidth.StringWidth(curVis) > maxOrphanWidth ||
+			runewidth.StringWidth(curVis+" "+nextVis) > width {
+			res = append(res, cur)
+			i++
+			continue
+		}
+		res = append(res, cur+" "+lines[i+1])
+		i += 2
+	}
+	return strings.Join(res, "\n")
+}
+
 // Render styles src as terminal markdown wrapped at width, using the
 // program's dark-derived style (blue bold headings, gray-background inline
 // code, full-width prose). It returns src unchanged on empty input,
@@ -201,5 +283,6 @@ func Render(src string, width int) string {
 	if err != nil || strings.TrimSpace(stripANSI(out)) == "" {
 		return src
 	}
-	return trimPadding(out)
+
+	return joinOrphanWords(trimPadding(out), width)
 }
