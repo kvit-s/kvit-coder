@@ -382,6 +382,8 @@ func (r *Runner) executeToolWithTimeout(
 	toolStart := time.Now()
 	progressDone := make(chan bool)
 	dotCount := 0
+	// Tool marks are dots; the model thinking between tools ticks colons
+	// (see callLLM), so a dot row under a call line is this tool running.
 	go func() {
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()

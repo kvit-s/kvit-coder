@@ -257,6 +257,75 @@ func TestToolProgressFoldKeepsNoBullet(t *testing.T) {
 	_ = w
 }
 
+// TestModelWaitUsesColons is the reported shape:
+//
+//	...preserving original strings for errors.
+//	Read[limit=70, path="cmd/kvit-coder/main.go", start=42]
+//	*..............
+//
+// The Read finished in milliseconds; the minute of marks was the next model
+// call (xhigh reasoning) waiting, anchored under the Read line because no
+// new header prints until the model answers. Model marks are colons, tool
+// marks are dots, so a colon row is never the tool above it running slow.
+func TestModelWaitUsesColons(t *testing.T) {
+	w, buf := newProgressWriter(true)
+
+	w.ToolProgress("● ")
+	for range 3 {
+		w.ToolProgress(":")
+	}
+
+	if progressLine != stepIndent+":::" {
+		t.Errorf("model row = %q, want %q (colons, not dots)", progressLine, stepIndent+":::")
+	}
+	if strings.Contains(progressLine, ".") {
+		t.Errorf("model row %q reads as tool dots", progressLine)
+	}
+	if strings.Contains(progressLine, "●") {
+		t.Errorf("model row %q starts with a thinking bullet", progressLine)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "\r"+stepIndent+":::") {
+		t.Errorf("drawn model row %q is not aligned under the last call line", out)
+	}
+
+	// A finished minute of thinking folds the same way tool dots do.
+	w.ToolProgress("● ")
+	for range maxDotsPerLine + 2 {
+		w.ToolProgress(":")
+	}
+
+	if progressLine != stepIndent+"*::" {
+		t.Errorf("folded model row = %q, want %q", progressLine, stepIndent+"*::")
+	}
+	if strings.Contains(progressLine, ".") {
+		t.Errorf("folded model row %q mixed in tool dots", progressLine)
+	}
+	if progressDotCount != 2 {
+		t.Errorf("the colon counter is %d, want 2 for the colons after the star", progressDotCount)
+	}
+	_ = w
+}
+
+// TestToolWaitStaysDots: the tool side of the convention above. A slow Read
+// (or any tool) ticks dots, so dots under a call line are that tool running
+// and colons are the model thinking that follows it.
+func TestToolWaitStaysDots(t *testing.T) {
+	w, _ := newProgressWriter(true)
+
+	for range 3 {
+		w.ToolProgress(".")
+	}
+
+	if progressLine != stepIndent+"..." {
+		t.Errorf("tool row = %q, want %q (dots, not colons)", progressLine, stepIndent+"...")
+	}
+	if strings.Contains(progressLine, ":") {
+		t.Errorf("tool row %q reads as model colons", progressLine)
+	}
+	_ = w
+}
+
 // TestProgressSecondMinuteAddsSecondStar: each finished minute adds one more
 // star, so a long wait reads as elapsed minutes plus current dots, aligned
 // under the tool-call line.

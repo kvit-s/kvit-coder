@@ -814,7 +814,7 @@ func (w *Writer) ToolCall(name, argsDisplay, context string) {
 // progressLine accumulates the current progress output
 var progressLine string
 
-// progressDotCount tracks dots since the last star (a minute of dots folds
+// progressDotCount tracks marks since the last star (a minute of marks folds
 // into one "*" so a long wait stays on a single redrawn row instead of
 // stacking bullet-led lines that read as model thinking).
 var progressDotCount int
@@ -865,7 +865,12 @@ func drawProgress(out io.Writer, text string) {
 	fmt.Fprint(out, text)
 }
 
-// ToolProgress prints a progress indicator (dots) for long-running tools.
+// ToolProgress prints a progress indicator for a long wait: one mark per
+// second, folded into "*" per finished minute (see maxDotsPerLine). Dots
+// (".") are a tool running; colons (":") are the model thinking. Both waits
+// share the indented row under the last tool-call line, so the mark is what
+// tells them apart: a colon row under a Read line is the next model call,
+// not the Read.
 func (w *Writer) ToolProgress(dot string) {
 	if w.quiet {
 		return
@@ -911,11 +916,13 @@ func (w *Writer) ToolProgress(dot string) {
 		return
 	}
 
-	// A wait starts indented: the row is dots and stars under the tool-call
-	// line that owns it (tool lines lead with stepIndent), never bullet-led,
-	// so a tool wait cannot read as model thinking. "●" is reserved for
-	// Thinking step headers. The "● "/"✨ " arguments are legacy start
-	// markers from the caller (see callLLM); both just reset.
+	// A wait starts indented: the row is marks and stars under the last
+	// tool-call line, never bullet-led, so a tool wait cannot read as model
+	// thinking. "●" is reserved for Thinking step headers. The "● "/"✨ "
+	// arguments are legacy start markers from the caller (see callLLM);
+	// both just reset. Dots are a tool running, colons are the model
+	// thinking, so the mark tells a tool wait apart from the model wait
+	// that follows it on the same row.
 	if strings.HasPrefix(dot, "✨") || strings.HasPrefix(dot, stepBullet) {
 		progressLine = ""
 		progressDotCount = 0
@@ -923,17 +930,18 @@ func (w *Writer) ToolProgress(dot string) {
 	}
 
 	// A finished minute folds into one "*": the row stays a single redrawn
-	// line ("  *..", then "  **..") instead of stacking new lines.
+	// line ("  *..", then "  **..", and the same with colons for a model
+	// wait) instead of stacking new lines.
 	collapsed := false
-	if dot == "." {
+	if dot == "." || dot == ":" {
 		if progressLine == "" {
-			// First dot of a new row: align under the tool-call line.
+			// First mark of a new row: align under the last call line.
 			progressLine = stepIndent
 		}
 		progressDotCount++
 		if progressDotCount > maxDotsPerLine {
 			progressLine = collapseProgressDots(progressLine)
-			progressDotCount = 1 // this dot starts the next minute
+			progressDotCount = 1 // this mark starts the next minute
 			collapsed = true
 		}
 	}
@@ -954,7 +962,7 @@ func (w *Writer) ToolProgress(dot string) {
 	drawProgress(out, "\n\033[1A") // Newline (flush) + move up
 }
 
-// collapseProgressDots folds the trailing minute of dots in s into one "*".
+// collapseProgressDots folds the trailing minute of marks in s into one "*".
 // The stepIndent alignment is preserved and any legacy "● "/"✨ " prefix is
 // stripped, never kept: no wait row starts with a bullet.
 func collapseProgressDots(s string) string {

@@ -19,9 +19,12 @@ const slowRequestNotice = 90 * time.Second
 // callLLM makes an LLM API call with progress indicator and handles errors.
 // It returns the response and metadata about what action to take next.
 func (r *Runner) callLLM(ctx context.Context, state *runState) (*llmCallResult, error) {
-	// Silent until the first dot: a fast turn prints only its step header.
+	// Silent until the first mark: a fast turn prints only its step header.
 	// The marker only resets the row; the row itself stays indented under
-	// its tool-call line (no bullet, which is reserved for Thinking headers).
+	// the last tool-call line (no bullet, which is reserved for Thinking
+	// headers). Model marks are colons and tool marks are dots (see
+	// ToolProgress), so a colon row under a tool line is this call
+	// thinking, not the tool running.
 	r.writer.ToolProgress("● ")
 
 	startTime := time.Now()
@@ -30,16 +33,16 @@ func (r *Runner) callLLM(ctx context.Context, state *runState) (*llmCallResult, 
 	go func() {
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
-		// A row of dots says something is happening but not for how long, and
+		// A row of colons says something is happening but not for how long, and
 		// a request that stalls for half an hour looks like one that is
 		// thinking hard. Say the elapsed time now and then so the difference
-		// is visible without counting dots.
+		// is visible without counting colons.
 		notice := time.NewTicker(slowRequestNotice)
 		defer notice.Stop()
 		for {
 			select {
 			case <-ticker.C:
-				r.writer.ToolProgress(".")
+				r.writer.ToolProgress(":")
 				llmDotCount++
 			case <-notice.C:
 				r.writer.Warn(fmt.Sprintf("still waiting for the model after %s",
