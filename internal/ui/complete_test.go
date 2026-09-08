@@ -12,6 +12,9 @@ import (
 func tabKey() tea.KeyMsg        { return tea.KeyMsg{Type: tea.KeyTab} }
 func shiftTabKey() tea.KeyMsg   { return tea.KeyMsg{Type: tea.KeyShiftTab} }
 func runeKey(r rune) tea.KeyMsg { return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}} }
+func upKey() tea.KeyMsg         { return tea.KeyMsg{Type: tea.KeyUp} }
+func downKey() tea.KeyMsg       { return tea.KeyMsg{Type: tea.KeyDown} }
+func escKey() tea.KeyMsg        { return tea.KeyMsg{Type: tea.KeyEsc} }
 func writeFile(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -30,6 +33,14 @@ func pressTab(t *testing.T, m InputModel, forward bool) InputModel {
 	if !forward {
 		key = shiftTabKey()
 	}
+	mod, _ := m.Update(key)
+	return mod.(InputModel)
+}
+
+// pressKey drives one arbitrary key through Update and returns the model
+// as an InputModel.
+func pressKey(t *testing.T, m InputModel, key tea.KeyMsg) InputModel {
+	t.Helper()
 	mod, _ := m.Update(key)
 	return mod.(InputModel)
 }
@@ -483,5 +494,136 @@ func TestTabAtAloneBrowsesRoot(t *testing.T) {
 	view := m.View()
 	if !strings.Contains(view, "main.go") || !strings.Contains(view, "sub/") {
 		t.Errorf("View() hides the root listing:\n%s", view)
+	}
+}
+
+func TestDownArrowSelectsCompletion(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "alpha.go"))
+	writeFile(t, filepath.Join(dir, "alpine.go"))
+
+	m := NewInputModel(">", nil)
+	m.SetCompletionBaseDir(dir)
+	m.textarea.SetValue("read @a")
+	m = pressTab(t, m, true)
+	if got := m.textarea.Value(); got != "read @alp" {
+		t.Fatalf("setup: Tab extended to %q, want %q", got, "read @alp")
+	}
+
+	m = pressKey(t, m, downKey())
+	if got := m.textarea.Value(); got != "read @alpha.go" {
+		t.Errorf("down first = %q, want first candidate", got)
+	}
+	m = pressKey(t, m, downKey())
+	if got := m.textarea.Value(); got != "read @alpine.go" {
+		t.Errorf("down second = %q, want second candidate", got)
+	}
+	// Wraps around.
+	m = pressKey(t, m, downKey())
+	if got := m.textarea.Value(); got != "read @alpha.go" {
+		t.Errorf("down wrap = %q", got)
+	}
+}
+
+func TestUpArrowSelectsCompletionBackwards(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "alpha.go"))
+	writeFile(t, filepath.Join(dir, "alpine.go"))
+
+	m := NewInputModel(">", nil)
+	m.SetCompletionBaseDir(dir)
+	m.textarea.SetValue("read @a")
+	m = pressTab(t, m, true)
+
+	// Nothing selected yet: up starts from the bottom, like Shift+Tab.
+	m = pressKey(t, m, upKey())
+	if got := m.textarea.Value(); got != "read @alpine.go" {
+		t.Errorf("up first = %q, want last candidate", got)
+	}
+	m = pressKey(t, m, upKey())
+	if got := m.textarea.Value(); got != "read @alpha.go" {
+		t.Errorf("up second = %q", got)
+	}
+}
+
+func TestArrowsBeatHistoryWhileCompleting(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "alpha.go"))
+	writeFile(t, filepath.Join(dir, "alpine.go"))
+
+	m := NewInputModel(">", []string{"older prompt"})
+	m.SetCompletionBaseDir(dir)
+	m.textarea.SetValue("read @a")
+	m = pressTab(t, m, true)
+	if len(m.compCandidates) != 2 {
+		t.Fatalf("setup: want live list, got %v", m.compCandidates)
+	}
+
+	// With a list showing, up selects instead of pulling history.
+	m = pressKey(t, m, upKey())
+	if got := m.textarea.Value(); got != "read @alpine.go" {
+		t.Errorf("up with list = %q, want a candidate, not history", got)
+	}
+}
+
+func TestUpDownWithoutCompletionStillHistory(t *testing.T) {
+	m := NewInputModel(">", []string{"older prompt"})
+	m.textarea.SetValue("")
+	m = pressKey(t, m, upKey())
+	if got := m.textarea.Value(); got != "older prompt" {
+		t.Errorf("up without list = %q, want history", got)
+	}
+	m = pressKey(t, m, downKey())
+	if got := m.textarea.Value(); got != "" {
+		t.Errorf("down without list = %q, want back to empty", got)
+	}
+}
+
+func TestEscDismissesCompletionFirst(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "alpha.go"))
+	writeFile(t, filepath.Join(dir, "alpine.go"))
+
+	m := NewInputModel(">", nil)
+	m.SetCompletionBaseDir(dir)
+	m.textarea.SetValue("read @a")
+	m = pressTab(t, m, true)
+	if len(m.compCandidates) != 2 {
+		t.Fatalf("setup: want live list, got %v", m.compCandidates)
+	}
+
+	// First esc drops only the list; the draft survives.
+	m = pressKey(t, m, escKey())
+	if len(m.compCandidates) != 0 {
+		t.Fatalf("esc kept the list: %v", m.compCandidates)
+	}
+	if got := m.textarea.Value(); got != "read @alp" {
+		t.Errorf("esc cleared the draft: %q", got)
+	}
+
+	// Second esc, with nothing showing, clears the input as before.
+	m = pressKey(t, m, escKey())
+	if got := m.textarea.Value(); got != "" {
+		t.Errorf("second esc = %q, want cleared input", got)
+	}
+}
+
+func TestEscDismissesNoMatchNotice(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "main.go"))
+
+	m := NewInputModel(">", nil)
+	m.SetCompletionBaseDir(dir)
+	m.textarea.SetValue("read @zzz")
+	m = pressTab(t, m, true)
+	if m.compNotice == "" {
+		t.Fatalf("setup: want a no-match notice")
+	}
+	m = pressKey(t, m, escKey())
+	if m.compNotice != "" {
+		t.Errorf("esc kept the notice: %q", m.compNotice)
+	}
+	if got := m.textarea.Value(); got != "read @zzz" {
+		t.Errorf("esc cleared the draft: %q", got)
 	}
 }

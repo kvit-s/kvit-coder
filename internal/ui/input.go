@@ -101,15 +101,23 @@ func (m *InputModel) SetCompletionBaseDir(dir string) {
 	m.completionBase = dir
 }
 
-// clearCompletion drops the Tab-completion list and notice. Every key
-// except Tab itself calls it, so a list never outlives the token it was
-// built for.
+// clearCompletion drops the Tab-completion list and notice. Tab,
+// Shift+Tab and the completion arrow keys keep the list alive
+// (cycling); every other key calls it, so a list never outlives the
+// token it was built for.
 func (m *InputModel) clearCompletion() {
 	m.compCandidates = nil
 	m.compTotal = 0
 	m.compIndex = -1
 	m.compToken = ""
 	m.compNotice = ""
+}
+
+// completionListActive reports whether a candidate list is showing.
+// The "no match" notice alone is not a list: arrows have nothing to
+// select there.
+func (m *InputModel) completionListActive() bool {
+	return len(m.compCandidates) > 0
 }
 
 // PastedImages returns the images staged by the paste key plus any seeded
@@ -261,34 +269,11 @@ func (m *InputModel) ensureCursorVisible() {
 // the token only when every candidate shares the typed text as a prefix
 // (a fuzzy abbreviation like "@sn-p" is left alone for Tab to cycle).
 // Tab again with the text untouched cycles forward through the list
-// (Shift+Tab backwards); any other key between presses restarts from
-// the filesystem. Tokens without @ never complete: an empty token
-// indents, anything else is left alone.
+// (Shift+Tab backwards, down/up likewise); any other key between
+// presses restarts from the filesystem. Tokens without @ never
+// complete: an empty token indents, anything else is left alone.
 func (m *InputModel) handleTab(forward bool) {
-	lines := m.hardLines()
-	row := m.textarea.Line()
-	if row < 0 {
-		row = 0
-	}
-	if row >= len(lines) {
-		row = len(lines) - 1
-	}
-	lineRunes := []rune(lines[row])
-	col := m.cursorHardCol()
-	if col > len(lineRunes) {
-		col = len(lineRunes)
-	}
-	tokenStart, inQuotes := tokenStartForLine(lineRunes, col)
-	token := string(lineRunes[tokenStart:col])
-
-	if token == "" && m.compCandidates != nil && row == m.compRow && m.compToken != "" &&
-		strings.HasSuffix(string(lineRunes[:col]), m.compToken) {
-		// Sitting right after a quoted insertion ("my dir/"): the
-		// closing quote hides the token, so re-anchor onto it and
-		// carry on cycling instead of indenting.
-		token = m.compToken
-		tokenStart = col - len([]rune(m.compToken))
-	}
+	row, tokenStart, col, token, inQuotes := m.completionTarget()
 
 	// A live list for this same token position with the text untouched
 	// cycles instead of re-reading the directory.
@@ -316,6 +301,54 @@ func (m *InputModel) handleTab(forward bool) {
 	}
 
 	m.completeFresh(row, tokenStart, col, token, inQuotes)
+}
+
+// completionTarget locates the token under the cursor: its hard-line
+// row, rune offset of the token start, rune cursor column, token text,
+// and whether the cursor sits inside quotes.
+func (m *InputModel) completionTarget() (row, tokenStart, col int, token string, inQuotes bool) {
+	lines := m.hardLines()
+	row = m.textarea.Line()
+	if row < 0 {
+		row = 0
+	}
+	if row >= len(lines) {
+		row = len(lines) - 1
+	}
+	lineRunes := []rune(lines[row])
+	col = m.cursorHardCol()
+	if col > len(lineRunes) {
+		col = len(lineRunes)
+	}
+	tokenStart, inQuotes = tokenStartForLine(lineRunes, col)
+	token = string(lineRunes[tokenStart:col])
+
+	if token == "" && m.compCandidates != nil && row == m.compRow && m.compToken != "" &&
+		strings.HasSuffix(string(lineRunes[:col]), m.compToken) {
+		// Sitting right after a quoted insertion ("my dir/"): the
+		// closing quote hides the token, so re-anchor onto it and
+		// carry on cycling instead of indenting.
+		token = m.compToken
+		tokenStart = col - len([]rune(m.compToken))
+	}
+	return row, tokenStart, col, token, inQuotes
+}
+
+// tryCycleCompletion moves the selection one step through the live list
+// (down/Tab forward, up/Shift+Tab back) and reports whether it did.
+// It fails when no list is showing or the text moved off the token the
+// list was built for; the caller then falls through to the key's normal
+// job instead.
+func (m *InputModel) tryCycleCompletion(forward bool) bool {
+	if !m.completionListActive() {
+		return false
+	}
+	row, tokenStart, col, token, inQuotes := m.completionTarget()
+	if m.compCandidates == nil || row != m.compRow || tokenStart != m.compStart || token != m.compToken {
+		return false
+	}
+	m.cycleCompletion(forward, row, tokenStart, col, token, inQuotes)
+	return true
 }
 
 // completeFresh lists the filesystem for a new @ token and either
@@ -652,9 +685,18 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		// A completion list belongs to the token it was built for. Tab
-		// keeps it alive (cycling); anything else typed, moved or
+		// and Shift+Tab cycle it, up/down select from it while it
+		// shows, and esc dismisses it; anything else typed, moved or
 		// submitted discards it before the key is handled.
-		if key := msg.String(); key != "tab" && key != "shift+tab" {
+		switch key := msg.String(); {
+		case key == "tab" || key == "shift+tab":
+			// Kept alive for cycling.
+		case (key == "up" || key == "down") && m.completionListActive():
+			// Kept alive for arrow selection below.
+		case key == "esc" && (m.completionListActive() || m.compNotice != ""):
+			// Kept so the esc case can dismiss just the
+			// completion UI instead of the whole input.
+		default:
 			m.clearCompletion()
 		}
 		switch msg.String() {
@@ -671,8 +713,14 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.adjustHeight()
 			return m, nil
 
-		// Smart history navigation
+		// Smart history navigation. While a completion list shows, up
+		// selects the previous candidate instead (down the next one):
+		// the list owns the arrows until it is dismissed.
 		case "up":
+			if m.tryCycleCompletion(false) {
+				return m, nil
+			}
+			m.clearCompletion()
 			if len(m.history) > 0 {
 				// Navigate history if:
 				// 1. Textarea is empty OR
@@ -705,6 +753,10 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Otherwise, let textarea handle it for line navigation
 
 		case "down":
+			if m.tryCycleCompletion(true) {
+				return m, nil
+			}
+			m.clearCompletion()
 			if len(m.history) > 0 {
 				// Navigate history if:
 				// 1. Textarea is empty OR
@@ -756,8 +808,9 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// No handler: let the textarea see the key.
 
-		// Complete the path left of the cursor against the workspace.
-		// Shift+Tab cycles the same list backwards.
+		// Complete the @path left of the cursor against the workspace.
+		// Shift+Tab cycles the same list backwards; while the list
+		// shows, down/up select from it (handled in their cases above).
 		case "tab":
 			m.handleTab(true)
 			return m, nil
@@ -766,6 +819,15 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.handleTab(false)
 			return m, nil
 		case "esc":
+			// ESC with a completion list showing dismisses just the
+			// list, so a stray keypress doesn't eat the draft. A
+			// second ESC with nothing showing clears the input as
+			// before (images pasted in this composer go with it;
+			// images staged before it opened stay for next turn).
+			if m.completionListActive() || m.compNotice != "" {
+				m.clearCompletion()
+				return m, nil
+			}
 			// ESC just clears the current input, doesn't exit. Images pasted
 			// in this composer go with it; images staged before it opened
 			// (:image, :paste) stay staged for the next turn.
@@ -890,7 +952,7 @@ func (m InputModel) View() string {
 }
 
 // completionView renders the Tab-completion list (or the "no match"
-// notice) under the input. The cycled-in candidate gets a marker and a
+// notice) under the input. The selected candidate gets a marker and a
 // brighter color; the rest stay dim. The list is capped at
 // maxCompletionDisplay rows with an "…and N more" tail, so a Tab on a
 // bare prefix cannot flood the composer.
@@ -919,6 +981,8 @@ func (m InputModel) completionView() string {
 		out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(
 			"  …and "+itoa(remaining)+" more (keep typing to narrow)")
 	}
+	out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(
+		"  (↑↓/tab select, esc dismiss)")
 	return out
 }
 
