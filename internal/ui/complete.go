@@ -9,31 +9,41 @@ import (
 	"unicode"
 )
 
-// Path completion for the input composer (Tab key).
+// Path completion for the input composer (automatic + Tab).
 //
 // Completion is @-triggered file search, not shell prefix expansion: the
 // token left of the cursor must hold an @path reference, and the path
 // part fuzzy-matches workspace files. A token without @ never completes;
 // Tab there indents (empty token) or does nothing. Matching is an ordered,
 // case-insensitive subsequence over the relative path, so "@sn-p" finds
-// "docs/redesign-mcp.md" as well as true substrings. One match replaces
-// in place; several list under the input. Repeated Tab cycles through the
-// candidates. A second Tab press with untouched text cycles; any other
-// key restarts.
+// "docs/redesign-mcp.md" as well as true substrings. Typing @ plus two or
+// more characters lists matches live under the input without rewriting
+// anything; Tab (or up/down) then selects from that live list. A bare Tab
+// on an @ token without a live list lists from the filesystem instead:
+// one match replaces in place; several list under the input. Repeated Tab
+// cycles through the candidates. A second Tab press with untouched text
+// cycles; typing narrows the live list instead of restarting from Tab.
 
-// maxCompletionCandidates caps how many filesystem matches one Tab keeps
-// for cycling. The list is ranked best-first, so truncating drops the
+// maxCompletionCandidates caps how many filesystem matches one completion
+// keeps for cycling. The list is ranked best-first, so truncating drops the
 // worst matches.
 const maxCompletionCandidates = 50
+
+// minAutoCompletionRunes is how many runes the @-stripped core must hold
+// before typing alone shows the list. Two keeps single-character noise
+// (every "@m" in a large workspace) behind Tab while "@ma" already
+// narrows enough to be useful.
+const minAutoCompletionRunes = 2
 
 // maxCompletionDisplay caps how many candidates View renders under the
 // input. The rest fold into an "…and N more" line.
 const maxCompletionDisplay = 10
 
 // maxCompletionWalk caps how many files and directories the recursive
-// search visits per Tab press, so a huge workspace stays interactive.
-// The walk still reports every match up to the candidate cap; beyond the
-// walk cap the "…and N more" line only counts what was seen.
+// search visits per completion, so a huge workspace stays interactive
+// while typing. The walk still reports every match up to the candidate
+// cap; beyond the walk cap the "…and N more" line only counts what was
+// seen.
 const maxCompletionWalk = 10000
 
 // completionSkipDirs are directory names the recursive search never

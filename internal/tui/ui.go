@@ -216,7 +216,7 @@ func (u *UI) readInput() (string, []string, bool, bool, error) {
 	// Seed the composer list so [imageN] numbering covers the already-staged
 	// images too, not just the ones pasted below.
 	inputModel.SetStagedImages(u.pendingImages)
-	// Tab completes paths against the workspace root (empty config falls
+	// @path completes live against the workspace root (empty config falls
 	// back to the working directory inside the completer).
 	if u.cfg != nil {
 		inputModel.SetCompletionBaseDir(u.cfg.Workspace.Root)

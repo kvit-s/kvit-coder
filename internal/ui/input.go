@@ -47,24 +47,28 @@ type InputModel struct {
 	// against (the workspace root, set by the driver; empty falls back
 	// to the working directory).
 	completionBase string
-	// compCandidates is the active Tab-completion list: full replacements
+	// compCandidates is the active completion list: full replacements
 	// for the path part of the current token, directories with a
 	// trailing slash, sorted dirs-first. Nil when no completion is
-	// showing.
+	// showing. The list appears automatically while typing @ plus two
+	// characters, or on Tab for shorter/noisy tokens; Tab and up/down
+	// then select from it.
 	compCandidates []string
 	// compTotal is the uncapped match count, for the "…and N more" line.
 	compTotal int
-	// compIndex selects compCandidates[compIndex] once Tab has cycled
-	// one in; -1 while the list only shows.
+	// compIndex selects compCandidates[compIndex] once Tab or up/down has
+	// cycled one in; -1 while the list only shows.
 	compIndex int
 	// compRow and compStart locate the token the list was built for:
 	// hard-line index plus rune offset of the token start.
 	compRow, compStart int
-	// compToken is the full token text after the last Tab action. A
-	// later Tab with different text means the user typed, so completion
-	// restarts from the filesystem instead of cycling.
+	// compToken is the full token text the list was built for. Typing
+	// narrows it (the list refreshes from the filesystem); a Tab with
+	// unchanged text cycles instead of re-listing.
 	compToken string
 	// compNotice is a one-line dimmed note under the input ("no match").
+	// Only an explicit Tab sets it; live typing stays quiet when nothing
+	// matches so the composer does not flicker while narrowing.
 	compNotice string
 	// wakePoll reports how many inbox files are waiting for the next turn.
 	// It is set by the driver (kvit-coder-ui), which polls the session's
@@ -94,17 +98,17 @@ func (m *InputModel) SetStagedImages(paths []string) {
 	m.imageBase = len(m.pastedImages)
 }
 
-// SetCompletionBaseDir tells Tab completion which directory relative
+// SetCompletionBaseDir tells path completion which directory relative
 // paths resolve against (the workspace root). Empty falls back to the
 // working directory at completion time.
 func (m *InputModel) SetCompletionBaseDir(dir string) {
 	m.completionBase = dir
 }
 
-// clearCompletion drops the Tab-completion list and notice. Tab,
-// Shift+Tab and the completion arrow keys keep the list alive
-// (cycling); every other key calls it, so a list never outlives the
-// token it was built for.
+// clearCompletion drops the completion list and notice. Tab, Shift+Tab
+// and the completion arrow keys keep the list alive (cycling); typing
+// refreshes it via refreshAutoCompletion instead, so a list never
+// outlives the token it was built for.
 func (m *InputModel) clearCompletion() {
 	m.compCandidates = nil
 	m.compTotal = 0
@@ -264,14 +268,14 @@ func (m *InputModel) ensureCursorVisible() {
 	}
 }
 
-// handleTab completes the @path in the token left of the cursor. One
-// match replaces it in place; several list under the input, extending
-// the token only when every candidate shares the typed text as a prefix
-// (a fuzzy abbreviation like "@sn-p" is left alone for Tab to cycle).
-// Tab again with the text untouched cycles forward through the list
-// (Shift+Tab backwards, down/up likewise); any other key between
-// presses restarts from the filesystem. Tokens without @ never
-// complete: an empty token indents, anything else is left alone.
+// handleTab completes the @path in the token left of the cursor. A live
+// list (from live typing or an earlier Tab) with untouched text cycles
+// forward through the list (Shift+Tab backwards, down/up likewise).
+// Otherwise one match replaces it in place; several list under the
+// input, extending the token only when every candidate shares the typed
+// text as a prefix (a fuzzy abbreviation like "@sn-p" is left alone for
+// Tab to cycle). Tokens without @ never complete: an empty token
+// indents, anything else is left alone.
 func (m *InputModel) handleTab(forward bool) {
 	row, tokenStart, col, token, inQuotes := m.completionTarget()
 
@@ -396,6 +400,40 @@ func (m *InputModel) completeFresh(row, tokenStart, col int, token string, inQuo
 		m.adjustHeight()
 		m.ensureCursorVisible()
 	}
+}
+
+// refreshAutoCompletion lists the filesystem for the @ token under the
+// cursor after typing, without rewriting anything. It is the live-typing
+// counterpart to completeFresh: Tab still owns replacing (single match,
+// common-prefix extension, cycling), while typing only shows or narrows
+// the list. Tokens without @, or with fewer than minAutoCompletionRunes
+// in the core, clear the list; zero matches clear quietly (no "no match"
+// flicker while narrowing). An unchanged token keeps its list, so a
+// cursor move without an edit does not pay for another walk.
+func (m *InputModel) refreshAutoCompletion() {
+	row, tokenStart, _, token, _ := m.completionTarget()
+	_, at, core, _ := splitCompletionToken(token)
+	if at != "@" || len([]rune(core)) < minAutoCompletionRunes {
+		m.clearCompletion()
+		return
+	}
+	if m.compCandidates != nil && row == m.compRow && tokenStart == m.compStart && token == m.compToken {
+		return
+	}
+	candidates, total := listPathCompletions(m.completionBase, core)
+	if len(candidates) == 0 {
+		m.clearCompletion()
+		return
+	}
+	m.compCandidates = candidates
+	m.compTotal = total
+	m.compIndex = -1
+	m.compRow = row
+	m.compStart = tokenStart
+	m.compToken = token
+	m.compNotice = ""
+	m.adjustHeight()
+	m.ensureCursorVisible()
 }
 
 // cycleCompletion swaps the current token for the next (or previous)
@@ -577,7 +615,7 @@ func repeatSpaces(n int) []rune {
 func NewInputModel(prompt string, history []string) InputModel {
 	ta := textarea.New()
 	ta.Prompt = "" // We'll show the prompt separately
-	ta.Placeholder = "(Enter to submit, Ctrl+J newline, Tab complete @path, Alt+V paste image)"
+	ta.Placeholder = "(Enter to submit, Ctrl+J newline, @path completes live, Tab select, Alt+V paste image)"
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0 // No limit
 
@@ -686,8 +724,9 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		// A completion list belongs to the token it was built for. Tab
 		// and Shift+Tab cycle it, up/down select from it while it
-		// shows, and esc dismisses it; anything else typed, moved or
-		// submitted discards it before the key is handled.
+		// shows, and esc dismisses it; typing narrows it via
+		// refreshAutoCompletion below, and anything else (cursor moves,
+		// submit) discards it before the key is handled.
 		switch key := msg.String(); {
 		case key == "tab" || key == "shift+tab":
 			// Kept alive for cycling.
@@ -807,10 +846,11 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			// No handler: let the textarea see the key.
-
-		// Complete the @path left of the cursor against the workspace.
-		// Shift+Tab cycles the same list backwards; while the list
-		// shows, down/up select from it (handled in their cases above).
+		// Select from the live @path list (typing @ plus two characters
+		// already shows it; a bare Tab lists from the filesystem when
+		// nothing shows yet). Shift+Tab cycles the same list backwards;
+		// while the list shows, down/up select from it (handled in their
+		// cases above).
 		case "tab":
 			m.handleTab(true)
 			return m, nil
@@ -895,6 +935,14 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// (soft-wrapped) rows so long single lines track correctly.
 	m.ensureCursorVisible()
 
+	// Live @path completion: @ plus two characters lists matches without
+	// needing Tab. Only re-list when the text actually changed — cursor
+	// moves alone keep the dismissal (esc included) until the next edit —
+	// and never while cycling (those keys return early above).
+	if m.textarea.Value() != beforeValue {
+		m.refreshAutoCompletion()
+	}
+
 	return m, cmd
 }
 
@@ -951,11 +999,11 @@ func (m InputModel) View() string {
 	return out
 }
 
-// completionView renders the Tab-completion list (or the "no match"
+// completionView renders the completion list (or the "no match"
 // notice) under the input. The selected candidate gets a marker and a
 // brighter color; the rest stay dim. The list is capped at
-// maxCompletionDisplay rows with an "…and N more" tail, so a Tab on a
-// bare prefix cannot flood the composer.
+// maxCompletionDisplay rows with an "…and N more" tail, so typing @
+// plus two characters in a big workspace cannot flood the composer.
 func (m InputModel) completionView() string {
 	out := ""
 	if m.compNotice != "" {

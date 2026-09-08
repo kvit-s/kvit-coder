@@ -627,3 +627,119 @@ func TestEscDismissesNoMatchNotice(t *testing.T) {
 		t.Errorf("esc cleared the draft: %q", got)
 	}
 }
+
+// Typing @ plus two characters lists matches live, without Tab and
+// without rewriting the text.
+func TestTypingShowsCompletionLive(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "alpha.go"))
+	writeFile(t, filepath.Join(dir, "alpine.go"))
+
+	m := NewInputModel(">", nil)
+	m.SetCompletionBaseDir(dir)
+	for _, r := range "read @al" {
+		m = pressKey(t, m, runeKey(r))
+	}
+	if len(m.compCandidates) != 2 {
+		t.Fatalf("live candidates = %v, want the two alpha files", m.compCandidates)
+	}
+	if got := m.textarea.Value(); got != "read @al" {
+		t.Errorf("live list rewrote the text: %q", got)
+	}
+	if view := m.View(); !strings.Contains(view, "alpha.go") || !strings.Contains(view, "alpine.go") {
+		t.Errorf("View() hides the live list:\n%s", view)
+	}
+}
+
+// A single character after @ stays quiet behind Tab: "@a" alone would
+// match too much in a large workspace to pop up on every keystroke.
+func TestTypingSingleCharStaysQuiet(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "alpha.go"))
+	writeFile(t, filepath.Join(dir, "alpine.go"))
+
+	m := NewInputModel(">", nil)
+	m.SetCompletionBaseDir(dir)
+	for _, r := range "read @a" {
+		m = pressKey(t, m, runeKey(r))
+	}
+	if len(m.compCandidates) != 0 {
+		t.Errorf("single-char core showed %v, want nothing", m.compCandidates)
+	}
+	if m.compNotice != "" {
+		t.Errorf("single-char core set a notice: %q", m.compNotice)
+	}
+}
+
+// Live typing with no matches clears quietly: no "no match" flicker
+// while narrowing. An explicit Tab still reports it (see
+// TestTabNoMatchNotice).
+func TestTypingNoMatchStaysQuiet(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "main.go"))
+
+	m := NewInputModel(">", nil)
+	m.SetCompletionBaseDir(dir)
+	for _, r := range "read @zz" {
+		m = pressKey(t, m, runeKey(r))
+	}
+	if len(m.compCandidates) != 0 {
+		t.Errorf("no-match typing kept %v, want nothing", m.compCandidates)
+	}
+	if m.compNotice != "" {
+		t.Errorf("no-match typing set %q, want quiet", m.compNotice)
+	}
+	if got := m.textarea.Value(); got != "read @zz" {
+		t.Errorf("no-match typing rewrote the text: %q", got)
+	}
+}
+
+// A Tab with a live list showing selects from it at once, instead of
+// listing first and cycling on the second Tab.
+func TestTabSelectsFromLiveList(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "alpha.go"))
+	writeFile(t, filepath.Join(dir, "alpine.go"))
+
+	m := NewInputModel(">", nil)
+	m.SetCompletionBaseDir(dir)
+	for _, r := range "read @al" {
+		m = pressKey(t, m, runeKey(r))
+	}
+	if len(m.compCandidates) != 2 {
+		t.Fatalf("setup: want live list, got %v", m.compCandidates)
+	}
+	m = pressTab(t, m, true)
+	if got := m.textarea.Value(); got != "read @alpha.go" {
+		t.Errorf("tab on live list = %q, want first candidate", got)
+	}
+}
+
+// Typing narrows the live list instead of clearing it, and backspace
+// widens it again.
+func TestLiveListNarrowsWhileTyping(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "alpha.go"))
+	writeFile(t, filepath.Join(dir, "alpine.go"))
+
+	m := NewInputModel(">", nil)
+	m.SetCompletionBaseDir(dir)
+	for _, r := range "read @alp" {
+		m = pressKey(t, m, runeKey(r))
+	}
+	if len(m.compCandidates) != 2 {
+		t.Fatalf("setup: want live list, got %v", m.compCandidates)
+	}
+	m = pressKey(t, m, runeKey('h'))
+	if len(m.compCandidates) != 1 || m.compCandidates[0] != "alpha.go" {
+		t.Fatalf("narrowed = %v, want [alpha.go]", m.compCandidates)
+	}
+	if got := m.textarea.Value(); got != "read @alph" {
+		t.Fatalf("narrowing rewrote the text: %q", got)
+	}
+	bs := tea.KeyMsg{Type: tea.KeyBackspace}
+	m = pressKey(t, m, bs)
+	if len(m.compCandidates) != 2 {
+		t.Errorf("backspace widened to %v, want both", m.compCandidates)
+	}
+}
