@@ -196,3 +196,29 @@ func TestManager_StdioEndToEnd(t *testing.T) {
 		t.Fatalf("unexpected content: %#v", m2)
 	}
 }
+
+func TestExpandArgsSubstitutesTheEnvironment(t *testing.T) {
+	t.Setenv("KVIT_TEST_RUN_ID", "sess-abc")
+	got := expandArgs([]string{
+		"--headless",
+		"--user-data-dir=/tmp/browser/${KVIT_TEST_RUN_ID}",
+		"--plain",
+	})
+	want := []string{"--headless", "--user-data-dir=/tmp/browser/sess-abc", "--plain"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("arg %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestExpandArgsLeavesAnUnsetVariableEmpty(t *testing.T) {
+	// A path that collapses to a shared directory is a worse outcome than a
+	// per-session one and a better outcome than a crash, so this is recorded
+	// rather than guarded against.
+	t.Setenv("KVIT_TEST_ABSENT", "")
+	got := expandArgs([]string{"--dir=/tmp/b/${KVIT_TEST_ABSENT}"})
+	if got[0] != "--dir=/tmp/b/" {
+		t.Errorf("got %q", got[0])
+	}
+}

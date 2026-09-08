@@ -227,6 +227,43 @@ safety:
     block_one_liners: false     # Block python -c, node -e, etc.
     allowed: []                 # Allowlist if blocking (e.g., ["python", "node"])
 
+# External tool servers over the Model Context Protocol. Everything here is a
+# separate program kvit-coder talks to, so its tools can reach whatever that
+# program can reach -- which is why they are gated by `confirm` rather than by
+# workspace path safety.
+mcp:
+  enabled: true
+  confirm: ask_once     # block | ask_once | ask_always | trust. ask_once now
+                        # means once per session, not once per turn: the answers
+                        # go to <session>/mcp-approvals.json.
+  servers:
+    # A real browser, for the pages Web.fetch cannot read: anything that builds
+    # itself with JavaScript, or answers a plain fetch with a bot check.
+    #
+    # The agent is one process per turn, so this server is spawned and killed
+    # every turn and the browser goes with it. ${KVIT_RUN_ID} in the profile
+    # path is what stops that costing a login: Chrome persists cookies and local
+    # storage to that directory itself, so only the open tabs are lost and the
+    # model re-navigates. It is per session because a persistent profile can
+    # only be used by one browser at a time, and sessions run concurrently.
+    # docs/web-tools.md section 6 is about removing the respawn entirely.
+    - name: playwright
+      enabled: true
+      transport: stdio
+      command: npx
+      args:
+        - "-y"
+        - "@playwright/mcp@latest"
+        - "--headless"
+        - "--browser=chromium"
+        - "--user-data-dir=/tmp/kvit-coder-browser/${KVIT_RUN_ID}"
+        - "--output-dir=/tmp/kvit-coder-browser-out/${KVIT_RUN_ID}"
+        - "--output-max-size=52428800"
+      # Snapshots and screenshots come back as file paths under --output-dir
+      # rather than inline, so /tmp being on workspace.allowed_paths is what
+      # lets the model Read them without being asked about each one.
+      call_timeout: 180   # a page load plus a settle is slower than an API call
+
 # Prompt template configuration
 prompts:
   use_templates: false          # Enable template-based prompt generation (default: false uses hardcoded)

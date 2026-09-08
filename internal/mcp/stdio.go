@@ -44,7 +44,7 @@ func newStdioClient(command string, args, extraEnv []string, cwd string, logger 
 		return nil, fmt.Errorf("stdio transport requires a command")
 	}
 
-	cmd := exec.Command(command, args...)
+	cmd := exec.Command(command, expandArgs(args)...)
 	cmd.Dir = cwd
 	cmd.Env = os.Environ()
 	if len(extraEnv) > 0 {
@@ -164,6 +164,23 @@ func drainStderr(r io.Reader, logger Logger) {
 			logger.Debug("mcp[server stderr]: " + line)
 		}
 	}
+}
+
+// expandArgs expands ${VAR} / $VAR references in each argument, matching what
+// env entries and HTTP headers already do.
+//
+// The reason it is worth having rather than merely consistent: a server that
+// keeps state in a directory can be given one per session by writing
+// ${KVIT_RUN_ID} into the path. A browser server pointed at a per-session
+// profile keeps its cookies across the turn boundary that kills its process,
+// and two sessions running at once do not fight over one profile, which a
+// persistent profile otherwise forbids.
+func expandArgs(args []string) []string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = os.ExpandEnv(a)
+	}
+	return out
 }
 
 // expandEnvEntries expands ${VAR} / $VAR references in the VALUE part of each
