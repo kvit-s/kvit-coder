@@ -87,8 +87,10 @@ func WithTimeout(d time.Duration) Option {
 }
 
 // WithReasoningEffort sets how much thinking a reasoning model should do.
-// Only the Responses backend sends it; the accepted values are the provider's
-// (commonly minimal, low, medium, high).
+// The Responses backend sends it as `reasoning.effort`; the chat-completions
+// backend sends it as `chat_template_kwargs.reasoning_effort` (the Qwen
+// template's key: low|medium|high|xhigh), which servers without that template
+// ignore. Empty means "server default" on both.
 func WithReasoningEffort(effort string) Option {
 	return func(c *Client) { c.reasoningEffort = effort }
 }
@@ -165,6 +167,19 @@ func isPermanent500Error(respBody []byte) bool {
 func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
 	if c.backend == BackendResponses {
 		return c.chatViaResponses(ctx, req)
+	}
+
+	// A selected effort rides as the Qwen template's per-request override
+	// (see compose.yaml: "chat_template_kwargs":
+	// {"reasoning_effort": "low"|"medium"|"high"|"xhigh"}). The server's
+	// configured default applies when nothing is sent, so empty sends
+	// nothing. An explicit per-request ChatTemplateKwargs (e.g. the
+	// interrogator's enable_thinking:false) wins over the client's default.
+	if c.reasoningEffort != "" && req.ChatTemplateKwargs == nil {
+		req.ChatTemplateKwargs = map[string]any{
+			"enable_thinking":  true,
+			"reasoning_effort": c.reasoningEffort,
+		}
 	}
 
 	// Prepare request body. Messages are converted to their wire form, where

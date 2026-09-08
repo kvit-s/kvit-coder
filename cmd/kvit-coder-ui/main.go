@@ -25,6 +25,10 @@ func main() {
 	agentPath := flag.String("agent-path", "", "path to kvit-coder binary (auto-detected if not specified)")
 	sessionName := flag.String("s", "", "session name: continue existing session or create new one")
 	continueLast := flag.Bool("c", false, "continue the most recent session")
+	modelFlag := flag.String("model", "", "start on this model: :mN, index, id, name or wire id, with optional :effort (e.g. -m m3:xhigh)")
+	modelShort := flag.String("m", "", "shorthand for --model")
+	effortFlag := flag.String("effort", "", "startup reasoning effort for the selected model (overrides the :effort suffix)")
+	effortShort := flag.String("e", "", "shorthand for --effort")
 	yolo := flag.Bool("yolo", false, "read and write anywhere on the filesystem, without asking")
 	showVersion := flag.Bool("version", false, "show version information and exit")
 
@@ -136,14 +140,45 @@ func main() {
 		currentSession = sessionMgr.GenerateSessionName()
 	}
 
+	// Startup model selection (-m/--model, -e/--effort). The ref may carry
+	// an inline ":effort" ("m3:xhigh"); an explicit -e wins over it. A bad
+	// ref fails here, before the UI opens, with what is offered — the same
+	// resolver the :mN/:eN commands and headless --model share.
+	modelRef := *modelFlag
+	if modelRef == "" {
+		modelRef = *modelShort
+	}
+	effortRef := *effortFlag
+	if effortRef == "" {
+		effortRef = *effortShort
+	}
+	var initialModelSet, initialEffortSet bool
+	var initialModel int
+	var initialEffort string
+	if modelRef != "" || effortRef != "" {
+		_, inlineEff := config.SplitModelEffort(modelRef)
+		idx, eff, err := cfg.ResolveSelection(modelRef, effortRef, effortRef != "")
+		if err != nil {
+			log.Fatalf("Failed to select model: %v", err)
+		}
+		initialModelSet, initialModel = true, idx
+		if effortRef != "" || inlineEff != "" {
+			initialEffortSet, initialEffort = true, eff
+		}
+	}
+
 	// Create and run UI
 	ui := tui.New(tui.Options{
-		AgentPath:   agentBinary,
-		ConfigPath:  *configPath,
-		SessionName: currentSession,
-		SessionMgr:  sessionMgr,
-		Config:      cfg,
-		Yolo:        *yolo,
+		AgentPath:        agentBinary,
+		ConfigPath:       *configPath,
+		SessionName:      currentSession,
+		SessionMgr:       sessionMgr,
+		Config:           cfg,
+		Yolo:             *yolo,
+		InitialModelSet:  initialModelSet,
+		InitialModel:     initialModel,
+		InitialEffortSet: initialEffortSet,
+		InitialEffort:    initialEffort,
 	})
 
 	if err := ui.Run(); err != nil {

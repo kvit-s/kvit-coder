@@ -47,11 +47,14 @@ func main() {
 
 	// Parse flags
 	configPath := flag.String("config", "config.yaml", "path to config file")
-	model := flag.String("model", "", "select model: index, id, name or wire id from models: (or a wire id)")
+	model := flag.String("model", "", "select model: :mN, index, id, name or wire id from models:, with optional :effort (e.g. --model m3:xhigh)")
+	modelShort := flag.String("m", "", "shorthand for --model")
 	baseURL := flag.String("base-url", "", "override LLM base URL")
 	apiBackend := flag.String("api-backend", "", "override LLM wire protocol (chat_completions or responses)")
 	effort := &stringFlag{}
 	flag.Var(effort, "effort", "reasoning effort for the selected model (empty clears it)")
+	effortShort := &stringFlag{}
+	flag.Var(effortShort, "e", "shorthand for --effort")
 	logFile := flag.String("log", "kvit-coder.log", "log file path (empty to disable)")
 	execPrompt := flag.String("p", "", "exec mode: run with this prompt and exit after completion")
 	quietPrompt := flag.String("pq", "", "quiet exec mode: run with this prompt and only print final LLM response")
@@ -272,8 +275,15 @@ func main() {
 	// Apply flag overrides: the model catalog first (so --model resolves the
 	// full entry, not just the name), then the explicit wire fields, which
 	// win over the entry so a skewed UI/agent config pair still sends the
-	// right endpoint.
-	resolveModelSelection(cfg, *model, effort, *apiBackend, *baseURL)
+	// right endpoint. -m/-e are shorthand for --model/--effort.
+	modelRef := *model
+	if modelRef == "" {
+		modelRef = *modelShort
+	}
+	if !effort.set && effortShort.set {
+		effort = effortShort
+	}
+	resolveModelSelection(cfg, modelRef, effort, *apiBackend, *baseURL)
 	if *agentFile != "" {
 		cfg.Agent.AgentFile = *agentFile
 	}

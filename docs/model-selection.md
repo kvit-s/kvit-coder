@@ -1,12 +1,16 @@
 # Model selection: multiple models in config + `:mN` / `:eN` in the UI
 
-Built September 2026, as described below, with three small deviations:
+Built September 2026, as described below, with four small deviations:
 `config.yaml` marks `xhigh` (not `high`) the spark-go default so the
 default turn is unchanged; `:e ""` is not a UI command — clearing the
 effort happens by switching to a model with no menu, or headless with
-`--effort ""`; and `DefaultEffort` returns `""` for a model with no menu
+`--effort ""`; `DefaultEffort` returns `""` for a model with no menu
 before consulting `llm.reasoning_effort`, so the clear-on-switch rule holds
-even when `llm.reasoning_effort` is set. Goal, in the requester's words:
+even when `llm.reasoning_effort` is set; and Qwen turned out to take
+per-request effort after all (`chat_template_kwargs.reasoning_effort`:
+low|medium|high|xhigh, low is the server default), so `qwen-local` has a
+menu and the chat-completions path sends it — omit the list only for a
+truly non-reasoning model. Goal, in the requester's words:
 
 > specify multiple models in `config.yaml`, use `:h` to see the list of
 > available models, select them with `:m1`, `:m2`, etc., and select effort
@@ -302,9 +306,10 @@ models:
     api_key_env: "OPENCODE_API_KEY"
     context: 1048576
     # Ordered effort menu for :eN. `default: true` marks the entry default.
-    # Omit the whole list for a non-reasoning model (local qwen): then no
-    # :eN menu exists and switching to it clears the effort.
-    efforts:
+    # Omit the whole list for a truly non-reasoning model: then no :eN menu
+    # exists and switching to it clears the effort. (Qwen is not one: its
+    # template takes per-request reasoning_effort, so it keeps a menu even
+    # though it speaks chat_completions.)
       - value: "minimal"
       - value: "low"
       - value: "medium"
@@ -330,7 +335,14 @@ models:
     model: "qwen3.8-27b-nvfp4-dflash2"
     base_url: "http://192.168.138.186:8090/v1"
     api_backend: "chat_completions"
-    # no efforts: non-reasoning model
+    # Qwen's template takes per-request reasoning_effort; low is the server
+    # default in compose.yaml, high means xhigh.
+    efforts:
+      - value: "low"
+        default: true
+      - value: "medium"
+      - value: "high"
+      - value: "xhigh"
 
 llm:
   # …unchanged; used when `models:` is absent, and as the source of
@@ -508,6 +520,8 @@ Implementation notes:
   menu; `:e9` / `:m9` print the offered list, not a stack trace;
   switching to the local qwen entry clears effort and hits
   `chat_completions`; mid-session switch does not replay stale
-  `ReasoningBlocks`.
 - Headless parity: `kvit-coder -p … --model <id> --effort <level>` runs the
-  same resolver and fails with the same offered-list error.
+  same resolver and fails with the same offered-list error. `--model` also
+  takes `:mN`/index/id/name/wire-id plus an inline `:effort`
+  (`--model m3:xhigh`, `-m`/`-e` shorthand), and `kvit-coder-ui` takes the
+  same `-m/-e` startup flags.

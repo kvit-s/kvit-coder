@@ -113,14 +113,26 @@ func (c *Config) DefaultModelIndex() int {
 // ResolveModel finds a catalog row by 1-based index ("1"), id, display name,
 // or wire model id, in that order. Indexing is stable config-file order;
 // rows are never sorted (prompt-cache determinism).
+//
+// The :mN spellings the UI uses are accepted too: a leading ':' is dropped
+// and 'm' followed only by digits means that index, so "-m m3" on the
+// command line finds what ":m3" finds in the UI. (A catalog id that is
+// literally "m<N>" is shadowed by the index; ids look like "spark-go", so
+// this costs nothing in practice.)
 func (c *Config) ResolveModel(ref string) (ModelEntry, int, error) {
 	list := c.ModelList()
-	ref = strings.TrimSpace(ref)
+	orig := strings.TrimSpace(ref)
+	ref = strings.TrimPrefix(orig, ":")
+	if len(ref) >= 2 && (ref[0] == 'm' || ref[0] == 'M') {
+		if _, err := strconv.Atoi(ref[1:]); err == nil {
+			ref = ref[1:]
+		}
+	}
 	if n, err := strconv.Atoi(ref); err == nil {
 		if n >= 1 && n <= len(list) {
 			return list[n-1], n - 1, nil
 		}
-		return ModelEntry{}, 0, fmt.Errorf("unknown model %q; use one of: %s", ref, modelListHint(list))
+		return ModelEntry{}, 0, fmt.Errorf("unknown model %q; use one of: %s", orig, modelListHint(list))
 	}
 	for i, e := range list {
 		if strings.EqualFold(e.ID, ref) {
@@ -142,7 +154,59 @@ func (c *Config) ResolveModel(ref string) (ModelEntry, int, error) {
 			return e, i, nil
 		}
 	}
-	return ModelEntry{}, 0, fmt.Errorf("unknown model %q; use one of: %s", ref, modelListHint(list))
+	return ModelEntry{}, 0, fmt.Errorf("unknown model %q; use one of: %s", orig, modelListHint(list))
+}
+
+// SplitModelEffort splits a -m/--model value into its model and effort
+// halves: "m3:xhigh" gives ("m3", "xhigh"), "qwen-local:low" gives
+// ("qwen-local", "low"), ":xhigh" gives ("", "xhigh", default model with
+// that effort), and anything without a known effort suffix stays whole —
+// only the last colon counts, and only when the suffix names a canonical
+// effort, so a wire id with colons ("openai:gpt-4") is never cut.
+func SplitModelEffort(ref string) (modelPart, effortPart string) {
+	ref = strings.TrimSpace(ref)
+	if i := strings.LastIndex(ref, ":"); i >= 0 {
+		// Lowercased: effort values are canonical lowercase everywhere
+		// (Load normalizes the catalog the same way).
+		if tail := strings.ToLower(strings.TrimSpace(ref[i+1:])); IsCanonicalEffort(tail) {
+			return strings.TrimSpace(ref[:i]), tail
+		}
+	}
+	return ref, ""
+}
+
+// ResolveSelection resolves a startup/flag selection to a catalog index plus
+// a resolved effort. modelRef may carry an inline ":effort" ("m3:xhigh",
+// "qwen-local:low"); an explicit effort (effortSet) wins over the inline
+// one. Empty modelRef means the default row; "" effort means that row's
+// default ("" for a model with no menu). Errors name what is offered, for
+// the UI banner path and the headless --model path alike.
+func (c *Config) ResolveSelection(modelRef, effortRef string, effortSet bool) (int, string, error) {
+	modelPart, inlineEff := SplitModelEffort(modelRef)
+	if !effortSet && inlineEff != "" {
+		effortRef, effortSet = inlineEff, true
+	}
+	list := c.ModelList()
+	idx := c.DefaultModelIndex()
+	if idx < 0 || idx >= len(list) {
+		idx = 0
+	}
+	if strings.TrimSpace(modelPart) != "" {
+		_, i, err := c.ResolveModel(modelPart)
+		if err != nil {
+			return 0, "", err
+		}
+		idx = i
+	}
+	eff := c.DefaultEffort(list[idx])
+	if effortSet {
+		v, err := c.ResolveEffort(list[idx], strings.TrimSpace(effortRef))
+		if err != nil {
+			return 0, "", err
+		}
+		eff = v
+	}
+	return idx, eff, nil
 }
 
 func modelListHint(list []ModelEntry) string {

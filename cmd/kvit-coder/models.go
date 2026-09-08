@@ -24,14 +24,24 @@ func (s *stringFlag) Set(v string) error {
 
 // resolveModelSelection applies the --model/--effort/--api-backend/--base-url
 // overrides to cfg right after Load, before the client is built and before
-// the session records what this turn ran with.
-//
+// the session records what this turn ran with. -m/-e are shorthand for
+// --model/--effort; --model also takes an inline ":effort" ("m3:xhigh").
 // With a `models:` catalog the default entry — not the `llm:` block — is the
 // base, so a headless run with no flags matches what kvit-coder-ui shows for
 // the same config. `llm:` stays the source of the non-endpoint settings.
 // Unknown models or efforts fail on stderr with a non-zero exit and the same
 // offered-list error the UI prints.
 func resolveModelSelection(cfg *config.Config, modelRef string, effort *stringFlag, apiBackend, baseURL string) {
+	// A -m/--model value may carry an inline ":effort" ("m3:xhigh",
+	// "qwen-local:low"); an explicit --effort wins over it.
+	inlineEffort := ""
+	if modelRef != "" {
+		if mp, ie := config.SplitModelEffort(modelRef); ie != "" && !effort.set {
+			modelRef, inlineEffort = mp, ie
+		} else {
+			modelRef = mp
+		}
+	}
 	if len(cfg.Models) > 0 {
 		list := cfg.ModelList()
 		idx := cfg.DefaultModelIndex()
@@ -58,11 +68,20 @@ func resolveModelSelection(cfg *config.Config, modelRef string, effort *stringFl
 					log.Fatalf("Failed to select effort: unknown effort level %q", effort.val)
 				}
 				cfg.LLM.ReasoningEffort = effort.val
+			} else if inlineEffort != "" {
+				if !config.IsCanonicalEffort(inlineEffort) {
+					log.Fatalf("Failed to select effort: unknown effort level %q", inlineEffort)
+				}
+				cfg.LLM.ReasoningEffort = inlineEffort
 			}
 		} else {
 			eff := cfg.DefaultEffort(entry)
+			useEffort, useSet := inlineEffort, inlineEffort != ""
 			if effort.set {
-				v, rerr := cfg.ResolveEffort(entry, effort.val)
+				useEffort, useSet = effort.val, true
+			}
+			if useSet {
+				v, rerr := cfg.ResolveEffort(entry, useEffort)
 				if rerr != nil {
 					log.Fatalf("Failed to select effort: %v", rerr)
 				}
@@ -70,13 +89,17 @@ func resolveModelSelection(cfg *config.Config, modelRef string, effort *stringFl
 			}
 			cfg.ApplyModel(entry, eff)
 		}
-	} else if effort.set {
+	} else if effort.set || inlineEffort != "" {
 		list := cfg.ModelList()
 		idx := cfg.DefaultModelIndex()
 		if idx < 0 || idx >= len(list) {
 			idx = 0
 		}
-		v, rerr := cfg.ResolveEffort(list[idx], effort.val)
+		useEffort := inlineEffort
+		if effort.set {
+			useEffort = effort.val
+		}
+		v, rerr := cfg.ResolveEffort(list[idx], useEffort)
 		if rerr != nil {
 			log.Fatalf("Failed to select effort: %v", rerr)
 		}

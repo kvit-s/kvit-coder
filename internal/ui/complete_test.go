@@ -196,9 +196,9 @@ func TestTabSingleCompletion(t *testing.T) {
 	}
 
 	// Directories complete with a trailing slash.
-	m.textarea.SetValue("cd su")
+	m.textarea.SetValue("cd @su")
 	m = pressTab(t, m, true)
-	if got := m.textarea.Value(); got != "cd sub/" {
+	if got := m.textarea.Value(); got != "cd @sub/" {
 		t.Errorf("dir value = %q", got)
 	}
 
@@ -217,18 +217,18 @@ func TestTabListsAndCycles(t *testing.T) {
 
 	m := NewInputModel(">", nil)
 	m.SetCompletionBaseDir(dir)
-	m.textarea.SetValue("read a")
+	m.textarea.SetValue("read @a")
 
 	m = pressTab(t, m, true)
-	if got := m.textarea.Value(); got != "read alp" {
-		t.Fatalf("common prefix = %q, want %q", got, "read alp")
+	if got := m.textarea.Value(); got != "read @alp" {
+		t.Fatalf("common prefix = %q, want %q", got, "read @alp")
 	}
 	if view := m.View(); !strings.Contains(view, "alpha.go") || !strings.Contains(view, "alpine.go") {
 		t.Fatalf("View() hides the list:\n%s", view)
 	}
 
 	m = pressTab(t, m, true)
-	if got := m.textarea.Value(); got != "read alpha.go" {
+	if got := m.textarea.Value(); got != "read @alpha.go" {
 		t.Errorf("first cycle = %q", got)
 	}
 	if view := m.View(); !strings.Contains(view, "> alpha.go") {
@@ -236,14 +236,33 @@ func TestTabListsAndCycles(t *testing.T) {
 	}
 
 	m = pressTab(t, m, true)
-	if got := m.textarea.Value(); got != "read alpine.go" {
+	if got := m.textarea.Value(); got != "read @alpine.go" {
 		t.Errorf("second cycle = %q", got)
 	}
 
 	// Shift+Tab walks back, wrapping around.
 	m = pressTab(t, m, false)
-	if got := m.textarea.Value(); got != "read alpha.go" {
+	if got := m.textarea.Value(); got != "read @alpha.go" {
 		t.Errorf("backward cycle = %q", got)
+	}
+}
+
+func TestTabWithoutAtDoesNothing(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "main.go"))
+
+	m := NewInputModel(">", nil)
+	m.SetCompletionBaseDir(dir)
+	m.textarea.SetValue("read mai")
+	m = pressTab(t, m, true)
+	if got := m.textarea.Value(); got != "read mai" {
+		t.Errorf("non-@ Tab rewrote the text: %q", got)
+	}
+	if len(m.compCandidates) != 0 {
+		t.Errorf("non-@ Tab built a list: %v", m.compCandidates)
+	}
+	if view := m.View(); strings.Contains(view, "main.go") || strings.Contains(view, "no match") {
+		t.Errorf("non-@ Tab shows completion UI:\n%s", view)
 	}
 }
 
@@ -279,7 +298,7 @@ func TestTypingClearsCompletionList(t *testing.T) {
 
 	m := NewInputModel(">", nil)
 	m.SetCompletionBaseDir(dir)
-	m.textarea.SetValue("read a")
+	m.textarea.SetValue("read @a")
 	m = pressTab(t, m, true)
 	if len(m.compCandidates) != 2 {
 		t.Fatalf("setup: want live list, got %v", m.compCandidates)
@@ -300,13 +319,13 @@ func TestTabMidLinePreservesSuffix(t *testing.T) {
 
 	m := NewInputModel(">", nil)
 	m.SetCompletionBaseDir(dir)
-	m.textarea.SetValue("use mai here")
-	m.textarea.SetCursor(7) // right after "mai"
+	m.textarea.SetValue("use @mai here")
+	m.textarea.SetCursor(8) // right after "@mai"
 	m = pressTab(t, m, true)
-	if got := m.textarea.Value(); got != "use main.go here" {
+	if got := m.textarea.Value(); got != "use @main.go here" {
 		t.Fatalf("value = %q", got)
 	}
-	if col := m.cursorHardCol(); col != len([]rune("use main.go")) {
+	if col := m.cursorHardCol(); col != len([]rune("use @main.go")) {
 		t.Errorf("cursor at %d, want after the insertion", col)
 	}
 }
@@ -320,9 +339,9 @@ func TestTabQuotedPathWithSpace(t *testing.T) {
 
 	m := NewInputModel(">", nil)
 	m.SetCompletionBaseDir(dir)
-	m.textarea.SetValue(`read "my `)
+	m.textarea.SetValue(`read "@my `)
 	m = pressTab(t, m, true)
-	if got := m.textarea.Value(); got != `read "my dir/` {
+	if got := m.textarea.Value(); got != `read "@my dir/` {
 		t.Errorf("quoted value = %q", got)
 	}
 }
@@ -333,9 +352,9 @@ func TestTabSubdirPrefix(t *testing.T) {
 
 	m := NewInputModel(">", nil)
 	m.SetCompletionBaseDir(dir)
-	m.textarea.SetValue("read sub/m")
+	m.textarea.SetValue("read @sub/m")
 	m = pressTab(t, m, true)
-	if got := m.textarea.Value(); got != "read sub/main.go" {
+	if got := m.textarea.Value(); got != "read @sub/main.go" {
 		t.Errorf("value = %q", got)
 	}
 }
@@ -346,7 +365,7 @@ func TestTabFirstLineOfTwo(t *testing.T) {
 
 	m := NewInputModel(">", nil)
 	m.SetCompletionBaseDir(dir)
-	m.textarea.SetValue("read mai\nsecond line")
+	m.textarea.SetValue("read @mai\nsecond line")
 	// Back up to the end of the first line: this is the path that
 	// walks the cursor up after SetValue resets it to the end.
 	for m.textarea.Line() > 0 {
@@ -354,13 +373,13 @@ func TestTabFirstLineOfTwo(t *testing.T) {
 	}
 	m.textarea.CursorEnd()
 	m = pressTab(t, m, true)
-	if got := m.textarea.Value(); got != "read main.go\nsecond line" {
+	if got := m.textarea.Value(); got != "read @main.go\nsecond line" {
 		t.Fatalf("value = %q", got)
 	}
 	if row := m.textarea.Line(); row != 0 {
 		t.Errorf("cursor row = %d, want 0", row)
 	}
-	if col := m.cursorHardCol(); col != len([]rune("read main.go")) {
+	if col := m.cursorHardCol(); col != len([]rune("read @main.go")) {
 		t.Errorf("cursor col = %d, want after the insertion", col)
 	}
 }
@@ -369,9 +388,100 @@ func TestTildeCompletesToHome(t *testing.T) {
 	dir := t.TempDir()
 	m := NewInputModel(">", nil)
 	m.SetCompletionBaseDir(dir)
-	m.textarea.SetValue("read ~")
+	m.textarea.SetValue("read @~")
 	m = pressTab(t, m, true)
-	if got := m.textarea.Value(); got != "read ~/" {
-		t.Errorf("value = %q, want %q", got, "read ~/")
+	if got := m.textarea.Value(); got != "read @~/" {
+		t.Errorf("value = %q, want %q", got, "read @~/")
+	}
+}
+
+func TestFuzzyScore(t *testing.T) {
+	if _, ok := fuzzyScore("sn-p", "docs/redesign-mcp.md"); !ok {
+		t.Errorf("sn-p should fuzzy-match redesign-mcp.md")
+	}
+	if _, ok := fuzzyScore("sn-p", "docs/redesign-plan.md"); !ok {
+		t.Errorf("sn-p should fuzzy-match redesign-plan.md")
+	}
+	if _, ok := fuzzyScore("sn-p", "docs/review.md"); ok {
+		t.Errorf("sn-p should not match review.md")
+	}
+	if _, ok := fuzzyScore("XYZ", "abc"); ok {
+		t.Errorf("XYZ should not match abc")
+	}
+	// A true substring outranks a sparse subsequence.
+	sub, _ := fuzzyScore("plan", "docs/plan.md")
+	sparse, _ := fuzzyScore("plan", "docs/redesign-plan.md")
+	if !(sub < sparse) {
+		t.Errorf("substring score %d should beat subsequence %d", sub, sparse)
+	}
+	// Case-insensitive.
+	if _, ok := fuzzyScore("SN-P", "docs/redesign-mcp.md"); !ok {
+		t.Errorf("matching should be case-insensitive")
+	}
+}
+
+func TestTabFuzzyFindsNestedFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "docs", "redesign-mcp.md"))
+	writeFile(t, filepath.Join(dir, "docs", "redesign-plan.md"))
+	writeFile(t, filepath.Join(dir, "docs", "review.md"))
+
+	m := NewInputModel(">", nil)
+	m.SetCompletionBaseDir(dir)
+	m.textarea.SetValue("read @sn-p")
+	m = pressTab(t, m, true)
+	if got := m.textarea.Value(); got != "read @sn-p" {
+		t.Fatalf("fuzzy Tab rewrote the abbreviation: %q", got)
+	}
+	if len(m.compCandidates) != 2 {
+		t.Fatalf("candidates = %v, want the two redesign files", m.compCandidates)
+	}
+	view := m.View()
+	if !strings.Contains(view, "docs/redesign-mcp.md") || !strings.Contains(view, "docs/redesign-plan.md") {
+		t.Fatalf("View() hides the fuzzy matches:\n%s", view)
+	}
+	if strings.Contains(view, "review.md") {
+		t.Errorf("View() shows a non-match:\n%s", view)
+	}
+
+	// Cycling replaces the abbreviation with the full relative path.
+	m = pressTab(t, m, true)
+	got := m.textarea.Value()
+	if got != "read @docs/redesign-mcp.md" && got != "read @docs/redesign-plan.md" {
+		t.Errorf("cycle = %q, want a full redesign path", got)
+	}
+}
+
+func TestTabFuzzySubstring(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "docs", "redesign-mcp.md"))
+	writeFile(t, filepath.Join(dir, "src", "main.go"))
+
+	m := NewInputModel(">", nil)
+	m.SetCompletionBaseDir(dir)
+	m.textarea.SetValue("read @esign-m")
+	m = pressTab(t, m, true)
+	if got := m.textarea.Value(); got != "read @docs/redesign-mcp.md" {
+		t.Errorf("substring single = %q", got)
+	}
+}
+
+func TestTabAtAloneBrowsesRoot(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "main.go"))
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewInputModel(">", nil)
+	m.SetCompletionBaseDir(dir)
+	m.textarea.SetValue("read @")
+	m = pressTab(t, m, true)
+	if len(m.compCandidates) != 2 {
+		t.Fatalf("candidates = %v, want root listing", m.compCandidates)
+	}
+	view := m.View()
+	if !strings.Contains(view, "main.go") || !strings.Contains(view, "sub/") {
+		t.Errorf("View() hides the root listing:\n%s", view)
 	}
 }

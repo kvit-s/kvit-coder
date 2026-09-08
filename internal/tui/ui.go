@@ -26,6 +26,17 @@ type Options struct {
 	Config      *config.Config
 	// Yolo passes --yolo to every turn: read and write anywhere, no prompts.
 	Yolo bool
+	// InitialModelSet/InitialModel select the startup row, from -m/--model:
+	// a :mN, index, id, name or wire id, with optional :effort ("m3:xhigh").
+	// Unset means the configured default.
+	InitialModelSet bool
+	InitialModel    int
+	// InitialEffortSet/InitialEffort override the startup row's effort, from
+	// -e/--effort or the :effort suffix in InitialModel. Unset means the
+	// entry default. Zero values select the default with its default
+	// effort, so Options{Config: cfg} behaves as before.
+	InitialEffortSet bool
+	InitialEffort    string
 }
 
 // UI manages the interactive terminal interface
@@ -72,12 +83,24 @@ func New(opts Options) *UI {
 		historyFile:    historyFile,
 	}
 	// Snapshot the catalog and start on the default row (the llm.model row,
-	// else the first). A config edit mid-session needs a UI restart, same
-	// as today.
+	// else the first), or on the -m/--model row when one was given. A
+	// config edit mid-session needs a UI restart, same as today.
 	u.models = opts.Config.ModelList()
 	u.currentModel = opts.Config.DefaultModelIndex()
 	if u.currentModel < 0 || u.currentModel >= len(u.models) {
 		u.currentModel = 0
+	}
+	if opts.InitialModelSet && opts.InitialModel >= 0 && opts.InitialModel < len(u.models) {
+		u.currentModel = opts.InitialModel
+		u.currentEffort = ""
+	}
+	if opts.InitialEffortSet {
+		// Validated by the caller (kvit-coder-ui fails startup on a bad
+		// -e); a bad value here just keeps the entry default, so direct
+		// New callers cannot wedge the banner.
+		if v, err := opts.Config.ResolveEffort(u.currentEntry(), opts.InitialEffort); err == nil {
+			u.currentEffort = v
+		}
 	}
 	u.pinRunID()
 	return u

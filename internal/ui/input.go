@@ -256,13 +256,14 @@ func (m *InputModel) ensureCursorVisible() {
 	}
 }
 
-// handleTab completes the path in the token left of the cursor. One
-// match replaces it in place; several extend the common prefix and list
-// the candidates under the input. Tab again with the text untouched
-// cycles forward through the list (Shift+Tab backwards); any other key
-// between presses restarts from the filesystem. On an empty token Tab
-// indents instead (it used to do nothing: the key arrives without runes,
-// so the textarea inserted nothing).
+// handleTab completes the @path in the token left of the cursor. One
+// match replaces it in place; several list under the input, extending
+// the token only when every candidate shares the typed text as a prefix
+// (a fuzzy abbreviation like "@sn-p" is left alone for Tab to cycle).
+// Tab again with the text untouched cycles forward through the list
+// (Shift+Tab backwards); any other key between presses restarts from
+// the filesystem. Tokens without @ never complete: an empty token
+// indents, anything else is left alone.
 func (m *InputModel) handleTab(forward bool) {
 	lines := m.hardLines()
 	row := m.textarea.Line()
@@ -307,14 +308,29 @@ func (m *InputModel) handleTab(forward bool) {
 		return
 	}
 
+	if _, at, _, _ := splitCompletionToken(token); at != "@" {
+		// Free text, not a file reference: leave it alone rather
+		// than completing or indenting mid-word.
+		m.clearCompletion()
+		return
+	}
+
 	m.completeFresh(row, tokenStart, col, token, inQuotes)
 }
 
-// completeFresh lists the filesystem for a new token and either replaces
-// it (a single match, or the common prefix of several) or just shows the
-// list when there is nothing to extend.
+// completeFresh lists the filesystem for a new @ token and either
+// replaces it (a single match, or the common prefix of several) or just
+// shows the list when there is nothing to extend. The common prefix
+// only extends when it keeps the typed core as a prefix: fuzzy matches
+// share a score, not a spelling, so rewriting "@sn-p" to the
+// candidates' longest common path would discard the abbreviation the
+// list was built for.
 func (m *InputModel) completeFresh(row, tokenStart, col int, token string, inQuotes bool) {
 	lead, at, core, trailing := splitCompletionToken(token)
+	if at != "@" {
+		m.clearCompletion()
+		return
+	}
 	candidates, total := listPathCompletions(m.completionBase, core)
 	switch {
 	case len(candidates) == 0:
@@ -331,7 +347,7 @@ func (m *InputModel) completeFresh(row, tokenStart, col int, token string, inQuo
 		m.ensureCursorVisible()
 	default:
 		m.historyIdx = -1
-		if lcp := commonPathPrefix(candidates); len(lcp) > len(core) {
+		if lcp := commonPathPrefix(candidates); len(lcp) > len(core) && strings.HasPrefix(lcp, core) {
 			newToken := buildCompletionToken(lead, at, lcp, trailing, inQuotes)
 			m.replaceToken(row, tokenStart, col, newToken)
 			m.compToken = newToken
@@ -528,7 +544,7 @@ func repeatSpaces(n int) []rune {
 func NewInputModel(prompt string, history []string) InputModel {
 	ta := textarea.New()
 	ta.Prompt = "" // We'll show the prompt separately
-	ta.Placeholder = "(Enter to submit, Ctrl+J newline, Tab complete path, Alt+V paste image)"
+	ta.Placeholder = "(Enter to submit, Ctrl+J newline, Tab complete @path, Alt+V paste image)"
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0 // No limit
 

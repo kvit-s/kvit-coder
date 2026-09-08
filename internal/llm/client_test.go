@@ -298,3 +298,54 @@ func TestChatWithToolCalls(t *testing.T) {
 		t.Errorf("ToolCall.Function.Name = %q, want get_weather", tc.Function.Name)
 	}
 }
+
+// TestChatEffortSendsTemplateKwargs: a selected effort on the
+// chat-completions backend rides as the Qwen template's per-request override;
+// empty sends nothing (server default applies); an explicit per-request
+// ChatTemplateKwargs wins (the interrogator's enable_thinking:false).
+func TestChatEffortSendsTemplateKwargs(t *testing.T) {
+	chatWith := func(t *testing.T, client *Client, req ChatRequest) map[string]any {
+		t.Helper()
+		var got map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var body struct {
+				ChatTemplateKwargs map[string]any `json:"chat_template_kwargs"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Errorf("decode request: %v", err)
+			}
+			got = body.ChatTemplateKwargs
+			resp := ChatResponse{ID: "c", Model: "m",
+				Choices: []Choice{{Index: 0, Message: Message{Role: RoleAssistant, Content: "hi"}, FinishReason: "stop"}}}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(resp)
+		}))
+		defer server.Close()
+		client.baseURL = server.URL
+		if _, err := client.Chat(context.Background(), req); err != nil {
+			t.Fatalf("Chat: %v", err)
+		}
+		return got
+	}
+	base := ChatRequest{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}}
+
+	got := chatWith(t, NewClient("http://x/v1", "", WithReasoningEffort("medium")), base)
+	if got["reasoning_effort"] != "medium" || got["enable_thinking"] != true {
+		t.Errorf("effort medium sent %v, want enable_thinking:true + reasoning_effort:medium", got)
+	}
+
+	got = chatWith(t, NewClient("http://x/v1", ""), base)
+	if len(got) != 0 {
+		t.Errorf("empty effort sent %v, want nothing (server default)", got)
+	}
+
+	explicit := base
+	explicit.ChatTemplateKwargs = map[string]any{"enable_thinking": false}
+	got = chatWith(t, NewClient("http://x/v1", "", WithReasoningEffort("xhigh")), explicit)
+	if got["enable_thinking"] != false {
+		t.Errorf("explicit kwargs lost: %v", got)
+	}
+	if _, ok := got["reasoning_effort"]; ok {
+		t.Errorf("explicit kwargs gained reasoning_effort: %v", got)
+	}
+}

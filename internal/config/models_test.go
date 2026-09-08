@@ -167,6 +167,30 @@ func TestResolveEffortGate(t *testing.T) {
 	}
 }
 
+// TestChatCompletionsWithEfforts: a chat_completions entry CAN have a menu —
+// Qwen's template takes per-request reasoning_effort (low|medium|high|xhigh).
+// The fixture above keeps a menu-less chat_completions row to cover the
+// truly non-reasoning case; this covers the Qwen shape.
+func TestChatCompletionsWithEfforts(t *testing.T) {
+	cfg := &Config{}
+	entry := ModelEntry{ID: "qwen", Name: "Qwen", Model: "qw",
+		BaseURL: "http://local/v1", APIBackend: "chat_completions",
+		Efforts: []EffortOption{{Value: "low", Default: true}, {Value: "medium"}, {Value: "high"}, {Value: "xhigh"}}}
+	menu := cfg.EffortOptions(entry)
+	if len(menu) != 4 {
+		t.Fatalf("chat_completions entry with efforts has %d menu rows, want 4", len(menu))
+	}
+	if got := cfg.DefaultEffort(entry); got != "low" {
+		t.Errorf("DefaultEffort = %q, want entry default low", got)
+	}
+	if v, err := cfg.ResolveEffort(entry, "XHIGH"); err != nil || v != "xhigh" {
+		t.Errorf("ResolveEffort(xhigh) = %q, %v; want xhigh, nil", v, err)
+	}
+	if _, err := cfg.ResolveEffort(entry, "minimal"); err == nil {
+		t.Error("ResolveEffort(minimal): want rejection (not in Qwen menu), got nil")
+	}
+}
+
 // TestApplyModel: the entry's endpoint fields overwrite llm:, the rest stays.
 func TestApplyModel(t *testing.T) {
 	cfg := &Config{}
@@ -299,5 +323,97 @@ func TestLoadModelsEffortCase(t *testing.T) {
 	}
 	if got := cfg.DefaultEffort(cfg.Models[0]); got != "xhigh" {
 		t.Errorf("DefaultEffort = %q, want normalized xhigh", got)
+	}
+}
+
+// TestResolveModelMForms: the :mN spellings from the UI work wherever a
+// model ref is accepted, so "-m m3" finds what ":m3" finds.
+func TestResolveModelMForms(t *testing.T) {
+	cfg := multiModelConfig()
+	for ref, want := range map[string]int{
+		"m1": 0, "m2": 1, "m3": 2,
+		"M1": 0, "M3": 2,
+		":m1": 0, ":m2": 1, ":m3": 2,
+		":1": 0, ":3": 2,
+		"  m2  ": 1,
+	} {
+		_, idx, err := cfg.ResolveModel(ref)
+		if err != nil {
+			t.Errorf("ResolveModel(%q): %v", ref, err)
+			continue
+		}
+		if idx != want {
+			t.Errorf("ResolveModel(%q) = %d, want %d", ref, idx, want)
+		}
+	}
+	for _, ref := range []string{"m0", "m9", ":m9", "m", "mx"} {
+		if _, _, err := cfg.ResolveModel(ref); err == nil {
+			t.Errorf("ResolveModel(%q): want error, got nil", ref)
+		}
+	}
+}
+
+// TestSplitModelEffort: only a trailing canonical effort splits off; wire
+// ids with colons stay whole.
+func TestSplitModelEffort(t *testing.T) {
+	for _, tc := range []struct{ in, model, effort string }{
+		{"m3:xhigh", "m3", "xhigh"},
+		{"qwen-local:low", "qwen-local", "low"},
+		{"3:MEDIUM", "3", "medium"},
+		{":xhigh", "", "xhigh"},
+		{"m3", "m3", ""},
+		{"qwen-local", "qwen-local", ""},
+		{"openai:gpt-4", "openai:gpt-4", ""},
+		{"", "", ""},
+		{"m3:turbo", "m3:turbo", ""},
+	} {
+		m, e := SplitModelEffort(tc.in)
+		if m != tc.model || e != tc.effort {
+			t.Errorf("SplitModelEffort(%q) = (%q, %q), want (%q, %q)", tc.in, m, e, tc.model, tc.effort)
+		}
+	}
+}
+
+// TestResolveSelection: startup/flag selection — inline :effort, explicit
+// effort winning over inline, default row when empty.
+func TestResolveSelection(t *testing.T) {
+	cfg := multiModelConfig()
+	// multiModelConfig has no llm.model match, so the default row is 0
+	// (spark-go, entry default high).
+	idx, eff, err := cfg.ResolveSelection("", "", false)
+	if err != nil || idx != 0 || eff != "high" {
+		t.Errorf("ResolveSelection(empty) = (%d, %q, %v), want (0, high, nil)", idx, eff, err)
+	}
+	idx, eff, err = cfg.ResolveSelection("m1:xhigh", "", false)
+	if err != nil {
+		t.Fatalf("ResolveSelection(m1:xhigh): %v", err)
+	}
+	if idx != 0 || eff != "xhigh" {
+		t.Errorf("ResolveSelection(m1:xhigh) = (%d, %q), want (0, xhigh)", idx, eff)
+	}
+	// Menu-less entry: model alone resolves, effort stays cleared.
+	idx, eff, err = cfg.ResolveSelection("m3", "", false)
+	if err != nil || idx != 2 || eff != "" {
+		t.Errorf("ResolveSelection(m3) = (%d, %q, %v), want (2, \"\", nil)", idx, eff, err)
+	}
+	// Explicit effort wins over inline.
+	idx, eff, err = cfg.ResolveSelection("m1:xhigh", "low", true)
+	if err != nil || idx != 0 || eff != "low" {
+		t.Errorf("ResolveSelection(m1:xhigh + low) = (%d, %q, %v), want (0, low, nil)", idx, eff, err)
+	}
+	// ":effort" alone means the default row with that effort.
+	idx, eff, err = cfg.ResolveSelection(":low", "", false)
+	if err != nil || idx != 0 || eff != "low" {
+		t.Errorf("ResolveSelection(:low) = (%d, %q, %v), want (0, low, nil)", idx, eff, err)
+	}
+	// Effort gated against the chosen entry's menu.
+	if _, _, err = cfg.ResolveSelection("m1", "max", true); err == nil {
+		t.Error("ResolveSelection(m1 + max): want rejection, got nil")
+	}
+	if _, _, err = cfg.ResolveSelection("m3", "low", true); err == nil {
+		t.Error("ResolveSelection(m3 + low): want unsupported (no menu), got nil")
+	}
+	if _, _, err = cfg.ResolveSelection("ghost", "", false); err == nil {
+		t.Error("ResolveSelection(ghost): want error, got nil")
 	}
 }
