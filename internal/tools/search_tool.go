@@ -225,6 +225,13 @@ func (t *SearchTool) Call(ctx context.Context, args json.RawMessage) (any, error
 					"message":       "No matches found",
 				}, nil
 			}
+			// Exit 2+ means the search itself failed (e.g. bad regex,
+			// unreadable path). cmd.Output captures stderr into
+			// ExitError.Stderr, so surface it: a bare "exit status 2"
+			// tells the model nothing actionable.
+			if stderr := strings.TrimSpace(string(exitErr.Stderr)); stderr != "" {
+				return nil, fmt.Errorf("search failed: %w: %s", err, stderr)
+			}
 		}
 		return nil, fmt.Errorf("search failed: %w", err)
 	}
@@ -351,10 +358,10 @@ func (t *SearchTool) Call(ctx context.Context, args json.RawMessage) (any, error
 // searchWithRipgrep executes search using ripgrep
 func (t *SearchTool) searchWithRipgrep(ctx context.Context, pattern, searchPath, filePattern string, contextLines int) ([]byte, error) {
 	cmdArgs := []string{
-		"-n",                                 // line numbers
-		fmt.Sprintf("-C%d", contextLines),   // context
-		"--no-heading",                       // each line is its own result
-		"--with-filename",                    // include filename
+		"-n",                              // line numbers
+		fmt.Sprintf("-C%d", contextLines), // context
+		"--no-heading",                    // each line is its own result
+		"--with-filename",                 // include filename
 	}
 
 	if filePattern != "" {
@@ -367,7 +374,12 @@ func (t *SearchTool) searchWithRipgrep(ctx context.Context, pattern, searchPath,
 	return cmd.Output()
 }
 
-// searchWithGrep executes search using grep (with find for file patterns)
+// searchWithGrep executes search using grep (with find for file patterns).
+// Grep runs with -E (extended regex) so its dialect matches ripgrep and what
+// the model writes: '|' is alternation and '\(' is a literal paren. Without
+// -E, grep defaults to BRE where it is the other way round: '|' is literal
+// and '\(' opens a group, so a pattern like `Open\(` fails with
+// "Unmatched ( or \(" (exit status 2) instead of matching.
 func (t *SearchTool) searchWithGrep(ctx context.Context, pattern, searchPath, filePattern string, contextLines int) ([]byte, error) {
 	// Directories to exclude from search
 	excludeDirs := []string{".git", "node_modules", "__pycache__", ".venv", "venv", ".tox", ".mypy_cache"}
@@ -382,7 +394,7 @@ func (t *SearchTool) searchWithGrep(ctx context.Context, pattern, searchPath, fi
 		excludeStr := strings.Join(excludeParts, " ")
 
 		// Build find | xargs grep command
-		findCmd := fmt.Sprintf("find %s %s -type f -name %q -print 2>/dev/null | xargs grep -n -H -C%d -e %q 2>/dev/null || true",
+		findCmd := fmt.Sprintf("find %q %s -type f -name %q -print 2>/dev/null | xargs grep -E -n -H -C%d -e %q 2>/dev/null || true",
 			searchPath, excludeStr, filePattern, contextLines, pattern)
 
 		cmd := exec.CommandContext(ctx, "sh", "-c", findCmd)
@@ -397,10 +409,11 @@ func (t *SearchTool) searchWithGrep(ctx context.Context, pattern, searchPath, fi
 
 	// Simple recursive grep
 	cmdArgs := []string{
-		"-r",                                // recursive
-		"-n",                                // line numbers
-		"-H",                                // include filename
-		fmt.Sprintf("-C%d", contextLines),   // context
+		"-E",                              // extended regex: same dialect as rg
+		"-r",                              // recursive
+		"-n",                              // line numbers
+		"-H",                              // include filename
+		fmt.Sprintf("-C%d", contextLines), // context
 	}
 	cmdArgs = append(cmdArgs, excludeArgs...)
 	cmdArgs = append(cmdArgs, "-e", pattern, searchPath)
