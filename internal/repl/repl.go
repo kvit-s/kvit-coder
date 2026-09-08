@@ -213,7 +213,13 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 		} else {
 			fmt.Fprintln(os.Stderr)
 			fmt.Fprintln(os.Stderr, strings.Repeat("─", 50))
-			fmt.Fprintf(os.Stderr, "Session: %s%s\n", sessionName, backgroundSuffix(sess))
+			sessionLabel := sessionName
+			if sess != nil {
+				if title := strings.TrimSpace(sess.Meta().Title); title != "" {
+					sessionLabel += " — " + title
+				}
+			}
+			fmt.Fprintf(os.Stderr, "Session: %s%s\n", sessionLabel, backgroundSuffix(sess))
 			// The window is the selected model's, so the share is the same
 			// number the per-step status lines were counting toward.
 			if used := result.Stats.MaxContextUsed; used > 0 {
