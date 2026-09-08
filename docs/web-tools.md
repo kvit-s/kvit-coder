@@ -720,6 +720,11 @@ its section 5.2, whether or not it is implemented soon: its per-workspace keying
 is right for stateless servers and quietly wrong for a browser, and the failure
 is invisible until two agents run at once.
 
+The same hazard has a smaller form that is live now, with no daemon involved: a
+persistent browser profile can be used by one browser at a time, which is why
+the configured profile path carries `${KVIT_RUN_ID}`. Two sessions pointed at
+one profile directory is the version of this you would meet first.
+
 ### The approval-memory fix comes first and is independent
 
 `redesign-mcp.md:3.4` notes that MCP call approvals live in a map in the
@@ -759,10 +764,16 @@ later ones. Steps 1 to 3 are built; the rest are not.
    directory so the respawn costs a re-navigation rather than a login. Use it as
    is and see what the respawn actually costs in practice; the measurement above
    says the daemon is no longer the obvious next step.
-6. **Build the daemon** per `redesign-mcp.md`, with the page budget and the
-   three-step reclaim from section 6 above. The isolation itself comes from the
-   server rather than the daemon, so what the daemon owes is the cap, the idle
-   timers, and the checkpoint call before it drops a context.
+6. **The daemon — deferred, on the measurement rather than on principle.** The
+   design in section 6 stands and should be built as written if it is built:
+   the page budget, admission at the door, the two-step reclaim, and the
+   isolation coming from the server rather than from the daemon, so what the
+   daemon owes is the cap, the idle timers and the checkpoint call. What
+   changed is the size of the prize. 583 ms a turn is at the bottom of what was
+   estimated, and the per-session profile means a turn boundary costs a
+   re-navigation rather than a login, so the remaining case is that 583 ms, the
+   re-navigation, and supervision. Build it when using the browser makes one of
+   those three irritating, and the irritation will say which part matters.
 7. **Stagehand, only if step 5 shows the primitive layer is too chatty**, and
    then as an MCP server wrapping it rather than as a library linked into this
    program.
