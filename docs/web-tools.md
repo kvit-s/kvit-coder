@@ -492,27 +492,70 @@ at turn start — is done and shipping (`tools.procs.enabled: true` in
 `config.yaml`, `internal/tools/procs_tools.go`), so the daemon reuses all three
 rather than reinventing them.
 
-### What the browser case changes: one browser per agent, not per workspace
+### What the browser case changes: one browser, many tabs, and a budget
 
 `redesign-mcp.md:5.2` names the daemon by a hash of the workspace path and the
 resolved MCP configuration. Two agents working in the same checkout therefore
 share one daemon and, through it, one upstream connection to each server. For a
-stateless server that is connection pooling and is exactly what you want. For a
-browser it means two agents driving the same pages, and they will destroy each
-other's work in a way that produces confusing failures rather than clean ones.
+stateless server that is connection pooling and is what you want. For a browser
+it means two agents driving the same pages, which produces confusing failures
+rather than clean ones.
 
-The fix fits the existing design without touching the client. Mark a server as
-stateful in its configuration, and have the daemon give each **agent session** its
-own upstream connection to that server, addressed by path:
+The obvious fix — give each agent session its own browser — is affordable only
+if you do not price it.
 
-```
-http://127.0.0.1:7391/fetch                     shared      (stateless servers)
-http://127.0.0.1:7391/playwright/s/my-feature   per session (stateful servers)
-```
+#### What a browser costs, measured
 
-The agent already knows its session name and already rewrites the server URL at
-startup, so this is a longer string in the same rewrite. Per-server config gains
-one field:
+Headless Chromium from the Playwright cache on this machine, RSS across the
+whole process tree:
+
+| | RSS | processes |
+|---|---:|---:|
+| browser running, no page open | 416 MB | 6 |
+| one page open | 565 MB | 7 |
+| three pages | 844 MB | 9 |
+| five pages open at once | 1,221 MB | 11 |
+| one tab, seven cross-origin navigations | 495–607 MB | 6 |
+
+Each **simultaneously open** page is its own renderer process costing 130–220 MB;
+the browser itself is a fixed 416 MB however many it has. Navigating one tab is
+different in kind: seven cross-origin navigations left the process count at six
+throughout, with resident memory tracking whichever page was currently loaded —
+607 MB on github.com, back to 503 MB on a lighter one — so the cost of browsing
+is bounded by the heaviest single page rather than by how many were visited. Set against `agents-ram.md`, where a
+whole kvit-coder session — interface and agent together — is 27 MB, one browser
+with one page open costs about twenty-one sessions.
+
+That settles the shape. Fifty sessions of kvit-coder is 1.4 GB. Fifty browsers
+with a page each is 28 GB on a 32 GB machine that is also running several other
+agents and an inference server. Even fifty isolated contexts inside one shared
+browser is 416 MB plus fifty renderers, around 8.5 GB, so sharing the browser
+process helps by a factor of three and still does not make the problem go away.
+**A fixed pool of slots, with a session refused when none is free, is what bounds
+memory** — and refusing at the door is what makes the lease below worth stating,
+because a guarantee that a later arrival can revoke is not one the model can plan
+against.
+
+#### The server already does the isolation
+
+Playwright MCP handles multiple concurrent clients itself: `--isolated` gives
+each connecting client its own in-memory context, and `--shared-browser-context`
+has them reuse one. It also exposes `browser_storage_state` and
+`browser_set_storage_state`, and accepts `--storage-state` to load cookies and
+local storage from a file at startup.
+
+So the daemon should run **one** server and let each agent session connect to it
+as its own HTTP client, rather than spawning a browser per session as an earlier
+draft of this section proposed. The per-session upstream connection stays in the
+design only for a stateful server that has no client isolation of its own, which
+is what the `isolation` field below selects.
+
+Sharing should also go further than isolation-per-session by default. The use
+case section 5 describes is reading a page that needs JavaScript, which wants no
+cookie isolation at all, and where a login is involved one shared login is
+usually what you want rather than fifty. What genuinely must not be shared is
+**which page a session is driving**. One shared context with a page per session
+gives that, at one renderer each and one login for everybody.
 
 ```yaml
 mcp:
@@ -520,16 +563,128 @@ mcp:
     - name: playwright
       transport: stdio
       command: npx
-      args: ["-y", "@playwright/mcp@latest"]
-      isolation: session      # shared (default) | session
+      args: ["-y", "@playwright/mcp@latest", "--shared-browser-context"]
+      isolation: shared       # shared (default) | session
+      slots: 6                # tabs, and so sessions, that may browse at once
+      lease: 10m              # idle time a slot is held for, refreshed on use
+      max_hold: 1h            # ceiling on one session holding a slot
+      idle_browser: 5m        # with no tab open: checkpoint all, then shut down
+      checkpoint_tool: browser_storage_state       # what to call before dropping
+      restore_tool: browser_set_storage_state      # and what to call on return
 ```
 
-The daemon's idle timeout then applies per lane, so an abandoned session's
-browser closes on its own rather than being held until the whole daemon expires.
-This is worth writing into `redesign-mcp.md` as an amendment to section 5.2
-whether or not it is implemented immediately, because getting it wrong is
-invisible until two agents run at once and then looks like the browser server is
-flaky.
+#### Admission, not eviction
+
+A slot is **one tab**, which is also one session, because browsing is
+navigation rather than tab-opening. The measurement above is what makes that
+work: a session can visit fifty pages through one tab and never cost more than
+one renderer, so there is nothing to meter and no allowance to track. A session
+is admitted once and holds its tab for the life of its lease.
+
+There is a reason beyond memory to make one tab the default, and it is worth
+saying in the prompt rather than only enforcing. **The model's context is its tab
+history.** A person keeps ten tabs open because human memory is poor; a model
+with a 1M-token window has already read the first page into the conversation and
+does not need the browser to hold it while it reads the second. A second tab is
+warranted only for a page that must stay live — a sign-in flow, something with an
+action in progress — and not for one that was merely read. A session that does
+need two takes two slots, which keeps the accounting to counting renderers and
+makes the rare case visible rather than free.
+
+The lease is an *idle* timer refreshed by every browser call, so a session that
+is actively browsing never loses its slot, and only one that stopped does. That
+makes `max_hold` necessary as well: with renewal on use, a session that browses
+steadily for hours would hold a slot against everyone else, and an hour's ceiling
+bounds it without much cost now that losing a slot means a checkpoint rather than
+a loss.
+
+A refused session should be told what it needs to decide with — how many slots
+are in use, and when the earliest lease expires — and should be able to wait
+deliberately rather than only to fail. That is the shape `Observe.wait` already
+has, so the model waits when it has nothing else to do and gets on with other
+work when it has.
+
+At six slots the budget is 416 MB of browser plus six renderers at their
+observed worst, a little over 1.5 GB. Six concurrent browsing sessions out of
+fifty is comfortable rather than tight: the number of sessions that browse at all
+is small, and the number doing it inside the same ten minutes is smaller. The
+value of fixing it at six is not the number but that going over it is a refusal
+somebody can read rather than a machine that starts swapping.
+
+#### Reclaiming in two steps
+
+The question of whether to persist browser state or to promise it for ten
+minutes has the same answer for both, because they address different halves of
+the problem and the memory is not where you would guess. A context holds cookies
+and local storage, which is kilobytes. A **page** holds the 160 MB. So the
+cheapest thing to reclaim is not a session's browser but its idle tabs:
+
+1. **Close the idle tab when the lease expires.** Reclaims about 160 MB and
+   costs the session nothing but a re-navigation, because its cookies and its
+   login are in the context, which survives. This is the answer to "a session
+   used the browser a little and no longer needs it": its tabs close, and what
+   remains is free. Note the trigger — the lease running out, not another session
+   wanting the memory, which is the distinction that keeps the guarantee true.
+2. **Checkpoint every context and shut the browser down** once it has held no
+   tab at all for `idle_browser`. Call the server's `browser_storage_state` for
+   each live context, write the JSON and the URLs that were open into the
+   corresponding session folder, then stop the process. This is the only step
+   that reclaims the 416 MB base, and contexts cannot outlive the browser
+   anyway, so checkpointing and shutdown are one event rather than two.
+
+On the next browser call from any session, the daemon starts the browser again
+and restores that session's context with `browser_set_storage_state`, reopening
+the URL it was on if it needs to be there.
+
+An abandoned session needs no special handling: it is idle by definition and
+walks down the same ladder without anybody deciding it was abandoned.
+
+**Be aggressive about step two, because restarting is nearly free.** Measured on
+this machine, a headless Chromium goes from launch to answering on its debugging
+port in 65–99 milliseconds. The two to four seconds in the same runs was loading
+the first page, which is paid on any navigation whether the browser was already
+running or not. So an idle browser is holding 416 MB to save about a tenth of a
+second, and `idle_browser` belongs in single-digit minutes rather than the tens
+of minutes an expensive restart would justify.
+
+That inverts the intuition the daemon is built on, and the inversion is worth
+stating because it decides what the daemon is actually for. What is expensive
+about a browser is not starting it — it is the state inside it, which is why a
+session's cookies go to disk rather than being thrown away, and why the lease
+exists to spare an *active* session the re-navigation. The process itself is
+cheap enough to discard the moment nobody is using it.
+
+#### What survives a checkpoint, and telling the model so
+
+Browser state divides cleanly, and the division is what makes the checkpoint
+worth building rather than merely plausible. Cookies, local storage and the URL
+of each open tab serialize, and `browser_storage_state` is exactly the tool for
+it. The live DOM after JavaScript has run, an open WebSocket, text typed into a
+form but not submitted, and the JavaScript heap do not serialize at all.
+
+For the workload section 5 describes, essentially all the value is in the first
+group — being logged in, and being on a particular page. So a checkpoint keeps
+what matters and loses what rarely does, and the tool result **must say which**,
+because a model told only "the browser restarted" will assume either too much or
+too little.
+
+That is where the lease belongs too, and stating it explicitly is the point
+rather than a nicety: a model that is told "your pages are held for at least ten
+idle minutes, after which they may be closed and you will have to navigate
+again, though logins survive" can finish a browsing task before starting a long
+edit. A model told nothing will interleave them and be surprised.
+
+The two mechanisms are not alternatives. **The lease is the fast path and the
+checkpoint is the floor.** Without the lease every turn pays a browser launch
+and several page loads, which is the whole reason `redesign-mcp.md` wants a
+daemon. Without the checkpoint, exceeding the lease loses a login rather than
+costing a re-navigation. Neither alone is sufficient, and together they cost one
+tool call at eviction and a JSON file in the session directory.
+
+This whole subsection is worth writing into `redesign-mcp.md` as an amendment to
+its section 5.2, whether or not it is implemented soon: its per-workspace keying
+is right for stateless servers and quietly wrong for a browser, and the failure
+is invisible until two agents run at once.
 
 ### The approval-memory fix comes first and is independent
 
@@ -569,8 +724,10 @@ later ones.
    stdio transport, headless Chromium inside WSL — and use it as-is, paying the
    per-turn respawn. A week of that answers the question the daemon exists to
    answer, and answers it with observation rather than argument.
-6. **Build the daemon** per `redesign-mcp.md`, with the per-session lane from
-   section 6 above.
+6. **Build the daemon** per `redesign-mcp.md`, with the page budget and the
+   three-step reclaim from section 6 above. The isolation itself comes from the
+   server rather than the daemon, so what the daemon owes is the cap, the idle
+   timers, and the checkpoint call before it drops a context.
 7. **Stagehand, only if step 5 shows the primitive layer is too chatty**, and
    then as an MCP server wrapping it rather than as a library linked into this
    program.
@@ -591,6 +748,15 @@ later ones.
   the key, with no paid tier behind it. The guess is that it does not come close.
   What settles it is the monthly remaining figure the tool already reports, read
   after a month of use.
+- **How many slots, and how often is one refused?** Six tabs is about 1.5 GB, a defensible share of this machine while several other agents
+  run. It is arithmetic rather than evidence until something is observed hitting
+  it, and the number worth watching is not the cap but the refusal rate: if
+  nothing is ever refused the pool is larger than it needs to be, and if refusals
+  are common the lease is too long rather than the pool too small.
+- **Is a shared cookie jar ever the wrong default?** One login for every session
+  is what you want for a documentation site and plainly wrong if two sessions
+  need to be different users of the same service. The `isolation: session` escape
+  covers it; whether anything ever asks for that escape is unknown.
 - **Does the pruning list need to be per-site?** Dropping `nav`, `header` and
   `footer` is a blunt rule that will keep boilerplate on some pages and cut
   content on others. A measured output ratio per fetch is the cheapest way to
