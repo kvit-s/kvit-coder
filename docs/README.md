@@ -14,6 +14,7 @@ repository root's `README.md`; these are the documents behind its current shape.
 | [`bench-refactor.md`](bench-refactor.md) | A proposal, not yet built. Moving the benchmark harness out of the agent binary into its own command. |
 | [`tools-stats.md`](tools-stats.md) | Which tools the model actually calls, measured from the saved sessions, with the script that regenerates the numbers. A snapshot to decide from later, not a recommendation. |
 | [`agents-ram.md`](agents-ram.md) | Measured memory cost of one session of each coding agent on this machine, September 2026. Reference for how many can run at once, not about kvit-coder's design. |
+| [`images.md`](images.md) | A proposal, not yet built. Reading an image from a file and pasting one in the composer, in that order: message attachments, both wire protocols, session storage, then the TUI producers. |
 
 ## Archive
 
