@@ -12,10 +12,11 @@ import (
 	"github.com/kvit-s/kvit-coder/internal/procs"
 )
 
-// The tools in this file cover work that outlives the turn that started it.
+// The tools in this file cover work that outlives the turn's iterations.
 // Shell stays what it was — run a command and wait for it — and these are the
 // separate thing: start something, look at it later, wait for it to do
-// something, stop it.
+// something, stop it. Ephemeral processes die with the turn; persistent ones
+// survive it.
 
 // procsToolBase is the shared half of every process tool.
 type procsToolBase struct {
@@ -38,6 +39,16 @@ func (t *procsToolBase) workDir(dir string) string {
 func (t *procsToolBase) PromptCategory() string     { return "shell" }
 func (t *procsToolBase) PromptTemplateName() string { return "" }
 
+// lifetimeHint tells the model what happens to the process next, so the
+// default does not surprise: ephemeral dies with the turn, persistent
+// survives it but not an interrupt, a kill, or a reboot.
+func lifetimeHint(persistent bool) string {
+	if persistent {
+		return "It is running and persistent (red): survives this turn, dies on interrupt, Shell.kill, or reboot. Reminders arrive on their own as asked; adjust with Shell.tune, block with Observe.wait, read with Shell.output, stop with Shell.kill."
+	}
+	return "It is running (ephemeral, blue): stopped when this turn ends. Pass persistent=true only for what the next turn still needs. Reminders arrive on their own as asked; adjust with Shell.tune, block with Observe.wait, read with Shell.output, stop with Shell.kill."
+}
+
 // --- Shell.start -------------------------------------------------------------
 
 // ShellStartTool starts a command and returns immediately.
@@ -50,37 +61,61 @@ func NewShellStartTool(cfg *config.Config, registry *procs.Registry, toolCtx *To
 
 func (t *ShellStartTool) Name() string { return "Shell.start" }
 func (t *ShellStartTool) Description() string {
-	return "Start a long-running command and return immediately with an id. The command keeps " +
-		"running after this turn ends, so a dev server or a test run started here is still going " +
-		"in the next turn. Use Shell for anything that finishes on its own."
+	return "Start a long-running command and return immediately with an id. Ephemeral by default: " +
+		"stopped when the turn ends, so an abandoned session leaves nothing behind. Pass persistent=true " +
+		"for the opt-in exception that survives into the next turn (shown red). Persistent still dies on " +
+		"interrupt, Shell.kill, or reboot; for something that must survive those, write a script and ask " +
+		"the user to run it. Set report/until/remind_every up front to be reminded without another " +
+		"tool call; use Shell for anything that finishes on its own."
 }
 func (t *ShellStartTool) PromptOrder() int { return 12 }
 func (t *ShellStartTool) JSONSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"command":     map[string]any{"type": "string", "description": "The command to start."},
-			"working_dir": map[string]any{"type": "string", "description": "Directory to run in (default: workspace root)."},
-			"name":        map[string]any{"type": "string", "description": "A few words naming what this is, shown when it is listed or reported."},
+			"command":      map[string]any{"type": "string", "description": "The command to start."},
+			"working_dir":  map[string]any{"type": "string", "description": "Directory to run in (default: workspace root)."},
+			"name":         map[string]any{"type": "string", "description": "A few words naming what this is, shown when it is listed or reported."},
+			"report":       map[string]any{"type": "string", "enum": []string{"exit", "changed", "always"}, "description": "When to remind you while it runs: 'exit' (default, nothing until it ends), 'changed' (when it writes new output), 'always' (same as changed for now). The ending is always reported once."},
+			"until":        map[string]any{"type": "string", "description": "A regular expression. Report as soon as new output matches it, even if report is 'exit'."},
+			"remind_every": map[string]any{"type": "integer", "description": "Seconds between 'still running' reminders while it runs (0 or omitted = off). Each carries new output since the last reminder, or says there was none. Adjust later with Shell.tune."},
+			"persistent":   map[string]any{"type": "boolean", "description": "Survive the turn that started it (shown red). Default false: stopped when the turn ends. Persistent still dies on interrupt, Shell.kill, or reboot."},
 		},
 		"required": []string{"command"},
 	}
 }
 func (t *ShellStartTool) PromptSection() string {
-	return `### Shell.start - Start something that keeps running
+	return `### Shell.start - Start something that keeps running this turn
 
 Shell.start({"command": "npm run dev", "name": "dev server"})
-  → {"id": "bg1", ...}
+  → {"id": "bg1", ...}  (ephemeral: stopped at turn end)
+Shell.start({"command": "npm run dev", "persistent": true})
+  → {"id": "bg1", ...}  (persistent, red: survives into the next turn)
+Shell.start({"command": "npm run dev", "until": "Listening on", "remind_every": 60})
+  → reminded on match, ticked each minute, told on exit
 
-The command survives this turn: it is still running in the next one. Use
-Shell for anything that finishes on its own, and Observe.wait to wait for
-this one to do something. Read its output with Shell.output, stop it with
-Shell.kill, and see everything running with Shell.list.`
+Ephemeral is the default, so abandoned sessions leak nothing: the turn stops
+it when the report is in. Pass persistent=true only for what the next turn
+still needs, like a dev server — it is shown red (blue is ephemeral) and
+listed at turn end with how to stop it. Persistent still dies on interrupt
+(when kill_on_exit holds), on Shell.kill, and on reboot (reported as gone):
+for a service that must outlive those, write a script and ask the user to
+run it. Use Shell for anything that finishes on its own. Reminders arrive on
+their own between iterations as system-reminders — no Observe.wait round trip
+just to set them up. The default is report "exit": nothing while it runs, one
+notice with its last output when it ends. Pass report "changed" for output,
+until for a pattern, remind_every for ticks; combine them freely. Adjust with
+Shell.tune, block with Observe.wait when there is nothing else to do, read
+anytime with Shell.output, stop with Shell.kill, list with Shell.list.`
 }
 
 func (t *ShellStartTool) Check(ctx context.Context, args json.RawMessage) error {
 	var p struct {
-		Command string `json:"command"`
+		Command     string `json:"command"`
+		Report      string `json:"report"`
+		Until       string `json:"until"`
+		RemindEvery int    `json:"remind_every"`
+		Persistent  bool   `json:"persistent"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return SemanticErrorf("Shell.start: arguments are not valid JSON: %v", err)
@@ -88,31 +123,66 @@ func (t *ShellStartTool) Check(ctx context.Context, args json.RawMessage) error 
 	if strings.TrimSpace(p.Command) == "" {
 		return SemanticErrorf("Shell.start: 'command' is required.")
 	}
+	if err := procs.ValidateReport(p.Report); err != nil {
+		return SemanticError(err.Error())
+	}
+	if err := procs.ValidateUntil(p.Until); err != nil {
+		return SemanticError(err.Error())
+	}
+	if err := procs.ValidateRemindEvery(p.RemindEvery); err != nil {
+		return SemanticError(err.Error())
+	}
 	return nil
 }
 
 func (t *ShellStartTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
 	var p struct {
-		Command    string `json:"command"`
-		WorkingDir string `json:"working_dir"`
-		Name       string `json:"name"`
+		Command     string `json:"command"`
+		WorkingDir  string `json:"working_dir"`
+		Name        string `json:"name"`
+		Report      string `json:"report"`
+		Until       string `json:"until"`
+		RemindEvery int    `json:"remind_every"`
+		Persistent  bool   `json:"persistent"`
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return nil, SemanticErrorf("Shell.start: arguments are not valid JSON: %v", err)
 	}
+	if err := procs.ValidateReport(p.Report); err != nil {
+		return nil, SemanticError(err.Error())
+	}
+	if err := procs.ValidateUntil(p.Until); err != nil {
+		return nil, SemanticError(err.Error())
+	}
+	if err := procs.ValidateRemindEvery(p.RemindEvery); err != nil {
+		return nil, SemanticError(err.Error())
+	}
 
-	id, err := t.registry.Start(p.Command, t.workDir(p.WorkingDir), p.Name)
+	id, err := t.registry.StartWithOptions(p.Command, t.workDir(p.WorkingDir), p.Name, p.Report, p.Until, p.RemindEvery, p.Persistent)
 	if err != nil {
 		return nil, RuntimeError(err.Error())
 	}
 	info, _ := t.registry.Status(id)
-	return map[string]any{
-		"id":      id,
-		"pid":     info.PID,
-		"state":   string(info.State),
-		"command": p.Command,
-		"hint":    "It is running. Use Observe.wait to wait for it, Shell.output to read what it has printed, Shell.kill to stop it.",
-	}, nil
+	report := info.Report
+	if report == "" {
+		report = "exit"
+	}
+	out := map[string]any{
+		"id":         id,
+		"pid":        info.PID,
+		"state":      string(info.State),
+		"command":    p.Command,
+		"report":     report,
+		"persistent": info.Persistent,
+		"hint":       lifetimeHint(info.Persistent),
+	}
+	if p.Until != "" {
+		out["until"] = p.Until
+	}
+	if p.RemindEvery > 0 {
+		out["remind_every"] = p.RemindEvery
+	}
+	return out, nil
 }
 
 // --- Shell.output ------------------------------------------------------------
@@ -302,6 +372,159 @@ func (t *ShellKillTool) Call(ctx context.Context, args json.RawMessage) (any, er
 	return infoResult(info), nil
 }
 
+// ShellTuneTool adjusts when the model is reminded about a process that is
+// already running, and whether it survives the turn: the same
+// report/until/remind_every/persistent policy Shell.start takes up front. It
+// is how the model changes its mind after a reminder without restarting the
+// command.
+type ShellTuneTool struct{ procsToolBase }
+
+// NewShellTuneTool builds the tool.
+func NewShellTuneTool(cfg *config.Config, registry *procs.Registry, toolCtx *ToolContext) *ShellTuneTool {
+	return &ShellTuneTool{procsToolBase{cfg: cfg, registry: registry, toolCtx: toolCtx}}
+}
+
+func (t *ShellTuneTool) Name() string { return "Shell.tune" }
+func (t *ShellTuneTool) Description() string {
+	return "Adjust when you are reminded about a running background process, or whether it " +
+		"survives the turn: the same report/until/remind_every/persistent policy Shell.start takes. " +
+		"Only what you pass changes."
+}
+func (t *ShellTuneTool) PromptOrder() int { return 19 }
+func (t *ShellTuneTool) JSONSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"id":           map[string]any{"type": "string", "description": "The process id from Shell.start."},
+			"report":       map[string]any{"type": "string", "enum": []string{"exit", "changed", "always"}, "description": "When to remind you while it runs: 'exit' (nothing until it ends), 'changed' (on new output), 'always' (same as changed for now)."},
+			"until":        map[string]any{"type": "string", "description": "A regular expression to report on match. Empty clears the pattern."},
+			"remind_every": map[string]any{"type": "integer", "description": "Seconds between 'still running' reminders (0 disables). A changed interval restarts its clock from now."},
+			"persistent":   map[string]any{"type": "boolean", "description": "Survive the turn that started it (shown red). False stops it at turn end."},
+		},
+		"required": []string{"id"},
+	}
+}
+func (t *ShellTuneTool) PromptSection() string { return "" }
+
+// tunePresent reports which tunable keys the caller passed, so omitted means
+// "leave it" while an explicit until:"" means "clear the pattern".
+func tunePresent(args json.RawMessage) (report *string, until *string, remindEvery *int, persistent *bool, id string, err error) {
+	var raw map[string]json.RawMessage
+	if err = json.Unmarshal(args, &raw); err != nil {
+		return nil, nil, nil, nil, "", err
+	}
+	var idVal string
+	if v, ok := raw["id"]; ok {
+		if err = json.Unmarshal(v, &idVal); err != nil {
+			return nil, nil, nil, nil, "", err
+		}
+	}
+	id = idVal
+	if v, ok := raw["report"]; ok {
+		var s string
+		if err = json.Unmarshal(v, &s); err != nil {
+			return nil, nil, nil, nil, "", err
+		}
+		report = &s
+	}
+	if v, ok := raw["until"]; ok {
+		var s string
+		if err = json.Unmarshal(v, &s); err != nil {
+			return nil, nil, nil, nil, "", err
+		}
+		until = &s
+	}
+	if v, ok := raw["remind_every"]; ok {
+		var n int
+		if err = json.Unmarshal(v, &n); err != nil {
+			return nil, nil, nil, nil, "", err
+		}
+		remindEvery = &n
+	}
+	if v, ok := raw["persistent"]; ok {
+		var b bool
+		if err = json.Unmarshal(v, &b); err != nil {
+			return nil, nil, nil, nil, "", err
+		}
+		persistent = &b
+	}
+	return report, until, remindEvery, persistent, id, nil
+}
+
+func (t *ShellTuneTool) Check(ctx context.Context, args json.RawMessage) error {
+	report, until, remindEvery, persistent, id, err := tunePresent(args)
+	if err != nil {
+		return SemanticErrorf("Shell.tune: arguments are not valid JSON: %v", err)
+	}
+	if strings.TrimSpace(id) == "" {
+		return SemanticErrorf("Shell.tune: 'id' is required. Shell.list shows the ids of everything running.")
+	}
+	if report == nil && until == nil && remindEvery == nil && persistent == nil {
+		return SemanticErrorf("Shell.tune: pass at least one of 'report', 'until', 'remind_every', 'persistent'.")
+	}
+	if report != nil {
+		if err := procs.ValidateReport(*report); err != nil {
+			return SemanticError(err.Error())
+		}
+	}
+	if until != nil {
+		if err := procs.ValidateUntil(*until); err != nil {
+			return SemanticError(err.Error())
+		}
+	}
+	if remindEvery != nil {
+		if err := procs.ValidateRemindEvery(*remindEvery); err != nil {
+			return SemanticError(err.Error())
+		}
+	}
+	return nil
+}
+
+func (t *ShellTuneTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
+	report, until, remindEvery, persistent, id, err := tunePresent(args)
+	if err != nil {
+		return nil, SemanticErrorf("Shell.tune: arguments are not valid JSON: %v", err)
+	}
+	if strings.TrimSpace(id) == "" {
+		return nil, SemanticErrorf("Shell.tune: 'id' is required. Shell.list shows the ids of everything running.")
+	}
+	if report == nil && until == nil && remindEvery == nil && persistent == nil {
+		return nil, SemanticErrorf("Shell.tune: pass at least one of 'report', 'until', 'remind_every', 'persistent'.")
+	}
+	current, err := t.registry.Status(id)
+	if err != nil {
+		return nil, SemanticError(err.Error())
+	}
+	newReport := current.Report
+	if newReport == "" {
+		newReport = "exit"
+	}
+	newUntil := current.Until
+	newEvery := current.RemindEvery
+	newPersistent := current.Persistent
+	if report != nil {
+		newReport = *report
+	}
+	if until != nil {
+		newUntil = *until
+	}
+	if remindEvery != nil {
+		newEvery = *remindEvery
+	}
+	if persistent != nil {
+		newPersistent = *persistent
+	}
+	updated, err := t.registry.Configure(id, newReport, newUntil, newEvery, newPersistent)
+	if err != nil {
+		// Validation already passed; a failure here is the record itself.
+		if strings.Contains(err.Error(), "no process") {
+			return nil, SemanticError(err.Error())
+		}
+		return nil, RuntimeError(err.Error())
+	}
+	return infoResult(updated), nil
+}
+
 // --- Observe.wait ------------------------------------------------------------
 
 // ObserveWaitTool blocks until a background process does something worth
@@ -351,7 +574,9 @@ Blocks until the process ends, or prints something matching 'until', or
 max_wait seconds pass. One tool call however long it takes, where checking
 with Shell.output in a loop costs a full round of thinking each time. It
 also returns early if someone types something, so you are not left waiting
-when the answer has changed.`
+when the answer has changed. Reach for it when there is nothing else to do;
+when there is, set report/until/remind_every on Shell.start (or Shell.tune)
+and the reminders arrive on their own between iterations.`
 }
 
 // SelfTimeout opts out of the loop's blanket 15-second tool timeout: waiting
@@ -553,7 +778,7 @@ func (t *ObserveAddTool) Call(ctx context.Context, args json.RawMessage) (any, e
 		"id":     id,
 		"every":  p.Every,
 		"report": p.Report,
-		"hint":   "It runs from now on. You will be told when there is something to see. Stop it with Shell.kill.",
+		"hint":   "It runs from now on (persistent, red). You will be told when there is something to see. Stop it with Shell.kill.",
 	}, nil
 }
 
@@ -573,24 +798,44 @@ func checkHasID(tool string, args json.RawMessage) error {
 }
 
 func infoResult(info procs.Info) map[string]any {
+	// Timestamps are reported in the machine's local timezone, with its
+	// numeric offset, so a reader sees their own wall clock rather than UTC.
+	// The records on disk stay UTC; only the report converts.
 	out := map[string]any{
-		"id":       info.ID,
-		"state":    string(info.State),
-		"command":  info.Command,
-		"pid":      info.PID,
-		"started":  info.Started.Format(time.RFC3339),
-		"cwd":      info.Cwd,
-		"periodic": info.Every > 0,
+		"id":         info.ID,
+		"state":      string(info.State),
+		"command":    info.Command,
+		"pid":        info.PID,
+		"started":    info.Started.Local().Format(time.RFC3339),
+		"cwd":        info.Cwd,
+		"periodic":   info.Every > 0,
+		"report":     info.Report,
+		"persistent": info.Persistent,
 	}
+	if out["report"] == "" {
+		out["report"] = "exit"
+	}
+	if info.Every > 0 {
+		out["every"] = info.Every
+	}
+	if info.Until != "" {
+		out["until"] = info.Until
+	}
+	if info.RemindEvery > 0 {
+		out["remind_every"] = info.RemindEvery
+	}
+
 	if info.Name != "" {
 		out["name"] = info.Name
 	}
+
 	if !info.Running() {
 		out["exit_code"] = info.ExitCode
 		if !info.Ended.IsZero() {
-			out["ended"] = info.Ended.Format(time.RFC3339)
+			out["ended"] = info.Ended.Local().Format(time.RFC3339)
 		}
 	}
+
 	return out
 }
 

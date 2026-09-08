@@ -315,6 +315,30 @@ func TestFormatContextStrWithProcs(t *testing.T) {
 	}
 }
 
+// TestFormatContextStrWithProcs2: ephemeral ride blue as ★N, persistent red
+// as ★N!, and zero of each keeps the header byte-identical.
+func TestFormatContextStrWithProcs2(t *testing.T) {
+	if got := FormatContextStrWithProcs2(8400, 1000000, 0, 0); got != "8.4k 1%" {
+		t.Errorf("no procs = %q, want base status unchanged", got)
+	}
+	if got := FormatContextStrWithProcs2(8400, 1000000, 2, 0); got != "8.4k 1% ★2" {
+		t.Errorf("ephemeral = %q, want blue star without bang", got)
+	}
+	if got := FormatContextStrWithProcs2(8400, 1000000, 0, 1); got != "8.4k 1% ★1!" {
+		t.Errorf("persistent = %q, want red star with bang", got)
+	}
+	if got := FormatContextStrWithProcs2(8400, 1000000, 2, 1); got != "8.4k 1% ★2 ★1!" {
+		t.Errorf("both = %q, want ephemeral then persistent", got)
+	}
+	if got := FormatContextStrWithProcs2(0, 1000000, 0, 3); got != "0k 0% ★3!" {
+		t.Errorf("zero tokens = %q, want persistent star still shown", got)
+	}
+	// The old single-count shape still counts everything as ephemeral.
+	if got := FormatContextStrWithProcs(8400, 1000000, 2); got != "8.4k 1% ★2" {
+		t.Errorf("legacy = %q, want %q", got, "8.4k 1% ★2")
+	}
+}
+
 // TestThinkingShowsBackgroundProcs: a running process count appears inside
 // the parens, as plain text when colors are off.
 func TestThinkingShowsBackgroundProcs(t *testing.T) {
@@ -367,5 +391,84 @@ func TestSplitProcStar(t *testing.T) {
 		if _, _, ok := splitProcStar(bad); ok {
 			t.Errorf("%q split as a star", bad)
 		}
+	}
+}
+
+// TestSplitProcStars separates the blue ephemeral star from the red
+// persistent one, so each keeps its color and plain text keeps the "!".
+func TestSplitProcStars(t *testing.T) {
+	base, blue, red, ok := splitProcStars("8.4k 1% ★2 ★1!")
+	if !ok || base != "8.4k 1%" || blue != "★2" || red != "★1!" {
+		t.Errorf("split = %q %q %q %v, want base and both stars", base, blue, red, ok)
+	}
+	if _, blue, red, ok := splitProcStars("8.4k 1% ★1!"); !ok || blue != "" || red != "★1!" {
+		t.Errorf("persistent-only split = %q %q %v, want red alone", blue, red, ok)
+	}
+	if _, blue, red, ok := splitProcStars("8.4k 1% ★2"); !ok || blue != "★2" || red != "" {
+		t.Errorf("ephemeral-only split = %q %q %v, want blue alone", blue, red, ok)
+	}
+	if _, _, _, ok := splitProcStars("8.4k 1%"); ok {
+		t.Error("plain status split as stars")
+	}
+}
+
+// TestThinkingPersistentStarPaintedRed: on a terminal the persistent count
+// is dim red with its bang, the ephemeral count stays dim blue.
+func TestThinkingPersistentStarPaintedRed(t *testing.T) {
+	w, buf := newProgressWriter(true)
+	w.Thinking("8.4k 1% ★2 ★1!", "hello")
+	out := buf.String()
+	if !strings.Contains(out, ansiBlue+"★2"+ansiReset) {
+		t.Errorf("header %q lost the blue ephemeral star", out)
+	}
+	if !strings.Contains(out, ansiDimRed+"★1!"+ansiReset) {
+		t.Errorf("header %q has no red persistent star", out)
+	}
+}
+
+// TestThinkingPersistentPlainKeepsBang: without colors the "!" is what tells
+// the surviving star from the ephemeral one.
+func TestThinkingPersistentPlainKeepsBang(t *testing.T) {
+	w, buf := newProgressWriter(false)
+	w.Thinking("8.4k 1% ★1!", "hello")
+	if out := buf.String(); out != "● (8.4k 1% ★1!) hello\n" {
+		t.Errorf("header = %q, want the bang in plain text", out)
+	}
+}
+
+// TestSteeringPrintsGreenOnTerminal: the pause prompt marks the moment
+// typing steering becomes available, so on a terminal it is bright green,
+// not the gray of surrounding progress lines.
+func TestSteeringPrintsGreenOnTerminal(t *testing.T) {
+	w, buf := newProgressWriter(true)
+	w.Steering("paused — type steering, Enter to resume (empty resumes):")
+	out := buf.String()
+	if !strings.Contains(out, ansiGreen) {
+		t.Errorf("steering prompt %q has no green", out)
+	}
+	if !strings.Contains(out, "paused") {
+		t.Errorf("steering prompt %q lost its text", out)
+	}
+	if strings.Contains(out, ansiGray) {
+		t.Errorf("steering prompt %q reuses the gray info color", out)
+	}
+}
+
+// TestSteeringPlainWhenPiped: piped output stays plain, like Info.
+func TestSteeringPlainWhenPiped(t *testing.T) {
+	w, buf := newProgressWriter(false)
+	w.Steering("paused — type steering, Enter to resume (empty resumes):")
+	if out := buf.String(); out != "  paused — type steering, Enter to resume (empty resumes):\n" {
+		t.Errorf("steering = %q, want plain indented line", out)
+	}
+}
+
+// TestSteeringQuietSuppresses: quiet mode prints no steering prompt.
+func TestSteeringQuietSuppresses(t *testing.T) {
+	w, buf := newProgressWriter(true)
+	w.SetQuiet(true)
+	w.Steering("paused — type steering, Enter to resume (empty resumes):")
+	if out := buf.String(); out != "" {
+		t.Errorf("quiet steering printed %q, want silence", out)
 	}
 }

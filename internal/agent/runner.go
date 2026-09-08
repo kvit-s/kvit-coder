@@ -376,9 +376,11 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 		// One bullet-led step line per turn: the status plus the message, or the
 		// status alone when the turn carries only tool calls. Reasoning is
 		// already merged into Content by the normalizer, so a single call
-		// covers both. The status carries the blue ★N count while background
-		// processes run; it is display-only, so the prompt cache is untouched.
-		contextStr := ui.FormatContextStrWithProcs(state.totalTokens, r.cfg.LLM.Context, r.runningProcsCount())
+		// covers both. The status carries the blue ★N count for ephemeral
+		// processes and the red ★N! count for persistent ones; it is
+		// display-only, so the prompt cache is untouched.
+		ephemeral, persistent := r.runningProcsCounts()
+		contextStr := ui.FormatContextStrWithProcs2(state.totalTokens, r.cfg.LLM.Context, ephemeral, persistent)
 		r.writer.Thinking(contextStr, assistantMsg.Content)
 
 		// Start checkpoint turn

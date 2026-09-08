@@ -1,11 +1,11 @@
-// Package procs runs commands that outlive the turn that started them.
+// Package procs runs commands that outlive the turn's iterations.
 //
-// A turn-scoped command — the ordinary Shell tool — dies with its turn. A
-// process started here is detached into its own session, writes to a log file
-// in the session directory, and records its exit status where a later turn can
-// read it. That is what lets a dev server started in one turn still be serving
-// in the next, and a test run started before a question still be running while
-// the question is answered.
+// A turn-scoped command — the ordinary Shell tool — dies with its iteration.
+// A process started here is detached into its own session, writes to a log
+// file in the session directory, and records its exit status where a later
+// iteration (or, if persistent, a later turn) can read it. Ephemeral
+// processes die with the turn; persistent ones survive it, and are the only
+// thing that does.
 //
 // Everything the registry knows lives in <session>/proc/, so a new process
 // opening the same directory sees the same set:
@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -57,9 +58,34 @@ type Info struct {
 	// Every, when non-zero, makes this a periodic probe: the command is run
 	// again every Every seconds until it is killed.
 	Every int `json:"every,omitempty"`
-	// Report is when this process is worth interrupting the model about:
-	// "exit" (the default), "changed", or "always".
+	// Report is when this process is worth interrupting the model about
+	// while it runs: "exit" (the default, nothing until it ends), "changed"
+	// (when it writes new output), or "always" (same as changed for now).
+	// The ending itself is always reported once, whatever this says.
 	Report string `json:"report,omitempty"`
+	// Until, when set, is a regex the model wants to be told about: when
+	// new output matches, an event fires even if Report is "exit". It is
+	// set on Shell.start and adjustable later with Shell.tune.
+	Until string `json:"until,omitempty"`
+	// RemindEvery, when positive, is seconds between "still running"
+	// reminders while the process runs. Each reminder carries new output
+	// since the last one, or says there was none. Zero or less means off.
+	RemindEvery int `json:"remind_every,omitempty"`
+	// LastEventAt is when the model was last told about this running
+	// process (match, output, or tick). It throttles RemindEvery and
+	// restarts whenever the reminder policy is tuned. Exit reporting uses
+	// ExitReported instead.
+	LastEventAt time.Time `json:"last_event_at,omitempty"`
+	// Persistent marks a process that survives the turn that started it.
+	// The default (false) is ephemeral: it is stopped when the turn ends,
+	// so an abandoned session leaves nothing behind. Persistent (true) is
+	// the opt-in exception — a dev server the next turn still needs — and
+	// is shown red instead of the usual blue. It still dies on interrupt
+	// (when kill_on_exit holds), on Shell.kill, and on reboot (which
+	// reports it as gone); for something that must survive those, write a
+	// script and ask the user to run it. Old records without the field
+	// decode as ephemeral.
+	Persistent bool `json:"persistent,omitempty"`
 
 	State    State     `json:"state"`
 	ExitCode int       `json:"exit_code"`
@@ -102,16 +128,111 @@ func (r *Registry) Dir() string { return r.dir }
 // megabytes must not put all of it in a message.
 const maxChunk = 32 * 1024
 
-// Start runs a command detached from this turn and returns the id to refer to
-// it by. The command runs under "sh -c" in its own session, so it survives the
-// turn and takes its children with it when it is killed.
+// Start runs a command detached from this turn's iterations and returns the
+// id to refer to it by. The command runs under "sh -c" in its own session,
+// so it survives the iteration and takes its children with it when it is
+// killed. It is ephemeral by default: stopped when the turn ends, so an
+// abandoned session leaves nothing behind. Pass persistent to StartWithOptions
+// for the opt-in exception that survives like the old default.
 func (r *Registry) Start(command, cwd, name string) (string, error) {
-	return r.start(command, cwd, name, 0, "exit")
+	return r.start(command, cwd, name, 0, "exit", "", 0, false)
+}
+
+// StartWithOptions is Start with the reminder policy and lifetime set up
+// front, so there is no round trip to another tool just to say when to be
+// told: report picks output reminders ("exit" for nothing until it ends),
+// until adds a pattern that reports on match, and remindEvery adds "still
+// running" ticks every that many seconds. Zero remindEvery means off.
+// persistent false (the default) stops the process when the turn ends;
+// persistent true lets it survive into the next turn, shown red, still
+// killed on interrupt, by Shell.kill, or by reboot (reported as gone).
+func (r *Registry) StartWithOptions(command, cwd, name, report, until string, remindEvery int, persistent bool) (string, error) {
+	if err := ValidateReport(report); err != nil {
+		return "", err
+	}
+	if err := ValidateUntil(until); err != nil {
+		return "", err
+	}
+	if err := ValidateRemindEvery(remindEvery); err != nil {
+		return "", err
+	}
+	if report == "" {
+		report = "exit"
+	}
+	return r.start(command, cwd, name, 0, report, until, remindEvery, persistent)
+}
+
+// ValidateReport says whether a report policy is known. Empty means the
+// default ("exit") and is valid for callers that fill it in later.
+func ValidateReport(report string) error {
+	switch report {
+	case "", "exit", "changed", "always":
+		return nil
+	}
+	return fmt.Errorf("procs: unknown report %q, want exit, changed, or always", report)
+}
+
+// ValidateUntil says whether a pattern can be watched for. Empty disables
+// pattern reminders.
+func ValidateUntil(until string) error {
+	if until == "" {
+		return nil
+	}
+	if _, err := regexp.Compile(until); err != nil {
+		return fmt.Errorf("procs: 'until' is not a valid regular expression: %w", err)
+	}
+	return nil
+}
+
+// ValidateRemindEvery says whether a tick interval is usable. Zero means
+// off; negatives are rejected.
+func ValidateRemindEvery(remindEvery int) error {
+	if remindEvery < 0 {
+		return fmt.Errorf("procs: 'remind_every' is %d, want 0 (off) or more seconds", remindEvery)
+	}
+	return nil
+}
+
+// Configure adjusts the reminder policy and lifetime of a process that is
+// already running: report, until, the tick interval, and persistent. It is
+// how the model changes its mind after a reminder without restarting the
+// command. Passing the same values back is a no-op except that a changed
+// tick interval restarts its clock from now.
+func (r *Registry) Configure(id, report, until string, remindEvery int, persistent bool) (Info, error) {
+	if err := ValidateReport(report); err != nil {
+		return Info{}, err
+	}
+	if err := ValidateUntil(until); err != nil {
+		return Info{}, err
+	}
+	if err := ValidateRemindEvery(remindEvery); err != nil {
+		return Info{}, err
+	}
+	if report == "" {
+		report = "exit"
+	}
+	info, err := r.load(id)
+	if err != nil {
+		return Info{}, err
+	}
+	if info.RemindEvery != remindEvery {
+		info.LastEventAt = time.Now().UTC()
+	}
+	info.Report = report
+	info.Until = until
+	info.RemindEvery = remindEvery
+	info.Persistent = persistent
+	if err := r.save(info); err != nil {
+		return Info{}, err
+	}
+	return info, nil
 }
 
 // StartPeriodic runs a command every `every` seconds until it is killed. It is
 // the same kind of record as any other process, so one set of tools covers
-// both a dev server and a probe that keeps checking something.
+// both a dev server and a probe that keeps checking something. A periodic
+// probe is persistent by design: "run from now on" means across turns, and
+// it is shown red until killed.
 func (r *Registry) StartPeriodic(command, cwd, name string, every int, report string) (string, error) {
 	if every < 1 {
 		every = 1
@@ -119,10 +240,10 @@ func (r *Registry) StartPeriodic(command, cwd, name string, every int, report st
 	if report == "" {
 		report = "changed"
 	}
-	return r.start(command, cwd, name, every, report)
+	return r.start(command, cwd, name, every, report, "", 0, true)
 }
 
-func (r *Registry) start(command, cwd, name string, every int, report string) (string, error) {
+func (r *Registry) start(command, cwd, name string, every int, report, until string, remindEvery int, persistent bool) (string, error) {
 	if strings.TrimSpace(command) == "" {
 		return "", fmt.Errorf("procs: command cannot be empty")
 	}
@@ -169,16 +290,20 @@ func (r *Registry) start(command, cwd, name string, every int, report string) (s
 	}
 
 	info := Info{
-		ID:      id,
-		Name:    name,
-		Command: command,
-		Cwd:     cwd,
-		PID:     cmd.Process.Pid,
-		Started: time.Now().UTC(),
-		Every:   every,
-		Report:  report,
-		State:   StateRunning,
+		ID:          id,
+		Name:        name,
+		Command:     command,
+		Cwd:         cwd,
+		PID:         cmd.Process.Pid,
+		Started:     time.Now().UTC(),
+		Every:       every,
+		Report:      report,
+		Until:       until,
+		RemindEvery: remindEvery,
+		Persistent:  persistent,
+		State:       StateRunning,
 	}
+	info.LastEventAt = info.Started
 	if err := r.save(info); err != nil {
 		_ = killGroup(info.PID)
 		return "", err
@@ -299,6 +424,40 @@ func (r *Registry) KillAll() []string {
 	return killed
 }
 
+// KillEphemeral stops every running process that is not persistent and
+// returns the ids it stopped. The turn calls it when it ends, so the default
+// (ephemeral) leaves nothing behind in an abandoned session; persistent
+// processes survive for the next turn.
+func (r *Registry) KillEphemeral() []string {
+	var killed []string
+	for _, info := range r.List() {
+		if !info.Running() || info.Persistent {
+			continue
+		}
+		if err := r.Kill(info.ID); err == nil {
+			killed = append(killed, info.ID)
+		}
+	}
+	return killed
+}
+
+// RunningCounts splits the running processes into ephemeral (blue, die at
+// turn end) and persistent (red, survive). Finished processes count for
+// neither — their ending is reported through the inbox instead.
+func (r *Registry) RunningCounts() (ephemeral, persistent int) {
+	for _, info := range r.List() {
+		if !info.Running() {
+			continue
+		}
+		if info.Persistent {
+			persistent++
+		} else {
+			ephemeral++
+		}
+	}
+	return ephemeral, persistent
+}
+
 // Reconcile brings the records up to date with what is actually running and
 // returns the processes whose state changed since anyone last looked. A turn
 // calls it at the start, which is how a process that ended between turns still
@@ -320,9 +479,9 @@ func (r *Registry) Reconcile() []Info {
 }
 
 // Events returns what the model has not been told yet: processes that have
-// ended, and probes whose output has moved on, according to each one's report
-// setting. Calling it marks what it returns as reported, so the same thing is
-// not raised twice.
+// ended, and running processes whose policy asks for a reminder — a pattern
+// match, new output, or a tick of the clock. Calling it marks what it
+// returns as reported, so the same thing is not raised twice.
 func (r *Registry) Events() []string {
 	var events []string
 	for _, info := range r.List() {
@@ -355,18 +514,59 @@ func (r *Registry) eventFor(info Info) (string, Info, bool) {
 		return text, info, true
 	}
 
-	// A running process only interrupts when it was asked to: "always" for
-	// anything new, "changed" for a probe whose output moved on. "exit", the
-	// default, says nothing until it ends.
+	// A running process only interrupts when it was asked to, in priority
+	// order: a pattern match first, then new output, then the clock. The
+	// ending above always fires, so "exit" — the default — stays silent
+	// until then. At most one event per process per poll; anything else
+	// waits for the next one.
+	now := time.Now().UTC()
+
+	// A pattern fires on new output alone, so a match is reported once and
+	// never re-read. An invalid pattern (a hand-edited record, say) matches
+	// nothing rather than failing the poll.
+	if info.Until != "" {
+		if re, err := regexp.Compile(info.Until); err == nil {
+			if tail, offset, ok, outErr := r.Output(info.ID, info.ReportedOffset); outErr == nil && ok {
+				if re.MatchString(tail) {
+					info.ReportedOffset = offset
+					info.LastEventAt = now
+					return fmt.Sprintf("Background process %s matched %q:\n%s", label, info.Until, tail), info, true
+				}
+			}
+		}
+	}
+
 	switch info.Report {
 	case "always", "changed":
 		tail, offset, ok, err := r.Output(info.ID, info.ReportedOffset)
-		if err != nil || !ok || strings.TrimSpace(tail) == "" {
-			return "", info, false
+		if err == nil && ok && strings.TrimSpace(tail) != "" {
+			info.ReportedOffset = offset
+			info.LastEventAt = now
+			return fmt.Sprintf("Background process %s produced new output:\n%s", label, tail), info, true
 		}
-		info.ReportedOffset = offset
-		return fmt.Sprintf("Background process %s produced new output:\n%s", label, tail), info, true
 	}
+
+	// A tick fires even with no new output, so a quiet command still says
+	// it is alive. It carries whatever has accumulated since the last
+	// reminder and advances past it, so the ending does not repeat it.
+	if info.RemindEvery > 0 {
+		last := info.LastEventAt
+		if last.IsZero() {
+			last = info.Started
+		}
+		if now.Sub(last) >= time.Duration(info.RemindEvery)*time.Second {
+			tail, offset, ok, _ := r.Output(info.ID, info.ReportedOffset)
+			info.LastEventAt = now
+			if ok {
+				info.ReportedOffset = offset
+				if strings.TrimSpace(tail) != "" {
+					return fmt.Sprintf("Background process %s still running (reminder every %ds):\n%s", label, info.RemindEvery, tail), info, true
+				}
+			}
+			return fmt.Sprintf("Background process %s still running (reminder every %ds, no new output).", label, info.RemindEvery), info, true
+		}
+	}
+
 	return "", info, false
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/kvit-s/kvit-coder/internal/agent"
 	"github.com/kvit-s/kvit-coder/internal/config"
 	"github.com/kvit-s/kvit-coder/internal/llm"
+	"github.com/kvit-s/kvit-coder/internal/procs"
 	"github.com/kvit-s/kvit-coder/internal/session"
 	"github.com/kvit-s/kvit-coder/internal/ui"
 )
@@ -114,8 +115,20 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 		UseFileFirst: false,
 		QuietMode:    quietMode,
 	})
+
+	// Ephemeral background processes die with the turn, so an abandoned
+	// session leaves nothing behind; persistent ones survive for the next
+	// turn and are reported below. Cleanup runs even when the loop errored,
+	// otherwise the error path would be the leak.
+	var turnKilled []string
+	var turnPersistent []procs.Info
+	if sess != nil {
+		turnKilled, turnPersistent = endTurnProcs(sess)
+	}
+
 	if err != nil {
 		writer.Error(fmt.Sprintf("agent error: %v", err))
+		reportPersistent(writer, sess, turnPersistent, quietMode)
 		return
 	}
 
@@ -148,7 +161,6 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 			Steps:            result.Stats.Steps,
 		})
 	}
-
 	// Print session info (skip in JSON mode - it's included in the JSON output)
 	if !writer.IsJSONMode() && sessionName != "" {
 		if quietMode {
@@ -161,7 +173,91 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 		} else {
 			fmt.Fprintln(os.Stderr)
 			fmt.Fprintln(os.Stderr, strings.Repeat("─", 50))
-			fmt.Fprintf(os.Stderr, "Session: %s\n", sessionName)
+			fmt.Fprintf(os.Stderr, "Session: %s%s\n", sessionName, backgroundSuffix(sess))
 		}
 	}
+	reportPersistent(writer, sess, turnPersistent, quietMode)
+	if len(turnKilled) > 0 {
+		writer.Debug(fmt.Sprintf("Stopped %d ephemeral background process(es) at turn end: %s", len(turnKilled), strings.Join(turnKilled, ", ")))
+	}
+}
+
+// endTurnProcs stops the turn's ephemeral processes and returns what was
+// stopped plus the persistent processes still running. Ephemeral die here so
+// abandoned sessions leak nothing; persistent survive for the next turn.
+func endTurnProcs(sess *session.Session) (killed []string, persistent []procs.Info) {
+	reg, err := procs.New(sess.ProcDir())
+	if err != nil {
+		return nil, nil
+	}
+	killed = reg.KillEphemeral()
+	for _, info := range reg.List() {
+		if info.Running() && info.Persistent {
+			persistent = append(persistent, info)
+		}
+	}
+	return killed, persistent
+}
+
+// reportPersistent lists the persistent processes that survived the turn and
+// tells the user how to stop them, on stderr and in the session history so
+// the next turn sees it too. Quiet keeps the history note but skips stderr;
+// JSON mode skips both (the JSON document owns stdout and stderr stays clean
+// for it).
+func reportPersistent(writer *ui.Writer, sess *session.Session, persistent []procs.Info, quietMode bool) {
+	if len(persistent) == 0 || sess == nil {
+		return
+	}
+	var names []string
+	for _, info := range persistent {
+		label := info.ID
+		if info.Name != "" {
+			label = fmt.Sprintf("%s (%s)", info.ID, info.Name)
+		} else if info.Command != "" {
+			cmd := strings.TrimSpace(info.Command)
+			if len(cmd) > 60 {
+				cmd = cmd[:57] + "..."
+			}
+			label = fmt.Sprintf("%s (%s)", info.ID, cmd)
+		}
+		names = append(names, label)
+	}
+	sessionName := sess.Name()
+	notice := fmt.Sprintf("persistent background processes still running: %s — stop with Shell.kill, or kvit-coder --kill-background %s (all sessions: --kill-background all)",
+		strings.Join(names, ", "), sessionName)
+	_ = sess.Notice(notice)
+	if writer.IsJSONMode() || quietMode {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Background (persistent, red): %s still running.\n", strings.Join(names, ", "))
+	fmt.Fprintf(os.Stderr, "Stop with Shell.kill, or: kvit-coder --kill-background %s  (all sessions: --kill-background all)\n", sessionName)
+}
+
+// backgroundSuffix reports the running background processes as blue " ★N"
+// for ephemeral and red " ★N!" for persistent, or "" when none. It reads the
+// session's proc registry the same way the next turn will, so the footing
+// never claims a process the next turn cannot see. Any error (no session, no
+// registry) means no suffix rather than a wrong one. After the turn-end
+// cleanup ephemeral should already be gone, so the footing normally shows
+// only the red survivors — but a failed stop still shows blue, honestly.
+func backgroundSuffix(sess *session.Session) string {
+	if sess == nil {
+		return ""
+	}
+	reg, err := procs.New(sess.ProcDir())
+	if err != nil {
+		return ""
+	}
+	ephemeral, persistent := reg.RunningCounts()
+	var parts []string
+	if ephemeral > 0 {
+		parts = append(parts, fmt.Sprintf("★%d", ephemeral))
+	}
+	if persistent > 0 {
+		parts = append(parts, fmt.Sprintf("★%d!", persistent))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " " + strings.Join(parts, " ")
 }

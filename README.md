@@ -302,20 +302,37 @@ never open something that is refused outright.
 
 ### Background processes
 
-With `tools.procs.enabled`, a command can outlive the turn that started it:
+With `tools.procs.enabled`, a command can outlive the turn's iterations (and, if persistent, the turn itself):
 
 ```
 Shell.start({"command": "npm run dev", "name": "dev server"})   → {"id": "bg1"}
+Shell.start({"command": "npm run dev", "persistent": true})   → {"id": "bg1"} (survives the turn, red)
+Shell.start({"command": "npm run dev", "until": "Listening on", "remind_every": 60})
 Observe.wait({"id": "bg1", "until": "Listening on", "report": "match"})
 Shell.output({"id": "bg1", "cursor": 4096})
-Shell.list({}) / Shell.status({"id": "bg1"}) / Shell.kill({"id": "bg1"})
+Shell.list({}) / Shell.status({"id": "bg1"}) / Shell.kill({"id": "bg1"}) / Shell.tune({"id": "bg1", "remind_every": 30})
 Observe.add({"command": "git status --short", "every": 60})
 ```
 
 `Shell` is unchanged: it runs a command to completion and dies with the turn.
-`Shell.start` detaches into its own session, so a dev server started in one
-turn is still serving in the next, and its output and exit status are recorded
-in `<session>/proc/` where the next turn can read them.
+`Shell.start` detaches into its own session so it survives the turn's
+iterations, and its output and exit status are recorded in `<session>/proc/`
+where the next iteration reads them. It is ephemeral by default: stopped when
+the turn ends, so abandoned sessions leak nothing. Pass `persistent: true`
+only for what the next turn still needs, like a dev server — it survives the
+turn, is shown red (`★N!`, blue `★N` is ephemeral), and is listed at turn end
+with how to stop it. Persistent still dies on interrupt (unless
+`tools.procs.kill_on_exit` is false), on `Shell.kill`, and on reboot
+(reported as `gone`): for a service that must outlive those, write a script
+and ask the user to run it. Say when to be told
+up front — `report` (`exit` by default: nothing until it ends), `until` (a
+pattern that reports on match), `remind_every` (a "still running" tick every
+that many seconds) — and the reminders arrive on their own between iterations,
+with no round trip to another tool. `Shell.tune` adjusts the same policy
+(including `persistent`) on a running process without restarting it.
+Reap leftovers any time: `kvit-coder --list-background <session|all>`,
+`kvit-coder --kill-background <session|all>`. Deleting a session stops its
+processes first, so it never orphans them.
 
 `Observe.wait` blocks until the process ends, prints something matching a
 pattern, or `max_wait` passes — one tool call however long it takes, where
@@ -324,7 +341,8 @@ time. It also returns early if you type something, so you are not left waiting
 for a process whose result no longer matters.
 
 Between iterations the agent asks the registry what has happened and tells the
-model about anything that ended, so watching costs nothing until there is
+model about anything it asked to hear — an ending, a pattern match, new
+output, or a tick of the clock — so watching costs nothing until there is
 something to say. Ctrl-C stops everything the session started, unless
 `tools.procs.kill_on_exit` is false.
 

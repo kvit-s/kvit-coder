@@ -233,8 +233,17 @@ func FormatContextStr(totalTokens, contextLimit int) string {
 // FormatContextStrWithProcs adds the background-process count to the context
 // status: "8.4k 1% ★2" when running > 0, the plain base otherwise. Only
 // running processes count — finished ones already surface through the inbox —
-// and zero keeps the header exactly as before.
+// and zero keeps the header exactly as before. It counts every running
+// process; use FormatContextStrWithProcs2 to split ephemeral from persistent.
 func FormatContextStrWithProcs(totalTokens, contextLimit, running int) string {
+	return FormatContextStrWithProcs2(totalTokens, contextLimit, running, 0)
+}
+
+// FormatContextStrWithProcs2 splits the count: blue "★N" for ephemeral
+// processes (die at turn end), red "★N!" for persistent ones (survive, need
+// stopping). Either zero hides its star; both zero keep the header exactly
+// as before.
+func FormatContextStrWithProcs2(totalTokens, contextLimit, ephemeral, persistent int) string {
 	var base string
 	if totalTokens <= 0 {
 		if contextLimit > 0 {
@@ -252,8 +261,19 @@ func FormatContextStrWithProcs(totalTokens, contextLimit, running int) string {
 			base = tokensStr
 		}
 	}
-	if running > 0 {
-		return fmt.Sprintf("%s ★%d", base, running)
+	if ephemeral < 0 {
+		ephemeral = 0
+	}
+	if persistent < 0 {
+		persistent = 0
+	}
+	switch {
+	case ephemeral > 0 && persistent > 0:
+		return fmt.Sprintf("%s ★%d ★%d!", base, ephemeral, persistent)
+	case ephemeral > 0:
+		return fmt.Sprintf("%s ★%d", base, ephemeral)
+	case persistent > 0:
+		return fmt.Sprintf("%s ★%d!", base, persistent)
 	}
 	return base
 }

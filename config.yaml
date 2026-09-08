@@ -136,7 +136,7 @@ tools:
     enabled: true             # run several independent tool calls in one request
 
   procs:
-    enabled: true             # Shell.start / Shell.output / Observe.wait — work that outlives a turn
+    enabled: true             # Shell.start / Shell.output / Observe.wait — work that outlives a turn's iterations
     kill_on_exit: true        # stop everything this session started when a turn is interrupted
 
   question:

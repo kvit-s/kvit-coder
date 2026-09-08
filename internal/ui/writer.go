@@ -31,6 +31,10 @@ var (
 	// Full white for assistant messages and step text.
 	whiteColor = color.New(color.FgHiWhite)
 
+	// Bright green for steering prompts: the pause prompt is the moment
+	// typing becomes available, so it stands out from gray progress lines.
+	greenColor = color.New(color.FgHiGreen)
+
 	// Colors for plan rendering
 	planCompletedColor = color.New(color.FgWhite, color.Faint, color.CrossedOut)
 	planActiveColor    = color.New(color.FgYellow, color.Faint)
@@ -235,6 +239,8 @@ const (
 	ansiBlue = "\x1b[94;2m"
 	// Dim gray plus strikethrough for finished plan steps.
 	ansiStrikeGray = "\x1b[37;2;9m"
+	// Bright green for steering prompts, mirroring FgHiGreen above.
+	ansiGreen = "\x1b[92m"
 )
 
 // useColor reports whether the progress stream should carry ANSI colors:
@@ -275,8 +281,9 @@ func (w *Writer) paint(code, s string) string {
 }
 
 // paintThinkingLine colors one pre-wrapped step line: the bullet white,
-// the "(8.4k 1%)" status brownish-dim, the background-process count ("★2")
-// dim blue, and the message itself full white.
+// the "(8.4k 1%)" status brownish-dim, the ephemeral background-process
+// count ("★2") dim blue, the persistent count ("★1!") dim red, and the
+// message itself full white.
 // Continuation lines carry only the indent plus white message text.
 func (w *Writer) paintThinkingLine(plain, context string) string {
 	if !w.useColor() {
@@ -289,13 +296,22 @@ func (w *Writer) paintThinkingLine(plain, context string) string {
 			status := "(" + context + ")"
 			if strings.HasPrefix(rest, status) {
 				msg := strings.TrimPrefix(rest, status)
-				if base, star, ok := splitProcStar(context); ok {
+				if base, blue, red, ok := splitProcStars(context); ok {
 					var painted string
-					if base == "" {
-						painted = ansiBrown + "(" + ansiReset + ansiBlue + star + ansiReset + ansiBrown + ")" + ansiReset
-					} else {
-						painted = ansiBrown + "(" + base + " " + ansiReset + ansiBlue + star + ansiReset + ansiBrown + ")" + ansiReset
+					inner := base
+					if blue != "" {
+						if inner != "" {
+							inner += " "
+						}
+						inner += ansiReset + ansiBlue + blue + ansiReset + ansiBrown
 					}
+					if red != "" {
+						if inner != "" && (base != "" || blue != "") {
+							inner += " "
+						}
+						inner += ansiReset + ansiDimRed + red + ansiReset + ansiBrown
+					}
+					painted = ansiBrown + "(" + inner + ")" + ansiReset
 					return bullet + " " + painted + w.paint(ansiWhite, msg)
 				}
 				return bullet + " " + ansiBrown + status + ansiReset + w.paint(ansiWhite, msg)
@@ -309,26 +325,74 @@ func (w *Writer) paintThinkingLine(plain, context string) string {
 	return w.paint(ansiWhite, plain)
 }
 
-// splitProcStar splits a step status like "8.4k 1% ★2" into its brown base
-// ("8.4k 1%") and its blue star ("★2"). It reports false when the status
-// carries no star suffix, so plain headers paint exactly as before.
-func splitProcStar(context string) (base, star string, ok bool) {
-	i := strings.LastIndex(context, " ★")
-	if i < 0 {
-		return "", "", false
+// splitProcStars splits a step status like "8.4k 1% ★2 ★1!" into its brown
+// base ("8.4k 1%"), its blue ephemeral star ("★2"), and its red persistent
+// star ("★1!"). Either star may be absent; it reports false when neither is
+// present, so plain headers paint exactly as before. The "!" marks a star
+// that survives the turn, so plain (colorless) output still tells them apart.
+func splitProcStars(context string) (base, blue, red string, ok bool) {
+	fields := strings.Fields(context)
+	i := len(fields)
+	var blues, reds []string
+	for i > 0 && isProcStarToken(fields[i-1]) {
+		tok := fields[i-1]
+		if strings.HasSuffix(tok, "!") {
+			reds = append([]string{tok}, reds...)
+		} else {
+			blues = append([]string{tok}, blues...)
+		}
+		i--
 	}
-	base = context[:i]
-	star = context[i+1:]
-	digits := strings.TrimPrefix(star, "★")
-	if digits == "" || star == digits {
-		return "", "", false
+	if len(blues) == 0 && len(reds) == 0 {
+		return "", "", "", false
+	}
+	// The formatter emits at most one of each; if several arrive, keep the
+	// last of each kind so the header stays short.
+	if len(blues) > 0 {
+		blue = blues[len(blues)-1]
+	}
+	if len(reds) > 0 {
+		red = reds[len(reds)-1]
+	}
+	base = strings.Join(fields[:i], " ")
+	return base, blue, red, true
+}
+
+// isProcStarToken reports whether a status token is a ★N or ★N! count.
+func isProcStarToken(tok string) bool {
+	if !strings.HasPrefix(tok, "★") {
+		return false
+	}
+	digits := strings.TrimPrefix(tok, "★")
+	digits = strings.TrimSuffix(digits, "!")
+	if digits == "" {
+		return false
 	}
 	for _, r := range digits {
 		if r < '0' || r > '9' {
-			return "", "", false
+			return false
 		}
 	}
-	return base, star, true
+	return true
+}
+
+// splitProcStar keeps the old single-star shape: the blue star when present,
+// else the red one. New code prefers splitProcStars.
+func splitProcStar(context string) (base, star string, ok bool) {
+	base, blue, red, ok := splitProcStars(context)
+	if !ok {
+		return "", "", false
+	}
+	if blue != "" {
+		// Rejoin the red tail (if any) onto the base so the old two-value
+		// shape still round-trips "base ★blue ★red!" losslessly.
+		if red != "" {
+			base = strings.TrimSpace(base + " " + blue)
+			return base, red, true
+		}
+		return base, blue, true
+	}
+	return base, red, true
 }
 
 // clearProgressLine erases the in-place progress row (if any) so the next
@@ -519,6 +583,37 @@ func (w *Writer) Info(msg string) {
 		line := plain
 		if plain != "" {
 			line = stepIndent + w.paint(ansiGray, strings.TrimPrefix(plain, stepIndent))
+			// When colors are off paint returns plain unchanged; keep the
+			// pre-wrapped plain line in that case.
+			if !w.useColor() {
+				line = plain
+			}
+		}
+		fmt.Fprintln(w.out(), line)
+	}
+}
+
+// Steering prints a steering prompt in bright green, indented like Info.
+// It marks the moment typing steering becomes available, so it stands out
+// from the gray progress lines around it. Layout and wrapping match Info.
+func (w *Writer) Steering(msg string) {
+	if w.quiet {
+		return
+	}
+	w.clearProgressLine()
+	width := termWidth()
+	var plains []string
+	for _, ln := range strings.Split(strings.Trim(msg, "\n"), "\n") {
+		if strings.TrimSpace(ln) == "" {
+			plains = append(plains, "")
+			continue
+		}
+		plains = append(plains, wrapLine(stepIndent, ln, width, stepIndent)...)
+	}
+	for _, plain := range plains {
+		line := plain
+		if plain != "" {
+			line = stepIndent + w.paint(ansiGreen, strings.TrimPrefix(plain, stepIndent))
 			// When colors are off paint returns plain unchanged; keep the
 			// pre-wrapped plain line in that case.
 			if !w.useColor() {

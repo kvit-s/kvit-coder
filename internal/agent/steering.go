@@ -28,16 +28,17 @@ func (r *Runner) pollProcesses() {
 // none. Only running processes count: finished ones already surface through
 // the inbox, and listing refreshes liveness from the pidfiles.
 func (r *Runner) runningProcsCount() int {
+	ephemeral, persistent := r.runningProcsCounts()
+	return ephemeral + persistent
+}
+
+// runningProcsCounts splits the running processes into ephemeral (blue, die
+// at turn end) and persistent (red, survive). Nil registry means none.
+func (r *Runner) runningProcsCounts() (ephemeral, persistent int) {
 	if r.procs == nil {
-		return 0
+		return 0, 0
 	}
-	n := 0
-	for _, info := range r.procs.List() {
-		if info.Running() {
-			n++
-		}
-	}
-	return n
+	return r.procs.RunningCounts()
 }
 
 // drainInbox takes everything that arrived since the last iteration and puts it
@@ -96,7 +97,7 @@ func (r *Runner) checkPause(ctx context.Context) bool {
 		return false
 	}
 	defer r.inbox.SetPauseMode(false)
-	r.writer.Info("paused — type steering, Enter to resume (empty resumes):")
+	r.writer.Steering("paused — type steering, Enter to resume (empty resumes):")
 	// Waiting for a person is not the tool being slow, so pause time is
 	// kept out of the next tool's timeout, like every other prompt.
 	started := time.Now()

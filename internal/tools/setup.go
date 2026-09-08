@@ -163,6 +163,7 @@ func SetupRegistry(sc SetupConfig) *Registry {
 			NewShellStatusTool(cfg, sc.ProcRegistry, toolCtx),
 			NewShellListTool(cfg, sc.ProcRegistry, toolCtx),
 			NewShellKillTool(cfg, sc.ProcRegistry, toolCtx),
+			NewShellTuneTool(cfg, sc.ProcRegistry, toolCtx),
 			NewObserveWaitTool(cfg, sc.ProcRegistry, toolCtx),
 			NewObserveAddTool(cfg, sc.ProcRegistry, toolCtx),
 		} {

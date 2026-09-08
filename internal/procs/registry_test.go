@@ -305,3 +305,309 @@ func TestOutputKeepsTheTail(t *testing.T) {
 		t.Error("Output did not say that it had skipped anything")
 	}
 }
+
+// TestStartWithOptionsStoresPolicy: the reminder policy given at start is
+// recorded and survives a reopen, which is what the next turn reads.
+func TestStartWithOptionsStoresPolicy(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := New(dir)
+	id, err := r.StartWithOptions("sleep 30", t.TempDir(), "server", "changed", "Listening", 60, false)
+	if err != nil {
+		t.Fatalf("StartWithOptions: %v", err)
+	}
+	defer func() { _ = r.Kill(id) }()
+
+	info, err := r.Status(id)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if info.Report != "changed" || info.Until != "Listening" || info.RemindEvery != 60 {
+		t.Fatalf("policy is %+v, want changed/Listening/60", info)
+	}
+
+	second, _ := New(dir)
+	again, err := second.Status(id)
+	if err != nil {
+		t.Fatalf("Status after reopen: %v", err)
+	}
+	if again.Report != "changed" || again.Until != "Listening" || again.RemindEvery != 60 {
+		t.Errorf("policy did not survive a reopen: %+v", again)
+	}
+}
+
+// TestStartWithOptionsRejectsBadPolicy: bad values fail at start, not at
+// the first poll.
+func TestStartWithOptionsRejectsBadPolicy(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := New(dir)
+	workdir := t.TempDir()
+
+	if _, err := r.StartWithOptions("sleep 1", workdir, "", "loud", "", 0, false); err == nil {
+		t.Error("an unknown report was accepted")
+	}
+	if _, err := r.StartWithOptions("sleep 1", workdir, "", "exit", "([", 0, false); err == nil {
+		t.Error("an invalid until pattern was accepted")
+	}
+	if _, err := r.StartWithOptions("sleep 1", workdir, "", "exit", "", -5, false); err == nil {
+		t.Error("a negative remind_every was accepted")
+	}
+	if got := len(r.List()); got != 0 {
+		t.Errorf("List returned %d processes, want none started", got)
+	}
+}
+
+// TestConfigureRetunesPolicy: after a reminder the policy can change without
+// restarting the command, and a changed tick interval restarts its clock.
+func TestConfigureRetunesPolicy(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := New(dir)
+	id, err := r.Start("sleep 30", t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = r.Kill(id) }()
+
+	updated, err := r.Configure(id, "changed", "ready", 60, false)
+	if err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	if updated.Report != "changed" || updated.Until != "ready" || updated.RemindEvery != 60 {
+		t.Fatalf("policy is %+v, want changed/ready/60", updated)
+	}
+	if updated.LastEventAt.IsZero() {
+		t.Error("tuning the tick interval did not restart its clock")
+	}
+
+	// Clearing the pattern and disabling ticks leaves output reminders.
+	updated, err = r.Configure(id, "changed", "", 0, false)
+	if err != nil {
+		t.Fatalf("Configure: %v", err)
+	}
+	if updated.Until != "" || updated.RemindEvery != 0 || updated.Report != "changed" {
+		t.Errorf("policy is %+v, want the pattern cleared and ticks off", updated)
+	}
+
+	if _, err := r.Configure(id, "loud", "", 0, false); err == nil {
+		t.Error("an unknown report was accepted")
+	}
+	if _, err := r.Configure(id, "exit", "([", 0, false); err == nil {
+		t.Error("an invalid until pattern was accepted")
+	}
+	if _, err := r.Configure("bg999", "exit", "", 0, false); err == nil {
+		t.Error("configuring a process that does not exist was accepted")
+	}
+}
+
+// TestEventsUntilMatch: a pattern set at start fires on the new output that
+// holds it, even with report=exit, and fires once.
+func TestEventsUntilMatch(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := New(dir)
+	id, err := r.StartWithOptions("sleep 1; echo READY on 8080; sleep 30", t.TempDir(), "server", "exit", "READY on \\d+", 0, false)
+	if err != nil {
+		t.Fatalf("StartWithOptions: %v", err)
+	}
+	defer func() { _ = r.Kill(id) }()
+
+	var events []string
+	waitFor(t, "the pattern to be reported", func() bool {
+		events = r.Events()
+		return len(events) > 0
+	})
+	if !strings.Contains(events[0], "matched") || !strings.Contains(events[0], "READY on 8080") {
+		t.Errorf("the event does not report the match: %q", events[0])
+	}
+	if again := r.Events(); len(again) != 0 {
+		t.Errorf("the same match was reported twice: %v", again)
+	}
+}
+
+// TestEventsUntilIgnoresNonMatch: output that does not hold the pattern
+// stays quiet under report=exit.
+func TestEventsUntilIgnoresNonMatch(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := New(dir)
+	id, err := r.StartWithOptions("echo something else; sleep 30", t.TempDir(), "", "exit", "NEVER-PRINTED", 0, false)
+	if err != nil {
+		t.Fatalf("StartWithOptions: %v", err)
+	}
+	defer func() { _ = r.Kill(id) }()
+
+	waitFor(t, "the process to print something", func() bool {
+		_, _, ok, _ := r.Output(id, 0)
+		return ok
+	})
+	if events := r.Events(); len(events) != 0 {
+		t.Errorf("non-matching output raised %v, want nothing", events)
+	}
+}
+
+// TestEventsReportChangedOnOrdinaryProc: report=changed is not only for
+// periodic probes — an ordinary command set that way reports its output too.
+func TestEventsReportChangedOnOrdinaryProc(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := New(dir)
+	id, err := r.StartWithOptions("echo hello there; sleep 30", t.TempDir(), "", "changed", "", 0, false)
+	if err != nil {
+		t.Fatalf("StartWithOptions: %v", err)
+	}
+	defer func() { _ = r.Kill(id) }()
+
+	var events []string
+	waitFor(t, "the output to be reported", func() bool {
+		events = r.Events()
+		return len(events) > 0
+	})
+	if !strings.Contains(events[0], "hello there") {
+		t.Errorf("the event does not carry the new output: %q", events[0])
+	}
+	if again := r.Events(); len(again) != 0 {
+		t.Errorf("the same output was reported twice: %v", again)
+	}
+}
+
+// TestEventsPeriodicTickQuiet: a quiet command with a tick interval still
+// says it is alive, once per interval and not twice.
+func TestEventsPeriodicTickQuiet(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := New(dir)
+	id, err := r.StartWithOptions("sleep 30", t.TempDir(), "quiet job", "exit", "", 1, false)
+	if err != nil {
+		t.Fatalf("StartWithOptions: %v", err)
+	}
+	defer func() { _ = r.Kill(id) }()
+
+	if events := r.Events(); len(events) != 0 {
+		t.Fatalf("a fresh tick interval raised %v, want nothing until it elapses", events)
+	}
+	var events []string
+	waitFor(t, "the tick to fire", func() bool {
+		events = r.Events()
+		return len(events) > 0
+	})
+	if !strings.Contains(events[0], "still running") || !strings.Contains(events[0], "no new output") {
+		t.Errorf("the tick does not say the process is alive and quiet: %q", events[0])
+	}
+	if again := r.Events(); len(again) != 0 {
+		t.Errorf("the same tick fired twice without its interval passing: %v", again)
+	}
+}
+
+// TestEventsPeriodicCarriesNewOutput: a tick carries what accumulated since
+// the last reminder and advances past it, so the ending does not repeat it.
+func TestEventsPeriodicCarriesNewOutput(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := New(dir)
+	id, err := r.StartWithOptions("echo first words; sleep 30", t.TempDir(), "", "exit", "", 1, false)
+	if err != nil {
+		t.Fatalf("StartWithOptions: %v", err)
+	}
+	defer func() { _ = r.Kill(id) }()
+
+	var events []string
+	waitFor(t, "the tick to carry the output", func() bool {
+		events = r.Events()
+		return len(events) > 0
+	})
+	if !strings.Contains(events[0], "still running") || !strings.Contains(events[0], "first words") {
+		t.Fatalf("the tick does not carry the accumulated output: %q", events[0])
+	}
+	info, _ := r.Status(id)
+	if info.ReportedOffset == 0 {
+		t.Error("the tick did not advance past the output it carried")
+	}
+}
+
+// TestStartDefaultsEphemeral: the plain Start is the leak-proof default —
+// stopped at turn end, surviving only iterations within the turn.
+func TestStartDefaultsEphemeral(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := New(dir)
+	id, err := r.Start("sleep 30", t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = r.Kill(id) }()
+
+	info, _ := r.Status(id)
+	if info.Persistent {
+		t.Error("plain Start is persistent, want ephemeral by default")
+	}
+}
+
+// TestStartWithOptionsPersistent: persistent=true is recorded and survives a
+// reopen, which is what the next turn reads.
+func TestStartWithOptionsPersistent(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := New(dir)
+	id, err := r.StartWithOptions("sleep 30", t.TempDir(), "server", "exit", "", 0, true)
+	if err != nil {
+		t.Fatalf("StartWithOptions: %v", err)
+	}
+	defer func() { _ = r.Kill(id) }()
+
+	info, _ := r.Status(id)
+	if !info.Persistent {
+		t.Fatalf("policy is %+v, want persistent", info)
+	}
+	second, _ := New(dir)
+	again, _ := second.Status(id)
+	if !again.Persistent {
+		t.Errorf("persistent did not survive a reopen: %+v", again)
+	}
+}
+
+// TestKillEphemeralStopsOnlyEphemeral: the turn-end cleanup stops the
+// default processes and leaves the opt-in survivors for the next turn.
+func TestKillEphemeralStopsOnlyEphemeral(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := New(dir)
+	workdir := t.TempDir()
+
+	ephem, err := r.Start("sleep 30", workdir, "scratch")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	keep, err := r.StartWithOptions("sleep 30", workdir, "server", "exit", "", 0, true)
+	if err != nil {
+		t.Fatalf("StartWithOptions: %v", err)
+	}
+	defer func() { _ = r.Kill(keep) }()
+
+	killed := r.KillEphemeral()
+	if len(killed) != 1 || killed[0] != ephem {
+		t.Fatalf("KillEphemeral stopped %v, want [%s]", killed, ephem)
+	}
+	if again := r.KillEphemeral(); len(again) != 0 {
+		t.Errorf("a second KillEphemeral stopped %v, want nothing left to stop", again)
+	}
+	if info, _ := r.Status(keep); !info.Running() {
+		t.Errorf("the persistent process is %s, want it still running", info.State)
+	}
+	if info, _ := r.Status(ephem); info.Running() {
+		t.Errorf("the ephemeral process is still running after KillEphemeral")
+	}
+}
+
+// TestRunningCountsSplitsLifetimes: the header needs blue and red separately.
+func TestRunningCountsSplitsLifetimes(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := New(dir)
+	workdir := t.TempDir()
+
+	if e, p := r.RunningCounts(); e != 0 || p != 0 {
+		t.Fatalf("empty registry = %d ephemeral + %d persistent, want 0+0", e, p)
+	}
+	ephem, _ := r.Start("sleep 30", workdir, "")
+	keep, _ := r.StartWithOptions("sleep 30", workdir, "", "exit", "", 0, true)
+	defer func() { _ = r.Kill(keep) }()
+	defer func() { _ = r.Kill(ephem) }()
+
+	if e, p := r.RunningCounts(); e != 1 || p != 1 {
+		t.Errorf("counts = %d ephemeral + %d persistent, want 1+1", e, p)
+	}
+	_ = r.Kill(ephem)
+	if e, p := r.RunningCounts(); e != 0 || p != 1 {
+		t.Errorf("after killing the ephemeral, counts = %d+%d, want 0+1", e, p)
+	}
+}

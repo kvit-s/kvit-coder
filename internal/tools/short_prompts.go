@@ -120,11 +120,11 @@ and are expected to carry on and say what you assumed.`
 func (t *ShellStartTool) ShortPromptSection() string {
 	return `### Shell.start
 
-The command outlives this turn and is still running in the next one. Use Shell
+The command outlives the turn's iterations (ephemeral: stopped at turn end;
+persistent=true survives, red). Use Shell
 for anything that finishes on its own. Read what it has printed with
 Shell.output, wait for it with Observe.wait, stop it with Shell.kill.`
 }
-
 // ShortPromptSection says what Observe.wait returns and why.
 func (t *ObserveWaitTool) ShortPromptSection() string {
 	return `### Observe.wait

@@ -82,6 +82,8 @@ func main() {
 	sessionList := flag.Bool("sessions", false, "list all sessions and exit")
 	sessionDelete := flag.String("session-delete", "", "delete a session and exit")
 	sessionShow := flag.String("session-show", "", "show session history and exit")
+	killBackground := flag.String("kill-background", "", "stop running background processes for a session ('all' for every session) and exit")
+	listBackground := flag.String("list-background", "", "list running background processes for a session ('all' for every session) and exit")
 	agentFile := flag.String("agent-file", "", "path to agent file (content appended to system prompt)")
 	var imagePaths imagePathList
 	flag.Var(&imagePaths, "image", "attach an image file to the prompt so the model can see it (repeatable)")
@@ -100,10 +102,24 @@ func main() {
 	}
 
 	// Handle session management commands early (before config load)
-	if *sessionList || *sessionDelete != "" || *sessionShow != "" {
+	if *sessionList || *sessionDelete != "" || *sessionShow != "" || *killBackground != "" || *listBackground != "" {
 		sessionMgr, err := session.NewManager()
 		if err != nil {
 			log.Fatalf("Failed to create session manager: %v", err)
+		}
+
+		if *listBackground != "" {
+			if err := runListBackground(sessionMgr, *listBackground); err != nil {
+				log.Fatalf("%v", err)
+			}
+			return
+		}
+
+		if *killBackground != "" {
+			if err := runKillBackground(sessionMgr, *killBackground); err != nil {
+				log.Fatalf("%v", err)
+			}
+			return
 		}
 
 		if *sessionList {
@@ -126,6 +142,12 @@ func main() {
 		if *sessionDelete != "" {
 			if !sessionMgr.SessionExists(*sessionDelete) {
 				log.Fatalf("Session %q not found", *sessionDelete)
+			}
+			// Stop its background processes first, otherwise deleting the
+			// session orphans them: the pidfiles go away but the processes
+			// keep running with no record pointing at them.
+			if killed := killSessionBackground(sessionMgr, *sessionDelete); len(killed) > 0 {
+				fmt.Printf("Stopped background processes: %s\n", strings.Join(killed, ", "))
 			}
 			if err := sessionMgr.DeleteSession(*sessionDelete); err != nil {
 				log.Fatalf("Failed to delete session: %v", err)
@@ -324,7 +346,13 @@ func main() {
 	// seconds means the caller wants out now.
 	runCtx, cancelRun := context.WithCancel(context.Background())
 	defer cancelRun()
-	installInterruptHandler(cancelRun)
+	// interruptCtx fires only on a real SIGINT/SIGTERM, never on normal turn
+	// end: runCtx is cancelled by the deferred cancelRun above on every exit,
+	// so a background killer watching runCtx would SIGTERM even the persistent
+	// processes on the way out, racing the process's own exit.
+	interruptCtx, signalInterrupt := context.WithCancel(context.Background())
+	defer signalInterrupt()
+	installInterruptHandler(cancelRun, signalInterrupt)
 
 	// One agent at a time per working directory, when workspace.lock asks for
 	// it. It is off by default: the lock is held for the whole of a turn, so a
@@ -440,7 +468,7 @@ func main() {
 		log.Fatalf("Failed to open the process registry: %v", err)
 	}
 	if cfg.Tools.Procs.Enabled && cfg.Tools.Procs.ShouldKillOnExit() {
-		killBackgroundOnInterrupt(runCtx, procRegistry, sess, writer)
+		killBackgroundOnInterrupt(interruptCtx, procRegistry, sess, writer)
 	}
 
 	// The inbox is where anything arriving mid-turn waits. The loop drains it
@@ -814,7 +842,7 @@ func stdinIsATerminal() bool {
 // it is, the tool that was running is killed, and what happened is written to
 // the session before the process exits normally. A second interrupt within two
 // seconds exits immediately, for when that is taking too long.
-func installInterruptHandler(cancelRun context.CancelFunc) {
+func installInterruptHandler(cancelRun, signalInterrupt context.CancelFunc) {
 	sigCh := make(chan os.Signal, 4)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	go func() {
@@ -827,14 +855,18 @@ func installInterruptHandler(cancelRun context.CancelFunc) {
 			}
 			last = now
 			fmt.Fprintln(os.Stderr, "\ninterrupted - stopping the turn and saving it; press ctrl-c again to quit now")
+			signalInterrupt()
 			cancelRun()
 		}
 	}()
 }
 
 // killBackgroundOnInterrupt stops everything this session started when the run
-// is cancelled, and records that it did. An interrupt that silently leaves a
-// dev server holding a port is a surprise you find out about much later.
+// is interrupted, and records that it did. It watches the interrupt context,
+// not the run context, so a normal turn end (which cancels the run context on
+// its way out) leaves persistent processes alone for the next turn. An
+// interrupt that silently leaves a dev server holding a port is a surprise you
+// find out about much later.
 func killBackgroundOnInterrupt(ctx context.Context, registry *procs.Registry, sess *session.Session, writer *ui.Writer) {
 	go func() {
 		<-ctx.Done()
@@ -847,6 +879,116 @@ func killBackgroundOnInterrupt(ctx context.Context, registry *procs.Registry, se
 		writer.Info(msg)
 		_ = sess.Notice(msg)
 	}()
+}
+
+// resolveBackgroundSessions expands a --list-background / --kill-background
+// target into session names: "all" means every session with history, anything
+// else means that one session, which must exist.
+func resolveBackgroundSessions(mgr *session.Manager, target string) ([]string, error) {
+	if target == "all" {
+		sessions, err := mgr.ListSessions()
+		if err != nil {
+			return nil, fmt.Errorf("failed to list sessions: %w", err)
+		}
+		names := make([]string, 0, len(sessions))
+		for _, s := range sessions {
+			names = append(names, s.Name)
+		}
+		return names, nil
+	}
+	if !mgr.SessionExists(target) {
+		return nil, fmt.Errorf("session %q not found", target)
+	}
+	return []string{target}, nil
+}
+
+// procRegistryFor opens the background-process registry for a session without
+// a running turn. It reads the same proc/ directory the turn uses.
+func procRegistryFor(mgr *session.Manager, name string) (*procs.Registry, error) {
+	return procs.New(filepath.Join(mgr.BaseDir(), name, session.ProcSubdir))
+}
+
+// runListBackground prints the running background processes for one session
+// or every session. Persistent processes carry a red "!" marker; ephemeral
+// ones found here are leftovers (a crash before the turn-end cleanup, or a
+// record from before the ephemeral default) — still running, still listed.
+func runListBackground(mgr *session.Manager, target string) error {
+	names, err := resolveBackgroundSessions(mgr, target)
+	if err != nil {
+		return err
+	}
+	any := false
+	for _, name := range names {
+		reg, err := procRegistryFor(mgr, name)
+		if err != nil {
+			continue
+		}
+		for _, info := range reg.List() {
+			if !info.Running() {
+				continue
+			}
+			marker := ""
+			if info.Persistent {
+				marker = "!"
+			}
+			label := info.ID + marker
+			if info.Name != "" {
+				label += fmt.Sprintf(" (%s)", info.Name)
+			}
+			cmd := strings.TrimSpace(info.Command)
+			if len(cmd) > 80 {
+				cmd = cmd[:77] + "..."
+			}
+			fmt.Printf("%s: %s pid=%d %s\n", name, label, info.PID, cmd)
+			any = true
+		}
+	}
+	if !any {
+		if target == "all" {
+			fmt.Println("No running background processes in any session.")
+		} else {
+			fmt.Printf("No running background processes in session %s.\n", target)
+		}
+	}
+	return nil
+}
+
+// killSessionBackground stops every running background process in one
+// session. It is the cleanup behind both --kill-background and
+// --session-delete: deleting the pidfiles without stopping the processes
+// would orphan them with no record pointing at them.
+func killSessionBackground(mgr *session.Manager, name string) []string {
+	reg, err := procRegistryFor(mgr, name)
+	if err != nil {
+		return nil
+	}
+	return reg.KillAll()
+}
+
+// runKillBackground stops every running background process for one session or
+// every session: the reaper for red (persistent) processes left behind by
+// abandoned sessions, plus any ephemeral leftovers from crashes.
+func runKillBackground(mgr *session.Manager, target string) error {
+	names, err := resolveBackgroundSessions(mgr, target)
+	if err != nil {
+		return err
+	}
+	total := 0
+	for _, name := range names {
+		killed := killSessionBackground(mgr, name)
+		for _, id := range killed {
+			fmt.Printf("%s: stopped %s\n", name, id)
+			total++
+		}
+	}
+	if total == 0 {
+		if target == "all" {
+			fmt.Println("No running background processes in any session.")
+		} else {
+			fmt.Printf("No running background processes in session %s.\n", target)
+		}
+	}
+	return nil
 }
 
 // openGrants reads the three permission files that apply to this run. A file

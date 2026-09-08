@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/inbox"
+	"github.com/kvit-s/kvit-coder/internal/procs"
+	"github.com/kvit-s/kvit-coder/internal/session"
 	"github.com/kvit-s/kvit-coder/internal/ui"
 )
 
@@ -217,5 +219,136 @@ func TestPauseAwareWatcherHoldsFromEnterToPrompt(t *testing.T) {
 	box.SetPauseMode(false)
 	if watch() {
 		t.Error("the watcher still holds after the pause resolved")
+	}
+}
+
+// backgroundTestManager roots a session manager at a temp HOME, so the
+// reaper commands run against throwaway sessions instead of the user's own.
+func backgroundTestManager(t *testing.T) *session.Manager {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	mgr, err := session.NewManager()
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	return mgr
+}
+
+// backgroundTestSession opens a session with history (so ListSessions sees
+// it) and a running process in it.
+func backgroundTestSession(t *testing.T, mgr *session.Manager, name, command string, persistent bool) string {
+	t.Helper()
+	sess, err := mgr.Open(name)
+	if err != nil {
+		t.Fatalf("Open %s: %v", name, err)
+	}
+	// ListSessions only lists sessions with history; a bare Open is not
+	// enough for the "all" target to find it.
+	if err := sess.Notice("setup"); err != nil {
+		t.Fatalf("Notice: %v", err)
+	}
+	reg, err := procRegistryFor(mgr, name)
+	if err != nil {
+		t.Fatalf("procRegistryFor: %v", err)
+	}
+	var id string
+	if persistent {
+		id, err = reg.StartWithOptions(command, t.TempDir(), "", "exit", "", 0, true)
+	} else {
+		id, err = reg.Start(command, t.TempDir(), "")
+	}
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	return id
+}
+
+// TestKillBackgroundSingleSession: the reaper stops one session's processes
+// without touching its history — the second run finds nothing to stop.
+func TestKillBackgroundSingleSession(t *testing.T) {
+	mgr := backgroundTestManager(t)
+	id := backgroundTestSession(t, mgr, "reap-me", "sleep 30", true)
+
+	if err := runListBackground(mgr, "reap-me"); err != nil {
+		t.Fatalf("runListBackground: %v", err)
+	}
+	killed := killSessionBackground(mgr, "reap-me")
+	if len(killed) != 1 || killed[0] != id {
+		t.Fatalf("killed = %v, want [%s]", killed, id)
+	}
+	reg, _ := procRegistryFor(mgr, "reap-me")
+	if info, _ := reg.Status(id); info.Running() {
+		t.Error("the process is still running after the reaper")
+	}
+	if again := killSessionBackground(mgr, "reap-me"); len(again) != 0 {
+		t.Errorf("a second reap stopped %v, want nothing", again)
+	}
+	if err := runKillBackground(mgr, "reap-me"); err != nil {
+		t.Fatalf("runKillBackground: %v", err)
+	}
+	if !mgr.SessionExists("reap-me") {
+		t.Error("reaping deleted the session history, want it kept")
+	}
+}
+
+// TestKillBackgroundAll: one command reaps the red processes abandoned
+// across sessions — the hundreds-of-sessions leak this exists for.
+func TestKillBackgroundAll(t *testing.T) {
+	mgr := backgroundTestManager(t)
+	backgroundTestSession(t, mgr, "sess-a", "sleep 30", true)
+	backgroundTestSession(t, mgr, "sess-b", "sleep 30", false)
+
+	if err := runKillBackground(mgr, "all"); err != nil {
+		t.Fatalf("runKillBackground all: %v", err)
+	}
+	for _, name := range []string{"sess-a", "sess-b"} {
+		reg, _ := procRegistryFor(mgr, name)
+		for _, info := range reg.List() {
+			if info.Running() {
+				t.Errorf("%s: %s is still running after reaping all", name, info.ID)
+			}
+		}
+	}
+}
+
+// TestBackgroundUnknownSession: a typo fails loudly instead of silently
+// reaping nothing.
+func TestBackgroundUnknownSession(t *testing.T) {
+	mgr := backgroundTestManager(t)
+	if _, err := resolveBackgroundSessions(mgr, "no-such-session"); err == nil {
+		t.Error("resolving an unknown session was accepted")
+	}
+	if err := runListBackground(mgr, "no-such-session"); err == nil {
+		t.Error("listing an unknown session was accepted")
+	}
+	if err := runKillBackground(mgr, "no-such-session"); err == nil {
+		t.Error("killing an unknown session was accepted")
+	}
+}
+
+// TestProcRegistryForReadsSessionDir: the CLI reads the same proc/ directory
+// the turn writes, or the reaper would miss what the turn started.
+func TestProcRegistryForReadsSessionDir(t *testing.T) {
+	mgr := backgroundTestManager(t)
+	sess, err := mgr.Open("same-dir")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	viaSess, err := procs.New(sess.ProcDir())
+	if err != nil {
+		t.Fatalf("procs.New: %v", err)
+	}
+	id, err := viaSess.Start("sleep 30", t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer func() { _ = viaSess.Kill(id) }()
+
+	viaCLI, err := procRegistryFor(mgr, "same-dir")
+	if err != nil {
+		t.Fatalf("procRegistryFor: %v", err)
+	}
+	if _, err := viaCLI.Status(id); err != nil {
+		t.Errorf("the CLI registry does not see %s: %v", id, err)
 	}
 }

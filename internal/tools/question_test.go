@@ -296,3 +296,46 @@ func TestCheckRejectsAnEmptyCall(t *testing.T) {
 		t.Error("a question with no text was accepted")
 	}
 }
+
+// TestHeaderIsBlueOnGrayWithQuestionMark: the header must stand out from the
+// regular white text, and the first visible character must be '?'.
+func TestHeaderIsBlueOnGrayWithQuestionMark(t *testing.T) {
+	tool, _, _ := questionTestTool(t, 0, true)
+	spec := questionSpec{Question: "Which one?", Header: "choice"}
+
+	text := tool.renderText(spec)
+	if !strings.Contains(text, "\x1b[34;47m? ── choice ──\x1b[0m") {
+		t.Errorf("header is not blue on gray with a '?' lead:\n%q", text)
+	}
+	// The first visible character after the leading blank line is '?':
+	// strip the newline and any opening ANSI code before checking.
+	trimmed := strings.TrimPrefix(text, "\n")
+	trimmed = strings.TrimPrefix(trimmed, "\x1b[34;47m")
+	if !strings.HasPrefix(trimmed, "?") {
+		t.Errorf("first visible character is %q, want '?'", trimmed)
+	}
+}
+
+// TestHeaderlessQuestionStillLeadsWithQuestionMark: with no header the '?'
+// marker carries the colors so the waiting prompt is still distinguishable.
+func TestHeaderlessQuestionStillLeadsWithQuestionMark(t *testing.T) {
+	tool, _, _ := questionTestTool(t, 0, true)
+	text := tool.renderText(questionSpec{Question: "Which one?"})
+	if !strings.Contains(text, "\x1b[34;47m?\x1b[0m Which one?") {
+		t.Errorf("headerless question does not lead with a colored '?':\n%q", text)
+	}
+}
+
+// TestHeaderStaysPlainWithoutColor: NO_COLOR or a dumb terminal leaves the
+// '?' lead but drops the ANSI codes, so piped logs stay clean.
+func TestHeaderStaysPlainWithoutColor(t *testing.T) {
+	tool, _, _ := questionTestTool(t, 0, true)
+	t.Setenv("NO_COLOR", "1")
+	text := tool.renderText(questionSpec{Question: "Which one?", Header: "choice"})
+	if strings.Contains(text, "\x1b[") {
+		t.Errorf("colors were emitted despite NO_COLOR:\n%q", text)
+	}
+	if !strings.Contains(text, "? ── choice ──") {
+		t.Errorf("plain header lost its '?' lead:\n%q", text)
+	}
+}

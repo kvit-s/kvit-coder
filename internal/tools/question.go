@@ -309,14 +309,59 @@ func (t *QuestionTool) render(spec questionSpec) {
 	fmt.Fprint(t.out, t.renderText(spec))
 }
 
-// renderText is the question as it appears above the input line.
+// questionHeaderCode paints the header blue on a gray background so the
+// waiting prompt stands out from the regular white text around it. It mirrors
+// fatih/color's FgBlue+BgWhite, emitted manually so a headless run whose
+// stderr is a terminal still gets colors even when stdout is piped and that
+// package has switched itself off (see internal/ui).
+const questionHeaderCode = "\x1b[34;47m"
+
+const questionResetCode = "\x1b[0m"
+
+// useColor reports whether the question header should carry ANSI colors.
+// It respects NO_COLOR and a dumb terminal, and otherwise colors when the
+// output looks like a terminal. A non-file writer (a test buffer, say) is
+// treated as color-capable so the marker stays testable; a file that is not
+// a character device (piped logs) stays plain.
+func (t *QuestionTool) useColor() bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	if os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	if t == nil || t.out == nil {
+		return true
+	}
+	if f, ok := t.out.(*os.File); ok {
+		if info, err := f.Stat(); err == nil {
+			return info.Mode()&os.ModeCharDevice != 0
+		}
+		return false
+	}
+	return true
+}
+
+// paintHeader wraps s in the header colors when colors are on.
+func (t *QuestionTool) paintHeader(s string) string {
+	if !t.useColor() {
+		return s
+	}
+	return questionHeaderCode + s + questionResetCode
+}
+
+// renderText is the question as it appears above the input line. The first
+// visible character is always '?', and the header line (or the '?' marker
+// when there is no header) is blue on gray.
 func (t *QuestionTool) renderText(spec questionSpec) string {
 	var sb strings.Builder
 	sb.WriteString("\n")
 	if spec.Header != "" {
-		sb.WriteString("── " + spec.Header + " ──\n")
+		sb.WriteString(t.paintHeader("? ── "+spec.Header+" ──") + "\n")
+		sb.WriteString(spec.Question + "\n")
+	} else {
+		sb.WriteString(t.paintHeader("?") + " " + spec.Question + "\n")
 	}
-	sb.WriteString(spec.Question + "\n")
 	for i, opt := range spec.Options {
 		sb.WriteString(fmt.Sprintf("  %d) %s", i+1, opt.Label))
 		if opt.Description != "" {

@@ -567,9 +567,10 @@ type BatchToolConfig struct {
 	Enabled bool `yaml:"enabled"`
 }
 
-// ProcsToolsConfig configures the tools for work that outlives a turn:
-// Shell.start, Shell.output, Shell.status, Shell.list, Shell.kill,
-// Observe.wait and Observe.add.
+// ProcsToolsConfig configures the tools for work that outlives a turn's
+// iterations: Shell.start, Shell.output, Shell.status, Shell.list,
+// Shell.kill, Shell.tune, Observe.wait and Observe.add. Ephemeral processes
+// die with the turn; persistent ones survive it.
 type ProcsToolsConfig struct {
 	Enabled bool `yaml:"enabled"`
 	// KillOnExit stops everything this session started when the turn is
