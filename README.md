@@ -18,6 +18,15 @@ Three benchmark harnesses ship with it; see [`benchmarks/`](benchmarks/).
 ### Build
 
 ```bash
+scripts/build.sh
+```
+
+That builds both binaries into the repository root and stamps the current git
+version into them. Add `--release` for a stripped, `-trimpath` build, `--race`
+for the race detector, or name `coder` or `ui` to build just one. The plain Go
+commands it runs are:
+
+```bash
 go build -o kvit-coder ./cmd/kvit-coder
 go build -o kvit-coder-ui ./cmd/kvit-coder-ui
 ```

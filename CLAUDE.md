@@ -17,11 +17,15 @@ off by default. **Do not treat the compensation code as the normal path.**
 ## Build, test, run
 
 ```bash
-go build -o kvit-coder ./cmd/kvit-coder
-go build -o kvit-coder-ui ./cmd/kvit-coder-ui
+scripts/build.sh         # both binaries into the repository root
 go test ./...            # all green as of September 2026; keep it that way
 go vet ./...
 ```
+
+`scripts/build.sh` takes `--release` (stripped, `-trimpath`), `--race`, and a
+target name (`coder` or `ui`) to build only one. It is the same two
+`go build -o <name> ./cmd/<name>` commands with the git version stamped in.
+`scripts/release.sh` is the tagged-release build and refuses a dirty tree.
 
 Go 1.24. Direct dependencies are bubbletea/bubbles/lipgloss for the terminal UI,
 zap for logging, yaml.v3, go-difflib, fatih/color, and `mvdan.cc/sh/v3` for
