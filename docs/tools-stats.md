@@ -112,6 +112,19 @@ tool (6), and `find` plus `ls` (8) covers directory listing that no tool offers
 at all. The system prompt asks the model to prefer a tool over its shell
 equivalent where both exist, and on this evidence it does the opposite.
 
+**Caveat: `Search` was broken when these sessions ran.** Until commit
+`a750a25` (8 September 2026) the `Search` grep fallback ran plain `grep`
+(BRE) while the model writes ripgrep-style extended regex, so a pattern with
+`|` alternation plus an escaped paren such as `Open\(` failed with a bare
+`search failed: exit status 2` instead of matching — and a bare `a|b`
+silently matched the literal string instead of either branch. No `rg` was
+installed on this machine, so every `Search` here took that fallback. The 6
+vs 15 split above therefore understates the model's willingness to use
+`Search`: some of the `Shell`+`grep` calls are retries after a failed
+`Search`. When comparing the two, count `tool_result` lines containing
+`search failed: exit status 2` and treat the `grep` calls immediately after
+them as `Search`-intended.
+
 ### The older sessions, for comparison
 
 The 64 flat-file sessions hold 793 calls: `Read` 364, `Shell` 276, `Edit` 44,
@@ -166,7 +179,7 @@ The "offered but never called" section reads the tool list out of each session's
 the sessions counted here age out, that section will report fewer offered tools
 than are actually registered. It says how many sessions it had a list from.
 
-Two things worth doing when you next regenerate:
+Three things worth doing when you next regenerate:
 
 1. **Say what the sessions were.** The counts mean something different for a
    week of feature work than for a week of conversation about this program's
@@ -175,6 +188,12 @@ Two things worth doing when you next regenerate:
 2. **Keep the old figures.** Add a dated section rather than overwriting this
    one, so a tool that goes from unused to used is visible as a change rather
    than only as a different number.
+3. **Split pre- and post-fix sessions for `Search` vs `grep`.** Everything in
+   the 8 September snapshot above ran against the broken `Search` fallback
+   (fixed in `a750a25`). Sessions from before the fix carry failed `Search`
+   calls (`search failed: exit status 2`) and the `Shell`+`grep` retries that
+   followed them; sessions after it do not. Count them separately or the
+   `Search`-vs-`grep` comparison mixes two different tools under one name.
 
 ## What this feeds into
 
@@ -188,4 +207,6 @@ Four decisions are waiting on more of this data, all of them open questions in
 - whether the background-process tools are used once there is work that needs
   them
 - whether `Search` should be changed, or the prompt should stop asking the model
-  to prefer it, given how much more often `grep` gets reached for
+  to prefer it, given how much more often `grep` gets reached for (but see the
+  caveat above: the 8 September snapshot's gap is confounded by the bug, so
+  this wants post-fix sessions before it answers anything)
