@@ -272,7 +272,7 @@ func (r *Runner) executeSingleTool(
 	r.displayToolCall(internalName, tc)
 
 	// Execute tool with timing
-	content, toolErr, toolDuration, cancelled := r.executeToolWithTimeout(ctx, tool, internalName, tc, state)
+	content, toolImages, toolErr, toolDuration, cancelled := r.executeToolWithTimeout(ctx, tool, internalName, tc, state)
 
 	if cancelled {
 		result.toolsCancelled = true
@@ -302,6 +302,8 @@ func (r *Runner) executeSingleTool(
 		content = fmt.Sprintf("Error: %v", toolErr)
 		r.writer.Error(fmt.Sprintf("Tool error: %s", toolErr))
 		r.logger.ToolExecuted(internalName, toolDuration, false, toolErr)
+		// An error carries no pixels.
+		toolImages = nil
 	}
 
 	state.messages = append(state.messages, llm.Message{
@@ -311,6 +313,14 @@ func (r *Runner) executeSingleTool(
 		Content:    content,
 	})
 
+	// Attachments ride on a follower user message, never on the tool message:
+	// the Responses backend has no multimodal tool output, and keeping tool
+	// results text means the loop detector, interrogation and backtracking
+	// all keep working on strings.
+	if len(toolImages) > 0 {
+		state.messages = append(state.messages, toolImageMessage(internalName, toolImages))
+	}
+
 	isError := toolErr != nil || strings.HasPrefix(content, "Error:") || strings.Contains(content, "\"success\": false")
 	state.loopDetector.Record(internalName, tc.Function.Arguments, content, isError)
 
@@ -318,6 +328,21 @@ func (r *Runner) executeSingleTool(
 	state.lastToolArgs = tc.Function.Arguments
 
 	return result
+}
+
+// toolImageMessage carries a tool's image attachments to the model as a user
+// message following the tool result, with one summary line per image so the
+// transcript reads without the pixels.
+func toolImageMessage(toolName string, images []llm.ImagePart) llm.Message {
+	lines := make([]string, 0, len(images))
+	for _, img := range images {
+		lines = append(lines, img.Summary())
+	}
+	return llm.Message{
+		Role:    llm.RoleUser,
+		Content: fmt.Sprintf("[Attachment from %s: the following image(s). Refer to them by file name.]\n%s", toolName, strings.Join(lines, "\n")),
+		Images:  images,
+	}
 }
 
 // displayToolCall formats and displays a tool call to the user.
@@ -353,7 +378,7 @@ func (r *Runner) executeToolWithTimeout(
 	internalName string,
 	tc llm.ToolCall,
 	state *runState,
-) (content string, toolErr error, duration time.Duration, cancelled bool) {
+) (content string, images []llm.ImagePart, toolErr error, duration time.Duration, cancelled bool) {
 	toolStart := time.Now()
 	progressDone := make(chan bool)
 	dotCount := 0
@@ -442,6 +467,9 @@ func (r *Runner) executeToolWithTimeout(
 
 		resultJSON, _ := json.MarshalIndent(toolResult, "", "  ")
 		content = string(resultJSON)
+		// Attachments travel beside the summary, never inside it: the
+		// summary marshals metadata only (pixels are json:"-").
+		images = toolImagesFromResult(toolResult)
 
 		if isPlanTool && r.planManager != nil {
 			planText := r.planManager.FormatActivePlan()
@@ -464,6 +492,25 @@ func (r *Runner) executeToolWithTimeout(
 	}
 
 	return
+}
+
+// toolImagesFromResult collects image attachments from a tool result: either
+// directly from an image-bearing tool, or per call from a Batch output, so
+// the model can tell which call read which image.
+func toolImagesFromResult(toolResult any) []llm.ImagePart {
+	if carrier, ok := toolResult.(tools.ImageCarrier); ok {
+		return carrier.ToolImages()
+	}
+	if m, ok := toolResult.(map[string]any); ok {
+		if results, ok := m["results"].([]tools.BatchResult); ok {
+			var out []llm.ImagePart
+			for _, r := range results {
+				out = append(out, r.Images...)
+			}
+			return out
+		}
+	}
+	return nil
 }
 
 // questionsLast moves any Question call to the end of the batch, keeping the

@@ -24,7 +24,7 @@ import (
 // loop backtracks over messages that are already written, the discard is
 // recorded as its own line, which keeps the file append-only and leaves the
 // abandoned attempt visible.
-func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *config.Config, systemPrompt string, promptText string, quietMode bool, sess *session.Session, projectInstructions *ProjectInstructions) {
+func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *config.Config, systemPrompt string, promptText string, quietMode bool, sess *session.Session, projectInstructions *ProjectInstructions, imagePaths []string) {
 	messages := []llm.Message{
 		{Role: llm.RoleSystem, Content: systemPrompt},
 	}
@@ -75,6 +75,7 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 		Role:    llm.RoleUser,
 		Content: promptWithProjectInstructions(promptText, projectInstructions),
 	}
+	userMsg.Images = preparePromptImages(imagePaths, cfg, sess, writer, quietMode)
 	messages = append(messages, userMsg)
 
 	if sess != nil {

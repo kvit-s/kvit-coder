@@ -86,6 +86,11 @@ tools:
     max_partial_lines: 150
     show_line_numbers: true     # set to false for content-based edit modes (searchreplace, patch)
 
+  images:
+    enabled: true       # the ReadImage tool; -image works whenever it is passed
+    max_size_mb: 15      # largest source file accepted
+    max_dimension: 1568  # long edge of the normalized copy sent to the model
+
   edit:
     enabled: true
     mode: "lines"               # "lines" (default), "searchreplace", or "patch"

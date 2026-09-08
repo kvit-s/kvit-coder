@@ -83,6 +83,8 @@ func main() {
 	sessionDelete := flag.String("session-delete", "", "delete a session and exit")
 	sessionShow := flag.String("session-show", "", "show session history and exit")
 	agentFile := flag.String("agent-file", "", "path to agent file (content appended to system prompt)")
+	var imagePaths imagePathList
+	flag.Var(&imagePaths, "image", "attach an image file to the prompt so the model can see it (repeatable)")
 
 	flag.Parse()
 
@@ -527,6 +529,8 @@ func main() {
 	toolCtx.SetGrantor(openGrants(sess, cfg.Workspace.Root, writer))
 	// A tool that waits for a person must agree with whether one is there.
 	toolCtx.SetInteractive(interactive)
+	// Normalized image copies live in the session, so the next turn finds them.
+	toolCtx.SetSessionTmp(sess.TmpDir())
 
 	// With a line reader running it is the only thing reading the terminal, so
 	// every prompt in the process claims its answer from the inbox rather than
@@ -703,7 +707,7 @@ func main() {
 	}
 
 	// Run in exec mode (always, since we require -p or --benchmark)
-	repl.RunExec(runCtx, runner, writer, cfg, systemPrompt, promptText, quietMode, sess, projectInstructions)
+	repl.RunExec(runCtx, runner, writer, cfg, systemPrompt, promptText, quietMode, sess, projectInstructions, []string(imagePaths))
 }
 
 // startStdinReader queues each line typed at the terminal for the running

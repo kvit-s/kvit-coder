@@ -167,8 +167,10 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 		return c.chatViaResponses(ctx, req)
 	}
 
-	// Prepare request body
-	body, err := json.Marshal(req)
+	// Prepare request body. Messages are converted to their wire form, where
+	// attachments become content parts; text-only messages serialize exactly
+	// as before so the prompt cache keeps hitting.
+	body, err := json.Marshal(toChatWireRequest(req))
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}

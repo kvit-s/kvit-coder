@@ -189,13 +189,24 @@ func messagesToResponsesInput(msgs []Message) []responsesItem {
 			}
 
 		default: // system, user, and anything else that is plain text
-			if msg.Content == "" {
+			// Images ride on user messages as input_text plus input_image
+			// parts. Text-only messages keep the bare string, so the prompt
+			// prefix stays byte-identical and the server-side cache hits.
+			if len(imagesWithData(msg.Images)) == 0 {
+				if msg.Content == "" {
+					continue
+				}
+				items = append(items, responsesItem{
+					Type:    "message",
+					Role:    string(msg.Role),
+					Content: msg.Content,
+				})
 				continue
 			}
 			items = append(items, responsesItem{
 				Type:    "message",
 				Role:    string(msg.Role),
-				Content: msg.Content,
+				Content: toResponsesContent(msg),
 			})
 		}
 	}

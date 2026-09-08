@@ -49,6 +49,13 @@ type ToolContext struct {
 	// for a person and the reader that would feed it never disagree.
 	interactiveMu sync.Mutex
 	interactive   bool
+
+	// sessionTmp is the session's tmp/ directory, where normalized image
+	// copies are stored. Set once per turn by whatever opened the session;
+	// empty when there is no session (a tool test, say), in which case
+	// image tools fall back to the OS temp directory.
+	sessionTmpMu sync.Mutex
+	sessionTmp   string
 }
 
 // NewToolContext creates a new ToolContext with initialized state.
@@ -253,4 +260,24 @@ func (tc *ToolContext) GetPendingWritePath() string {
 		return ""
 	}
 	return tc.pendingWrite.path
+}
+
+// SetSessionTmp records the session's tmp/ directory for this turn.
+func (tc *ToolContext) SetSessionTmp(dir string) {
+	if tc == nil {
+		return
+	}
+	tc.sessionTmpMu.Lock()
+	defer tc.sessionTmpMu.Unlock()
+	tc.sessionTmp = dir
+}
+
+// SessionTmp returns the session's tmp/ directory, or "" when there is none.
+func (tc *ToolContext) SessionTmp() string {
+	if tc == nil {
+		return ""
+	}
+	tc.sessionTmpMu.Lock()
+	defer tc.sessionTmpMu.Unlock()
+	return tc.sessionTmp
 }

@@ -13,12 +13,20 @@ file and send it to the model, then let the composer paste one. The first is a
 prerequisite of the second, not a separate feature — paste without a working
 file-to-model path has nothing to produce.
 
-Nothing here is built. It is a proposal in the same sense as
-[`redesign-mcp.md`](redesign-mcp.md) and [`bench-refactor.md`](bench-refactor.md):
-the reasoning and the plan are written down so the work can be picked up later
-without re-deriving them. The reader is assumed not to have the code open, so
-the parts of it that matter are described where they come up, with file
-references that were correct in September 2026 and will drift.
+**Status (September 2026): built.** Both phases are implemented —
+`llm.ImagePart` attachments on user messages, both wire protocols,
+the `ReadImage` tool, the repeatable `-image` flag, session `tmp/` storage
+with rehydration across turns, and the TUI producers (`@path`, `:image`,
+`:paste`, including the WSL clipboard branch). What was "nothing here is
+built" below now reads as the design record of what was done. Two deviations
+from the plan as written: downscaling is stdlib-only nearest neighbor
+(no `golang.org/x/image` dependency), and GIF decodes to its first frame
+while WebP is refused with a clear error. The Responses `input_text` /
+`input_image` part names follow the OpenAI shape and were verified
+structurally, not against the live endpoint. The reader is assumed not to
+have the code open, so the parts of it that matter are described where they
+come up, with file references that were correct in September 2026 and will
+drift.
 
 ## 2. Where the text-only assumption lives
 

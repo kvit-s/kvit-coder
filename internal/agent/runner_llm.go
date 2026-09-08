@@ -48,15 +48,8 @@ func (r *Runner) callLLM(ctx context.Context, state *runState) (*llmCallResult, 
 		}
 	}()
 
-	resp, err := r.llmClient.Chat(ctx, llm.ChatRequest{
-		Model:       r.cfg.LLM.Model,
-		Messages:    state.messages,
-		Tools:       r.registry.Specs(),
-		ToolChoice:  "auto",
-		Temperature: r.cfg.LLM.Temperature,
-		MaxTokens:   r.cfg.LLM.MaxTokens,
-		Stream:      false,
-	})
+	resp, err := r.chatWithImages(ctx, state)
+
 	close(llmDone)
 	time.Sleep(10 * time.Millisecond)
 	duration := time.Since(startTime)
@@ -76,6 +69,30 @@ func (r *Runner) callLLM(ctx context.Context, state *runState) (*llmCallResult, 
 	}
 
 	return result, nil
+}
+
+// chatWithImages hydrates message attachments from disk and sends the
+// request, refusing early with a clear error when the images alone would
+// overflow the context window rather than failing mid-loop on a 400.
+func (r *Runner) chatWithImages(ctx context.Context, state *runState) (*llm.ChatResponse, error) {
+	state.messages = llm.HydrateImages(state.messages)
+
+	if maxCtx := r.cfg.LLM.Context; maxCtx > 0 {
+		if est := llm.ImageTokensForMessages(state.messages); est > 0 && state.totalTokens+est >= maxCtx {
+			return nil, fmt.Errorf("images need ~%d tokens but only %d of %d context remain: start a new session or continue without images",
+				est, maxCtx-state.totalTokens, maxCtx)
+		}
+	}
+
+	return r.llmClient.Chat(ctx, llm.ChatRequest{
+		Model:       r.cfg.LLM.Model,
+		Messages:    state.messages,
+		Tools:       r.registry.Specs(),
+		ToolChoice:  "auto",
+		Temperature: r.cfg.LLM.Temperature,
+		MaxTokens:   r.cfg.LLM.MaxTokens,
+		Stream:      false,
+	})
 }
 
 // handleLLMError processes errors from LLM calls and determines retry strategy

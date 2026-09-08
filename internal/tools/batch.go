@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/kvit-s/kvit-coder/internal/config"
+	"github.com/kvit-s/kvit-coder/internal/llm"
 )
 
 // maxBatchCalls bounds one Batch. A batch is for the handful of independent
@@ -117,6 +118,11 @@ type BatchResult struct {
 	OK     bool   `json:"ok"`
 	Result any    `json:"result,omitempty"`
 	Error  string `json:"error,omitempty"`
+	// Images carries attachments from an image-bearing call (ReadImage).
+	// Only metadata is serialized (bytes are json:"-"); the runner attaches
+	// the pixels to a follower user message, preserving which call read
+	// which image.
+	Images []llm.ImagePart `json:"images,omitempty"`
 }
 
 func (t *BatchTool) Check(ctx context.Context, args json.RawMessage) error {
@@ -239,9 +245,13 @@ func runBatchCall(ctx context.Context, index int, call batchCall, tool Tool) Bat
 	}
 	out.OK = true
 	out.Result = result
+	// An image-bearing call keeps its attachments against its own result,
+	// so the runner can say which call read which image.
+	if carrier, ok := result.(ImageCarrier); ok {
+		out.Images = carrier.ToolImages()
+	}
 	return out
 }
-
 func isParallelSafe(tool Tool) bool {
 	if p, ok := tool.(ParallelSafeTool); ok {
 		return p.ParallelSafe()

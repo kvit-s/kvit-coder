@@ -25,6 +25,12 @@ type Message struct {
 	// ToolCallItemIDs maps a tool call ID to the Responses-API item ID the
 	// model gave that call, so a replayed function_call keeps its identity.
 	ToolCallItemIDs map[string]string `json:"-"`
+	// Images are pictures attached to the message. The pixels live on disk
+	// (the session's tmp/ once normalized) and Path points at the copy;
+	// bytes are loaded into Data by HydrateImages before a request is built,
+	// so history stores references, never base64. Images ride on user
+	// messages; other roles ignore them.
+	Images []ImagePart `json:"images,omitempty"`
 }
 
 // ReasoningBlock is one "reasoning" item from a Responses-API answer. The

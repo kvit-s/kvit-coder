@@ -37,6 +37,9 @@ type UI struct {
 	yolo           bool
 	history        []string
 	historyFile    string
+	// pendingImages are image files staged by :image and :paste for the next
+	// turn. They are consumed (and cleared) when a prompt is sent.
+	pendingImages []string
 }
 
 // New creates a new UI instance
@@ -127,7 +130,7 @@ func (u *UI) Run() error {
 		}
 
 		// Run agent with the prompt
-		u.runAgent(input)
+		u.runAgent(input, u.takeImages(input))
 	}
 
 	return nil
@@ -174,6 +177,37 @@ func (u *UI) buildPromptText() string {
 		sessionInfo = fmt.Sprintf(" %s", u.currentSession)
 	}
 	return ui.MakePrompt(fmt.Sprintf("[ui%s]> ", sessionInfo))
+}
+
+// stageImage validates one :image reference and stages it for the next turn.
+func (u *UI) stageImage(ref string) {
+	clean := ExtractImageRefs(ref, nil)
+	if len(clean) == 0 {
+		fmt.Printf("Not an image file (or not found): %s\n", ref)
+		return
+	}
+	u.pendingImages = append(u.pendingImages, clean...)
+	fmt.Printf("Staged for next turn: %s\n", clean[0])
+}
+
+// takeImages consumes staged images and any @path references in this prompt,
+// returning the files to attach to the turn.
+func (u *UI) takeImages(input string) []string {
+	detected := ExtractImageRefs(input, nil)
+	out := make([]string, 0, len(u.pendingImages)+len(detected))
+	out = append(out, u.pendingImages...)
+	seen := map[string]bool{}
+	for _, p := range out {
+		seen[p] = true
+	}
+	for _, p := range detected {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	u.pendingImages = nil
+	return out
 }
 
 // handleCommand handles UI meta-commands
@@ -276,6 +310,35 @@ func (u *UI) handleCommand(input string) bool {
 		}
 		fmt.Println()
 
+	case "image":
+		// :image <path>... stages image files for the next turn.
+		if len(parts) < 2 {
+			if len(u.pendingImages) == 0 {
+				fmt.Println("Usage: :image <path>...  (or @path in any prompt, or :paste)")
+			} else {
+				fmt.Printf("Staged for next turn (%d):\n", len(u.pendingImages))
+				for _, p := range u.pendingImages {
+					fmt.Printf("  %s\n", p)
+				}
+			}
+			fmt.Println()
+			return false
+		}
+		for _, ref := range splitImageFields(strings.Join(parts[1:], " ")) {
+			u.stageImage(ref)
+		}
+		fmt.Println()
+
+	case "paste":
+		// :paste reads an image from the system clipboard for the next turn.
+		path, err := StageClipboardImage()
+		if err != nil {
+			fmt.Printf("No image pasted: %v\n\n", err)
+			return false
+		}
+		u.pendingImages = append(u.pendingImages, path)
+		fmt.Printf("Staged for next turn: %s\n\n", path)
+
 	default:
 		fmt.Printf("Unknown command: %s. Type :help for available commands.\n\n", parts[0])
 	}
@@ -295,14 +358,24 @@ func (u *UI) showHelp() {
 	fmt.Println("  :history         Show current session history")
 	fmt.Println("  :clear           Clear the terminal")
 	fmt.Println("  :config          Show configuration")
+	fmt.Println("  :image <path>..  Stage image files for the next turn")
+	fmt.Println("  :paste            Stage the clipboard image for the next turn")
 	fmt.Println()
 	fmt.Println("Enter any other text to send as a prompt to the agent.")
+	fmt.Println("Mention an image as @path/to/shot.png (or drag-drop it) to attach it.")
 	fmt.Println()
 }
 
 // runAgent spawns kvit-coder with the given prompt
-func (u *UI) runAgent(prompt string) {
+func (u *UI) runAgent(prompt string, images []string) {
 	args := []string{"-p", prompt}
+
+	// Images travel as paths, not pixels: the agent normalizes them into the
+	// session on arrival. argv stays small and the prompt cache undisturbed.
+	for _, img := range images {
+		fmt.Printf("\033[38;5;136m[image: %s]\033[0m\n", img)
+		args = append(args, "-image", img)
+	}
 
 	// Pass config file
 	if u.configPath != "" && u.configPath != "config.yaml" {

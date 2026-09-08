@@ -220,7 +220,11 @@ func (m *Manager) ShowSession(name string) (string, error) {
 			if len(content) > 500 {
 				content = content[:497] + "..."
 			}
-			sb.WriteString(fmt.Sprintf("[user]\n%s\n\n", content))
+			sb.WriteString(fmt.Sprintf("[user]\n%s\n", content))
+			for _, img := range msg.Images {
+				sb.WriteString(fmt.Sprintf("%s\n", img.Summary()))
+			}
+			sb.WriteString("\n")
 		case llm.RoleAssistant:
 			content := msg.Content
 			if len(content) > 500 {

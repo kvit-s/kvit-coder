@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kvit-s/kvit-coder/internal/llm"
 	"gopkg.in/yaml.v3"
 )
 
@@ -433,6 +434,7 @@ type PromptsConfig struct {
 // ToolsConfig holds per-tool configuration with explicit enable/disable
 type ToolsConfig struct {
 	Read        ReadToolConfig        `yaml:"read"`
+	Images      ImagesConfig          `yaml:"images"`
 	Edit        EditToolConfig        `yaml:"edit"`
 	RestoreFile RestoreFileToolConfig `yaml:"restore_file"`
 	Search      SearchToolConfig      `yaml:"search"`
@@ -455,6 +457,15 @@ type ReadToolConfig struct {
 	MaxReadSizeKB   int   `yaml:"max_read_size_kb"`
 	MaxPartialLines int   `yaml:"max_partial_lines"`
 	ShowLineNumbers *bool `yaml:"show_line_numbers"` // nil = default true, for backward compat
+}
+
+// ImagesConfig configures image ingestion: the ReadImage tool and the -image
+// flag share the caps. The tool is opt-in like every other tool; -image works
+// whenever it is passed, because naming a file is its own authorization.
+type ImagesConfig struct {
+	Enabled      bool `yaml:"enabled"`
+	MaxSizeMB    int  `yaml:"max_size_mb"`
+	MaxDimension int  `yaml:"max_dimension"`
 }
 
 // EditToolConfig configures the edit tool
@@ -770,6 +781,14 @@ func Load(path string) (*Config, error) {
 		cfg.Tools.Read.MaxPartialLines = 150
 	}
 
+	// Image caps shared by the ReadImage tool and the -image flag. Zero
+	// selects the llm defaults, so an empty images: section just works.
+	if cfg.Tools.Images.MaxSizeMB == 0 {
+		cfg.Tools.Images.MaxSizeMB = llm.DefaultImageMaxSizeMB
+	}
+	if cfg.Tools.Images.MaxDimension == 0 {
+		cfg.Tools.Images.MaxDimension = llm.DefaultImageMaxDim
+	}
 	// Set default file size limit for edit tool
 	if cfg.Tools.Edit.MaxFileSizeKB == 0 {
 		cfg.Tools.Edit.MaxFileSizeKB = 128

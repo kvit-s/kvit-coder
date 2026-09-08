@@ -2,7 +2,10 @@ package tools
 
 import (
 	"context"
+
 	"encoding/json"
+
+	"github.com/kvit-s/kvit-coder/internal/llm"
 )
 
 // Tool is the interface all agent tools must implement
@@ -69,4 +72,12 @@ type ParallelSafeTool interface {
 // configurable per-call deadline inside Call.
 type SelfTimeoutTool interface {
 	SelfTimeout() bool
+}
+
+// ImageCarrier is an optional interface for a tool result that carries image
+// attachments alongside its JSON summary. The runner attaches them to a
+// follower user message, so tool results stay text while the model still sees
+// the pixels. BatchResult carries them per call the same way.
+type ImageCarrier interface {
+	ToolImages() []llm.ImagePart
 }

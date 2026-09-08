@@ -61,6 +61,12 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		debug(fmt.Sprintf("Enabled tool: %s", readFileTool.Name()))
 	}
 
+	if cfg.Tools.Images.Enabled {
+		readImageTool := NewReadImageTool(cfg, toolCtx)
+		registry.Enable(readImageTool)
+		debug(fmt.Sprintf("Enabled tool: %s", readImageTool.Name()))
+	}
+
 	if cfg.Tools.Edit.Enabled {
 		// Select edit tool based on configured mode
 		var editTool Tool
