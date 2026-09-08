@@ -161,7 +161,6 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 			fmt.Fprintln(os.Stderr)
 			fmt.Fprintln(os.Stderr, strings.Repeat("─", 50))
 			fmt.Fprintf(os.Stderr, "Session: %s\n", sessionName)
-			fmt.Fprintf(os.Stderr, "Continue with: kvit-coder -p \"your message\" -s %s\n", sessionName)
 		}
 	}
 }
