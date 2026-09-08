@@ -225,12 +225,13 @@ func TestWarnErrorSingleLineIndented(t *testing.T) {
 
 // TestDividerCarriesTiming: the divider separates step progress from the
 // final report and embeds the turn timing, replacing the standalone
-// "[39s: ...]" line that used to follow the report.
+// "[39s: ...]" line that used to follow the report. A blank line leads so
+// it never crowds the last step line.
 func TestDividerCarriesTiming(t *testing.T) {
 	w, buf := newProgressWriter(false)
 	w.Divider("[39s: 39s llm + 0s tools x22]")
-	if out := buf.String(); out != "---------  [39s: 39s llm + 0s tools x22] --------\n" {
-		t.Errorf("divider = %q, want dashes around the timing", out)
+	if out := buf.String(); out != "\n---------  [39s: 39s llm + 0s tools x22] --------\n" {
+		t.Errorf("divider = %q, want blank line then dashes around the timing", out)
 	}
 }
 

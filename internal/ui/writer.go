@@ -522,6 +522,7 @@ func (w *Writer) Assistant(msg string) {
 // Divider separates the step progress from the final report. It carries the
 // turn timing that used to print as a standalone "[39s: 39s llm + ...]" line
 // after the report, so nothing needs to print after the report itself.
+// A blank line leads so the divider never crowds the last step line.
 // It goes to the progress stream (stderr when headless), keeping stdout clean
 // for the final answer. Quiet and JSON modes print nothing.
 func (w *Writer) Divider(statsMsg string) {
@@ -529,6 +530,7 @@ func (w *Writer) Divider(statsMsg string) {
 		return
 	}
 	w.clearProgressLine()
+	fmt.Fprintln(w.out())
 	plain := "---------  " + statsMsg + " --------"
 	fmt.Fprintln(w.out(), w.paint(ansiGray, plain))
 }
