@@ -589,6 +589,71 @@ func TestKillEphemeralStopsOnlyEphemeral(t *testing.T) {
 	}
 }
 
+// TestEventsGoQuietAfterEnding: once the ending is reported, no tick, output
+// notice, or pattern match fires again — a dead process with a tick interval
+// must not keep saying "still running" forever.
+func TestEventsGoQuietAfterEnding(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := New(dir)
+	id, err := r.StartWithOptions("echo hello; exit 0", t.TempDir(), "short job", "exit", "", 1, false)
+	if err != nil {
+		t.Fatalf("StartWithOptions: %v", err)
+	}
+
+	waitFor(t, "the process to finish", func() bool {
+		info, err := r.Status(id)
+		return err == nil && !info.Running()
+	})
+
+	events := r.Events()
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want the 1 ending: %v", len(events), events)
+	}
+
+	// Let the tick interval elapse past the ending: nothing more may fire.
+	time.Sleep(1100 * time.Millisecond)
+	if again := r.Events(); len(again) != 0 {
+		t.Errorf("a finished process kept reporting: %v", again)
+	}
+}
+
+// TestKillPersistsDiscoveredExit: killing a process that already exited on
+// its own persists the discovered transition instead of dropping it, so Ended
+// is stamped when Kill found it rather than drifting to the next Status.
+func TestKillPersistsDiscoveredExit(t *testing.T) {
+	dir := t.TempDir()
+	r, _ := New(dir)
+	id, err := r.Start("exit 3", t.TempDir(), "")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	// Wait for the wrapper's exit file without touching Status, so the record
+	// still says running when Kill looks at it.
+	waitFor(t, "the exit file to land", func() bool {
+		_, err := os.Stat(r.exitPath(id))
+		return err == nil
+	})
+
+	if err := r.Kill(id); err != nil {
+		t.Fatalf("Kill: %v", err)
+	}
+
+	persisted, err := r.load(id)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if persisted.Running() {
+		t.Fatalf("record is still %s after Kill found the exit", persisted.State)
+	}
+	if persisted.Ended.IsZero() {
+		t.Error("Kill did not stamp Ended for the exit it discovered")
+	}
+	if persisted.State != StateExited || persisted.ExitCode != 3 {
+		t.Errorf("record is %s/%d, want exited/3", persisted.State, persisted.ExitCode)
+	}
+}
+
 // TestRunningCountsSplitsLifetimes: the header needs blue and red separately.
 func TestRunningCountsSplitsLifetimes(t *testing.T) {
 	dir := t.TempDir()

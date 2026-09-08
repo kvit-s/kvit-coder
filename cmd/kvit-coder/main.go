@@ -47,11 +47,15 @@ func main() {
 
 	// Parse flags
 	configPath := flag.String("config", "config.yaml", "path to config file")
-	model := flag.String("model", "", "override model name")
+	model := flag.String("model", "", "select model: index, id, name or wire id from models: (or a wire id)")
 	baseURL := flag.String("base-url", "", "override LLM base URL")
+	apiBackend := flag.String("api-backend", "", "override LLM wire protocol (chat_completions or responses)")
+	effort := &stringFlag{}
+	flag.Var(effort, "effort", "reasoning effort for the selected model (empty clears it)")
 	logFile := flag.String("log", "kvit-coder.log", "log file path (empty to disable)")
 	execPrompt := flag.String("p", "", "exec mode: run with this prompt and exit after completion")
 	quietPrompt := flag.String("pq", "", "quiet exec mode: run with this prompt and only print final LLM response")
+	wakeOnly := flag.Bool("wake", false, "inbox-only turn: skip the user message and process pending inbox/proc events")
 	jsonOutput := flag.Bool("json", false, "output structured JSON messages to stderr")
 	showVersion := flag.Bool("version", false, "show version information and exit")
 
@@ -185,6 +189,12 @@ func main() {
 		execMode = true
 		promptText = *execPrompt
 		quietMode = false
+	} else if *wakeOnly {
+		// Inbox-only turn, fired by the UI when the inbox waited while no
+		// turn ran: no user message, the drain is the prompt.
+		execMode = true
+		promptText = ""
+		quietMode = false
 	}
 
 	// Initialize UI writer (verbose level set after config load)
@@ -259,13 +269,11 @@ func main() {
 		return
 	}
 
-	// Apply flag overrides
-	if *model != "" {
-		cfg.LLM.Model = *model
-	}
-	if *baseURL != "" {
-		cfg.LLM.BaseURL = *baseURL
-	}
+	// Apply flag overrides: the model catalog first (so --model resolves the
+	// full entry, not just the name), then the explicit wire fields, which
+	// win over the entry so a skewed UI/agent config pair still sends the
+	// right endpoint.
+	resolveModelSelection(cfg, *model, effort, *apiBackend, *baseURL)
 	if *agentFile != "" {
 		cfg.Agent.AgentFile = *agentFile
 	}
@@ -349,9 +357,10 @@ func main() {
 	// interruptCtx fires only on a real SIGINT/SIGTERM, never on normal turn
 	// end: runCtx is cancelled by the deferred cancelRun above on every exit,
 	// so a background killer watching runCtx would SIGTERM even the persistent
-	// processes on the way out, racing the process's own exit.
+	// processes on the way out, racing the process's own exit. Do NOT defer
+	// signalInterrupt here: cancelling interruptCtx on normal exit would fire
+	// the killer below on every turn. The context is dropped at process exit.
 	interruptCtx, signalInterrupt := context.WithCancel(context.Background())
-	defer signalInterrupt()
 	installInterruptHandler(cancelRun, signalInterrupt)
 
 	// One agent at a time per working directory, when workspace.lock asks for
@@ -468,7 +477,11 @@ func main() {
 		log.Fatalf("Failed to open the process registry: %v", err)
 	}
 	if cfg.Tools.Procs.Enabled && cfg.Tools.Procs.ShouldKillOnExit() {
-		killBackgroundOnInterrupt(interruptCtx, procRegistry, sess, writer)
+		// Deferred, so it runs synchronously on the way out — after RunExec
+		// returns — and the save inside KillAll lands before the process
+		// exits. A fire-and-forget goroutine loses that race: it SIGTERMs and
+		// the turn exits out from under the save, leaving gone/-1 behind.
+		defer killBackgroundOnInterrupt(interruptCtx, procRegistry, sess, writer)()
 	}
 
 	// The inbox is where anything arriving mid-turn waits. The loop drains it
@@ -861,24 +874,30 @@ func installInterruptHandler(cancelRun, signalInterrupt context.CancelFunc) {
 	}()
 }
 
-// killBackgroundOnInterrupt stops everything this session started when the run
-// is interrupted, and records that it did. It watches the interrupt context,
-// not the run context, so a normal turn end (which cancels the run context on
-// its way out) leaves persistent processes alone for the next turn. An
-// interrupt that silently leaves a dev server holding a port is a surprise you
-// find out about much later.
-func killBackgroundOnInterrupt(ctx context.Context, registry *procs.Registry, sess *session.Session, writer *ui.Writer) {
-	go func() {
-		<-ctx.Done()
+// killBackgroundOnInterrupt returns the cleanup to defer: on a real interrupt
+// it stops everything this session started and records that it did,
+// synchronously, so the save lands before the process exits. On a normal turn
+// end the interrupt context is never done and the cleanup is a no-op, leaving
+// persistent processes alone for the next turn. An interrupt that silently
+// leaves a dev server holding a port is a surprise you find out about much
+// later.
+func killBackgroundOnInterrupt(ctx context.Context, registry *procs.Registry, sess *session.Session, writer *ui.Writer) func() {
+	return func() {
+		select {
+		case <-ctx.Done():
+		default:
+			return
+		}
 		killed := registry.KillAll()
 		if len(killed) == 0 {
 			return
 		}
+
 		msg := fmt.Sprintf("stopped %d background process(es) on interrupt: %s",
 			len(killed), strings.Join(killed, ", "))
 		writer.Info(msg)
 		_ = sess.Notice(msg)
-	}()
+	}
 }
 
 // resolveBackgroundSessions expands a --list-background / --kill-background

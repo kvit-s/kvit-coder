@@ -16,6 +16,7 @@ repository root's `README.md`; these are the documents behind its current shape.
 | [`tools-stats.md`](tools-stats.md) | Which tools the model actually calls, measured from the saved sessions, with the script that regenerates the numbers. A snapshot to decide from later, not a recommendation. |
 | [`agents-ram.md`](agents-ram.md) | Measured memory cost of one session of each coding agent on this machine, September 2026. Reference for how many can run at once, not about kvit-coder's design. |
 | [`images.md`](images.md) | Reading an image from a file and pasting one in the composer, built September 2026: message attachments, both wire protocols, session storage, then the TUI producers. |
+| [`model-selection.md`](model-selection.md) | Multiple models in `config.yaml` with `:mN` / `:eN` switching in kvit-coder-ui and `--model` / `--effort` headless, built September 2026. |
 
 ## Archive
 

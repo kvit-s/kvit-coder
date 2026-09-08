@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -9,6 +10,7 @@ import (
 	"github.com/rivo/uniseg"
 	"os"
 	"strings"
+	"time"
 	"unicode"
 )
 
@@ -41,6 +43,41 @@ type InputModel struct {
 	// Success needs no notice: the new token in the text plus the image
 	// list below already say what happened.
 	pasteNotice string
+	// completionBase is the directory relative path completion resolves
+	// against (the workspace root, set by the driver; empty falls back
+	// to the working directory).
+	completionBase string
+	// compCandidates is the active Tab-completion list: full replacements
+	// for the path part of the current token, directories with a
+	// trailing slash, sorted dirs-first. Nil when no completion is
+	// showing.
+	compCandidates []string
+	// compTotal is the uncapped match count, for the "…and N more" line.
+	compTotal int
+	// compIndex selects compCandidates[compIndex] once Tab has cycled
+	// one in; -1 while the list only shows.
+	compIndex int
+	// compRow and compStart locate the token the list was built for:
+	// hard-line index plus rune offset of the token start.
+	compRow, compStart int
+	// compToken is the full token text after the last Tab action. A
+	// later Tab with different text means the user typed, so completion
+	// restarts from the filesystem instead of cycling.
+	compToken string
+	// compNotice is a one-line dimmed note under the input ("no match").
+	compNotice string
+	// wakePoll reports how many inbox files are waiting for the next turn.
+	// It is set by the driver (kvit-coder-ui), which polls the session's
+	// proc registry into the inbox directory and counts what is there. Nil
+	// disables wake: the composer never fires on its own.
+	wakePoll func() (pending int, summary string)
+	// wakePending is the last polled count, shown as a badge while the user
+	// types so nothing arrives silently.
+	wakePending int
+	// wakeFired reports that this composer submitted itself: the inbox was
+	// non-empty while the text was still empty, so the driver should run an
+	// inbox-only turn rather than treat the empty submit as a no-op.
+	wakeFired bool
 }
 
 // SetImagePasteHandler installs the clipboard-image stager behind the paste
@@ -55,6 +92,24 @@ func (m *InputModel) SetImagePasteHandler(fn func() (string, error)) {
 func (m *InputModel) SetStagedImages(paths []string) {
 	m.pastedImages = append([]string(nil), paths...)
 	m.imageBase = len(m.pastedImages)
+}
+
+// SetCompletionBaseDir tells Tab completion which directory relative
+// paths resolve against (the workspace root). Empty falls back to the
+// working directory at completion time.
+func (m *InputModel) SetCompletionBaseDir(dir string) {
+	m.completionBase = dir
+}
+
+// clearCompletion drops the Tab-completion list and notice. Every key
+// except Tab itself calls it, so a list never outlives the token it was
+// built for.
+func (m *InputModel) clearCompletion() {
+	m.compCandidates = nil
+	m.compTotal = 0
+	m.compIndex = -1
+	m.compToken = ""
+	m.compNotice = ""
 }
 
 // PastedImages returns the images staged by the paste key plus any seeded
@@ -117,6 +172,213 @@ func (m *InputModel) insertImageToken(n int) {
 	}
 	m.textarea.InsertString(prefix + token + suffix)
 	m.adjustHeight()
+}
+
+// cursorHardCol returns the cursor's rune offset within its hard line.
+// LineInfo reports the position inside the soft-wrapped grid, so the
+// absolute column is the segment start plus the in-segment offset.
+func (m *InputModel) cursorHardCol() int {
+	li := m.textarea.LineInfo()
+	col := li.StartColumn + li.ColumnOffset
+	if col < 0 {
+		return 0
+	}
+	return col
+}
+
+// hardLines splits the composer text into hard lines.
+func (m *InputModel) hardLines() []string {
+	if v := m.textarea.Value(); v != "" {
+		return strings.Split(v, "\n")
+	}
+	return []string{""}
+}
+
+// replaceToken swaps the token at [tokenStart, cursorCol) on the given
+// hard line for newToken, leaving every other line and the text after
+// the cursor untouched, and parks the cursor right after the insertion.
+func (m *InputModel) replaceToken(row, tokenStart, cursorCol int, newToken string) {
+	lines := m.hardLines()
+	if row < 0 || row >= len(lines) {
+		return
+	}
+	runes := []rune(lines[row])
+	if tokenStart < 0 {
+		tokenStart = 0
+	}
+	if tokenStart > len(runes) {
+		tokenStart = len(runes)
+	}
+	if cursorCol < tokenStart {
+		cursorCol = tokenStart
+	}
+	if cursorCol > len(runes) {
+		cursorCol = len(runes)
+	}
+	combined := make([]rune, 0, len(runes)+len([]rune(newToken))-(cursorCol-tokenStart))
+	combined = append(combined, runes[:tokenStart]...)
+	combined = append(combined, []rune(newToken)...)
+	combined = append(combined, runes[cursorCol:]...)
+	lines[row] = string(combined)
+	m.textarea.SetValue(strings.Join(lines, "\n"))
+	// SetValue leaves the cursor at the end of the text, so walk back up
+	// to the edited row (bounded, like history navigation) and set the
+	// column exactly: SetCursor clamps, so drift on the way is harmless.
+	target := tokenStart + len([]rune(newToken))
+	m.textarea.CursorStart()
+	for i := 0; i < 10000 && m.textarea.Line() > row; i++ {
+		m.textarea.CursorUp()
+	}
+	m.textarea.SetCursor(target)
+}
+
+// ensureCursorVisible keeps the tracked viewport on the cursor's visual
+// row after an edit that bypasses textarea.Update (Tab completion,
+// image paste).
+func (m *InputModel) ensureCursorVisible() {
+	currentVisual := m.cursorSoftRow()
+	visibleHeight := m.textarea.Height()
+	totalVisual := m.totalSoftLines()
+	if currentVisual < m.viewportStart {
+		m.viewportStart = currentVisual
+	} else if currentVisual >= m.viewportStart+visibleHeight {
+		m.viewportStart = currentVisual - visibleHeight + 1
+	}
+	if m.viewportStart < 0 {
+		m.viewportStart = 0
+	}
+	maxViewportStart := totalVisual - visibleHeight
+	if maxViewportStart < 0 {
+		maxViewportStart = 0
+	}
+	if m.viewportStart > maxViewportStart {
+		m.viewportStart = maxViewportStart
+	}
+}
+
+// handleTab completes the path in the token left of the cursor. One
+// match replaces it in place; several extend the common prefix and list
+// the candidates under the input. Tab again with the text untouched
+// cycles forward through the list (Shift+Tab backwards); any other key
+// between presses restarts from the filesystem. On an empty token Tab
+// indents instead (it used to do nothing: the key arrives without runes,
+// so the textarea inserted nothing).
+func (m *InputModel) handleTab(forward bool) {
+	lines := m.hardLines()
+	row := m.textarea.Line()
+	if row < 0 {
+		row = 0
+	}
+	if row >= len(lines) {
+		row = len(lines) - 1
+	}
+	lineRunes := []rune(lines[row])
+	col := m.cursorHardCol()
+	if col > len(lineRunes) {
+		col = len(lineRunes)
+	}
+	tokenStart, inQuotes := tokenStartForLine(lineRunes, col)
+	token := string(lineRunes[tokenStart:col])
+
+	if token == "" && m.compCandidates != nil && row == m.compRow && m.compToken != "" &&
+		strings.HasSuffix(string(lineRunes[:col]), m.compToken) {
+		// Sitting right after a quoted insertion ("my dir/"): the
+		// closing quote hides the token, so re-anchor onto it and
+		// carry on cycling instead of indenting.
+		token = m.compToken
+		tokenStart = col - len([]rune(m.compToken))
+	}
+
+	// A live list for this same token position with the text untouched
+	// cycles instead of re-reading the directory.
+	if m.compCandidates != nil && row == m.compRow && tokenStart == m.compStart && token == m.compToken {
+		m.cycleCompletion(forward, row, tokenStart, col, token, inQuotes)
+		return
+	}
+
+	if token == "" {
+		// No path under the cursor: indent for code in the prompt (the
+		// textarea sanitizer turns the tab into spaces).
+		m.clearCompletion()
+		m.textarea.InsertString("\t")
+		m.historyIdx = -1
+		m.adjustHeight()
+		m.ensureCursorVisible()
+		return
+	}
+
+	m.completeFresh(row, tokenStart, col, token, inQuotes)
+}
+
+// completeFresh lists the filesystem for a new token and either replaces
+// it (a single match, or the common prefix of several) or just shows the
+// list when there is nothing to extend.
+func (m *InputModel) completeFresh(row, tokenStart, col int, token string, inQuotes bool) {
+	lead, at, core, trailing := splitCompletionToken(token)
+	candidates, total := listPathCompletions(m.completionBase, core)
+	switch {
+	case len(candidates) == 0:
+		m.compCandidates = nil
+		m.compTotal = 0
+		m.compIndex = -1
+		m.compToken = ""
+		m.compNotice = "no match"
+	case len(candidates) == 1:
+		m.clearCompletion()
+		m.replaceToken(row, tokenStart, col, buildCompletionToken(lead, at, candidates[0], trailing, inQuotes))
+		m.historyIdx = -1
+		m.adjustHeight()
+		m.ensureCursorVisible()
+	default:
+		m.historyIdx = -1
+		if lcp := commonPathPrefix(candidates); len(lcp) > len(core) {
+			newToken := buildCompletionToken(lead, at, lcp, trailing, inQuotes)
+			m.replaceToken(row, tokenStart, col, newToken)
+			m.compToken = newToken
+		} else {
+			m.compToken = token
+		}
+		m.compCandidates = candidates
+		m.compTotal = total
+		m.compIndex = -1
+		m.compRow = row
+		m.compStart = tokenStart
+		m.compNotice = ""
+		m.adjustHeight()
+		m.ensureCursorVisible()
+	}
+}
+
+// cycleCompletion swaps the current token for the next (or previous)
+// candidate in the live list, wrapping around.
+func (m *InputModel) cycleCompletion(forward bool, row, tokenStart, col int, token string, inQuotes bool) {
+	n := len(m.compCandidates)
+	if n == 0 {
+		m.clearCompletion()
+		return
+	}
+	idx := m.compIndex
+	if forward {
+		if idx < 0 {
+			idx = 0
+		} else {
+			idx = (idx + 1) % n
+		}
+	} else {
+		if idx < 0 {
+			idx = n - 1
+		} else {
+			idx = (idx - 1 + n) % n
+		}
+	}
+	lead, at, _, trailing := splitCompletionToken(token)
+	newToken := buildCompletionToken(lead, at, m.compCandidates[idx], trailing, inQuotes)
+	m.replaceToken(row, tokenStart, col, newToken)
+	m.compIndex = idx
+	m.compToken = newToken
+	m.historyIdx = -1
+	m.adjustHeight()
+	m.ensureCursorVisible()
 }
 
 // adjustHeight adjusts the textarea height to fit content, up to maxHeight.
@@ -266,7 +528,7 @@ func repeatSpaces(n int) []rune {
 func NewInputModel(prompt string, history []string) InputModel {
 	ta := textarea.New()
 	ta.Prompt = "" // We'll show the prompt separately
-	ta.Placeholder = "(Enter to submit, Ctrl+J newline, Alt+V paste image)"
+	ta.Placeholder = "(Enter to submit, Ctrl+J newline, Tab complete path, Alt+V paste image)"
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0 // No limit
 
@@ -299,9 +561,36 @@ func NewInputModel(prompt string, history []string) InputModel {
 	}
 }
 
+// wakeTickInterval is how often an idle composer re-checks the inbox while
+// it is open. One second keeps a wake within a tick of the arrival without
+// any file watcher.
+const wakeTickInterval = time.Second
+
+// wakeTickMsg is the BubbleTea tick that re-checks the inbox.
+type wakeTickMsg struct{}
+
+// wakeTickCmd schedules the next inbox re-check.
+func wakeTickCmd() tea.Cmd {
+	return tea.Tick(wakeTickInterval, func(time.Time) tea.Msg { return wakeTickMsg{} })
+}
+
+// SetWakePoll installs the inbox waiter behind the composer. A nil poll
+// disables wake.
+func (m *InputModel) SetWakePoll(fn func() (int, string)) {
+	m.wakePoll = fn
+}
+
+// WakeFired reports whether the composer submitted itself on inbox activity.
+func (m InputModel) WakeFired() bool {
+	return m.wakeFired
+}
+
 // Init initializes the input model
 func (m InputModel) Init() tea.Cmd {
-	return textarea.Blink
+	if m.wakePoll == nil {
+		return textarea.Blink
+	}
+	return tea.Batch(textarea.Blink, wakeTickCmd())
 }
 
 // Update handles input events
@@ -309,6 +598,25 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
+	case wakeTickMsg:
+		// No waiter installed (a test driving the model, say): stay quiet.
+		if m.wakePoll == nil {
+			return m, nil
+		}
+		pending, _ := m.wakePoll()
+		m.wakePending = pending
+		// Fire only while the text is still empty: the user is idling at
+		// the prompt, not composing. Anything typed means they will send
+		// soon, and the turn they send picks the inbox up at its first
+		// iteration — so show a badge instead and keep waiting.
+		if pending > 0 && strings.TrimSpace(m.textarea.Value()) == "" {
+			m.value = ""
+			m.submitted = true
+			m.wakeFired = true
+			m.quitting = true
+			return m, tea.Quit
+		}
+		return m, wakeTickCmd()
 	case tea.WindowSizeMsg:
 		// Adjust width based on terminal size
 		m.width = msg.Width - 10 // Leave some margin
@@ -327,6 +635,12 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.adjustHeight()
 
 	case tea.KeyMsg:
+		// A completion list belongs to the token it was built for. Tab
+		// keeps it alive (cycling); anything else typed, moved or
+		// submitted discards it before the key is handled.
+		if key := msg.String(); key != "tab" && key != "shift+tab" {
+			m.clearCompletion()
+		}
 		switch msg.String() {
 		// Submit on Enter
 		case "enter":
@@ -426,6 +740,15 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// No handler: let the textarea see the key.
 
+		// Complete the path left of the cursor against the workspace.
+		// Shift+Tab cycles the same list backwards.
+		case "tab":
+			m.handleTab(true)
+			return m, nil
+
+		case "shift+tab":
+			m.handleTab(false)
+			return m, nil
 		case "esc":
 			// ESC just clears the current input, doesn't exit. Images pasted
 			// in this composer go with it; images staged before it opened
@@ -492,31 +815,7 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Update viewport tracking to keep cursor visible.
 	// This mimics the textarea's internal viewport logic, but in visual
 	// (soft-wrapped) rows so long single lines track correctly.
-	currentVisual := m.cursorSoftRow()
-	visibleHeight := m.textarea.Height()
-	totalVisual := m.totalSoftLines()
-
-	// Ensure viewport keeps cursor visible
-	if currentVisual < m.viewportStart {
-		// Cursor scrolled above viewport, scroll up
-		m.viewportStart = currentVisual
-	} else if currentVisual >= m.viewportStart+visibleHeight {
-		// Cursor scrolled below viewport, scroll down
-		m.viewportStart = currentVisual - visibleHeight + 1
-	}
-
-	// Clamp viewport to valid range
-	if m.viewportStart < 0 {
-		m.viewportStart = 0
-	}
-
-	maxViewportStart := totalVisual - visibleHeight
-	if maxViewportStart < 0 {
-		maxViewportStart = 0
-	}
-	if m.viewportStart > maxViewportStart {
-		m.viewportStart = maxViewportStart
-	}
+	m.ensureCursorVisible()
 
 	return m, cmd
 }
@@ -556,11 +855,53 @@ func (m InputModel) View() string {
 	if m.pasteNotice != "" {
 		out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(m.pasteNotice)
 	}
+	// Pending inbox while composing: say so, so nothing arrives silently.
+	// The messages ride along when this is submitted; clearing the text
+	// lets the next tick fire an inbox-only turn instead.
+	if m.wakePending > 0 {
+		out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(
+			"[inbox: "+itoa(m.wakePending)+" pending — submit to include]")
+	}
+
+	out += m.completionView()
 	// The staged-image list maps the [imageN] labels in the text above to
 	// their files, so "compare [image1] with [image2]" is unambiguous.
 	for i, p := range m.pastedImages {
 		out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(
 			fmt.Sprintf("[%s: %s]", "image"+itoa(i+1), p))
+	}
+	return out
+}
+
+// completionView renders the Tab-completion list (or the "no match"
+// notice) under the input. The cycled-in candidate gets a marker and a
+// brighter color; the rest stay dim. The list is capped at
+// maxCompletionDisplay rows with an "…and N more" tail, so a Tab on a
+// bare prefix cannot flood the composer.
+func (m InputModel) completionView() string {
+	out := ""
+	if m.compNotice != "" {
+		out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(m.compNotice)
+	}
+	if len(m.compCandidates) == 0 {
+		return out
+	}
+	shown := m.compCandidates
+	remaining := m.compTotal - len(shown)
+	if len(shown) > maxCompletionDisplay {
+		remaining += len(shown) - maxCompletionDisplay
+		shown = shown[:maxCompletionDisplay]
+	}
+	for i, c := range shown {
+		if i == m.compIndex {
+			out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("136")).Render("> "+c)
+		} else {
+			out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("  "+c)
+		}
+	}
+	if remaining > 0 {
+		out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(
+			"  …and "+itoa(remaining)+" more (keep typing to narrow)")
 	}
 	return out
 }

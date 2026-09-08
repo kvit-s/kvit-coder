@@ -45,6 +45,16 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 				messages = append(messages, msg)
 			}
 		}
+		// A mid-session model switch must not replay one model's opaque
+		// Responses state to another: encrypted thinking blocks and item ids
+		// belong to the model that produced them, and at best waste tokens,
+		// at worst fail the request. The readable text stays.
+		// (File-loaded history currently carries neither — both fields are
+		// json:"-" — so this is a guard rather than a live path.)
+		if lastModel, lerr := sess.LastSettingsModel(); lerr == nil && lastModel != "" &&
+			config.WireID(lastModel) != cfg.LLM.Model {
+			stripReplayState(messages)
+		}
 		isNewSession = len(messages) == 1
 		// The UI already announced the session and echoed the prompt, so a
 		// child it spawned stays quiet about both rather than printing them
@@ -60,8 +70,10 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 	}
 
 	// Display the prompt (unless in quiet mode, or spawned by the UI which
-	// already echoed what was typed).
-	if !quietMode && !session.FromUI() {
+	// already echoed what was typed). A wake turn carries no prompt: the
+	// inbox is what it is for.
+	wake := isWakeTurn(promptText)
+	if !wake && !quietMode && !session.FromUI() {
 		colorStart := "\033[97;100m"
 		colorEnd := "\033[0m"
 		inputLines := strings.Split(promptText, "\n")
@@ -71,29 +83,45 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 		fmt.Fprintln(os.Stderr)
 	}
 
-	// Add user message
-	userMsg := llm.Message{
-		Role:    llm.RoleUser,
-		Content: promptWithProjectInstructions(promptText, projectInstructions),
+	// Add user message — unless this is a wake turn, where the pending
+	// inbox is the prompt and an empty message would only pollute history.
+	// Staged images still ride along: a wake fired with an empty composer
+	// but pre-staged :image attachments must not drop them.
+	var userMsg llm.Message
+	haveUserMsg := false
+	if !wake || len(imagePaths) > 0 {
+		userMsg = llm.Message{
+			Role:    llm.RoleUser,
+			Content: promptWithProjectInstructions(promptText, projectInstructions),
+		}
+		userMsg.Images = preparePromptImages(imagePaths, cfg, sess, writer, quietMode)
+		messages = append(messages, userMsg)
+		haveUserMsg = true
 	}
-	userMsg.Images = preparePromptImages(imagePaths, cfg, sess, writer, quietMode)
-	messages = append(messages, userMsg)
 
 	if sess != nil {
 		meta := sess.Meta()
 		meta.Workspace = cfg.Workspace.Root
-		meta.Model = cfg.LLM.Model
-		if meta.FirstPrompt == "" {
+		// The resolved selection, effort included, so reopening the session
+		// lands on the model that produced it and the transcript says what
+		// did.
+		meta.Model = cfg.ModelDisplay()
+		if meta.FirstPrompt == "" && haveUserMsg {
 			meta.FirstPrompt = promptText
 		}
+
 		if err := sess.SaveMeta(); err != nil {
 			writer.Debug(fmt.Sprintf("Failed to write session metadata: %v", err))
 		}
-		if err := sess.Settings(cfg.LLM.Model, cfg.LLM.MergeThinking, runner.ToolNames()); err != nil {
+
+		if err := sess.Settings(cfg.ModelDisplay(), cfg.LLM.MergeThinking, runner.ToolNames()); err != nil {
 			writer.Debug(fmt.Sprintf("Failed to record session settings: %v", err))
 		}
-		if err := sess.AppendMessages(stripProjectInstructions([]llm.Message{userMsg}, projectInstructions)); err != nil {
-			writer.Error(fmt.Sprintf("cannot record prompt: %v", err))
+
+		if haveUserMsg {
+			if err := sess.AppendMessages(stripProjectInstructions([]llm.Message{userMsg}, projectInstructions)); err != nil {
+				writer.Error(fmt.Sprintf("cannot record prompt: %v", err))
+			}
 		}
 	}
 
@@ -182,6 +210,14 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 	}
 }
 
+// isWakeTurn reports whether this turn carries no user prompt: the pending
+// inbox is the prompt. The UI fires such turns when the inbox waits while no
+// turn runs (or `kvit-coder --wake` by hand); RunExec then skips the user
+// message so history holds no empty prompt.
+func isWakeTurn(promptText string) bool {
+	return strings.TrimSpace(promptText) == ""
+}
+
 // endTurnProcs stops the turn's ephemeral processes and returns what was
 // stopped plus the persistent processes still running. Ephemeral die here so
 // abandoned sessions leak nothing; persistent survive for the next turn.
@@ -231,6 +267,16 @@ func reportPersistent(writer *ui.Writer, sess *session.Session, persistent []pro
 	}
 	fmt.Fprintf(os.Stderr, "Background (persistent, red): %s still running.\n", strings.Join(names, ", "))
 	fmt.Fprintf(os.Stderr, "Stop with Shell.kill, or: kvit-coder --kill-background %s  (all sessions: --kill-background all)\n", sessionName)
+}
+
+// stripReplayState drops the model-specific replay state from loaded
+// messages: encrypted thinking blocks and Responses item ids. The readable
+// text (Content, merged thinking) stays.
+func stripReplayState(messages []llm.Message) {
+	for i := range messages {
+		messages[i].ReasoningBlocks = nil
+		messages[i].ToolCallItemIDs = nil
+	}
 }
 
 // backgroundSuffix reports the running background processes as blue " ★N"

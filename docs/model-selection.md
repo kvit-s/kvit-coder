@@ -1,6 +1,12 @@
 # Model selection: multiple models in config + `:mN` / `:eN` in the UI
 
-Proposal, not yet built. Goal, in the requester's words:
+Built September 2026, as described below, with three small deviations:
+`config.yaml` marks `xhigh` (not `high`) the spark-go default so the
+default turn is unchanged; `:e ""` is not a UI command — clearing the
+effort happens by switching to a model with no menu, or headless with
+`--effort ""`; and `DefaultEffort` returns `""` for a model with no menu
+before consulting `llm.reasoning_effort`, so the clear-on-switch rule holds
+even when `llm.reasoning_effort` is set. Goal, in the requester's words:
 
 > specify multiple models in `config.yaml`, use `:h` to see the list of
 > available models, select them with `:m1`, `:m2`, etc., and select effort

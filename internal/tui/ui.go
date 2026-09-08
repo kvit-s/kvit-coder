@@ -41,6 +41,16 @@ type UI struct {
 	// pendingImages are image files staged by :image and :paste for the next
 	// turn. They are consumed (and cleared) when a prompt is sent.
 	pendingImages []string
+	// models is the snapshot of the models: catalog this UI selects from
+	// (one synthesized entry for a legacy single-model config). The
+	// selection lives here, in the long-lived process, and travels to the
+	// short-lived agent per turn as argv in runAgent.
+	models []config.ModelEntry
+	// currentModel is the index into models; currentEffort overrides that
+	// entry's default ("" = entry default, which is "" for a model with no
+	// menu — the krok "cleared on non-reasoning" rule).
+	currentModel  int
+	currentEffort string
 }
 
 // New creates a new UI instance
@@ -60,6 +70,14 @@ func New(opts Options) *UI {
 		yolo:           opts.Yolo,
 		history:        history,
 		historyFile:    historyFile,
+	}
+	// Snapshot the catalog and start on the default row (the llm.model row,
+	// else the first). A config edit mid-session needs a UI restart, same
+	// as today.
+	u.models = opts.Config.ModelList()
+	u.currentModel = opts.Config.DefaultModelIndex()
+	if u.currentModel < 0 || u.currentModel >= len(u.models) {
+		u.currentModel = 0
 	}
 	u.pinRunID()
 	return u
@@ -92,7 +110,7 @@ func (u *UI) Run() error {
 
 	// Show startup info
 	fmt.Println("\033[38;5;136mAgent REPL UI v0.1\033[0m")
-	fmt.Printf("\033[38;5;136mModel: %s @ %s\033[0m\n", u.cfg.ModelDisplay(), u.cfg.LLM.BaseURL)
+	fmt.Printf("\033[38;5;136mModel: %s @ %s\033[0m\n", u.activeDisplay(), u.activeBaseURL())
 	if u.currentSession != "" {
 		if u.sessionMgr.SessionExists(u.currentSession) {
 			fmt.Printf("\033[38;5;136mSession: %s (continuing)\033[0m\n", u.currentSession)
@@ -104,13 +122,29 @@ func (u *UI) Run() error {
 	fmt.Println()
 
 	for {
-		input, composerImages, shouldExit, err := u.readInput()
+		// Turn boundary, agent off: materialize due proc events into the
+		// inbox, then fire an inbox-only turn when anything waits — the
+		// startup case and the post-turn case alike. The composer below
+		// covers arrivals while it is open.
+		if n := u.checkWake(); n > 0 {
+			fmt.Printf("\033[38;5;136m[inbox: %d pending — processing]\033[0m\n", n)
+			u.runAgent("", nil)
+			continue
+		}
+
+		input, composerImages, woke, shouldExit, err := u.readInput()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\033[31m[error] Input error: %v\033[0m\n", err)
 			break
 		}
 		if shouldExit {
 			break
+		}
+
+		// A wake submit carries no text: the inbox is the prompt.
+		if woke {
+			u.runAgent("", composerImages)
+			continue
 		}
 
 		if input == "" && len(composerImages) == 0 {
@@ -145,15 +179,25 @@ func (u *UI) Run() error {
 // returns the staged images in label order: the ones staged before the
 // composer opened (:image, :paste), which seed it, plus any pasted inside
 // with Alt+V. The caller hands them to takeImages, which adds @path
-// references and clears the staging.
-func (u *UI) readInput() (string, []string, bool, error) {
+// references and clears the staging. woke reports that the composer
+// submitted itself on inbox activity: the input is empty and the inbox is
+// the prompt.
+func (u *UI) readInput() (string, []string, bool, bool, error) {
 	promptText := u.buildPromptText()
 
 	// Create and run input model
 	inputModel := ui.NewInputModel(promptText, u.history)
+	// While the composer is open, proc events materialize into the inbox
+	// and a pending inbox with still-empty text fires an inbox-only turn.
+	inputModel.SetWakePoll(u.wakePoll)
 	// Seed the composer list so [imageN] numbering covers the already-staged
 	// images too, not just the ones pasted below.
 	inputModel.SetStagedImages(u.pendingImages)
+	// Tab completes paths against the workspace root (empty config falls
+	// back to the working directory inside the completer).
+	if u.cfg != nil {
+		inputModel.SetCompletionBaseDir(u.cfg.Workspace.Root)
+	}
 	// Alt+V would type √ on macOS, so the paste key is offered everywhere
 	// except darwin — same exclusion krok uses for its Alt+V escape hatch.
 	if runtime.GOOS != "darwin" {
@@ -163,13 +207,18 @@ func (u *UI) readInput() (string, []string, bool, error) {
 	result, err := p.Run()
 
 	if err != nil {
-		return "", nil, false, err
+		return "", nil, false, false, err
 	}
 
 	// Get the result
 	finalModel := result.(ui.InputModel)
 	if finalModel.Cancelled() || !finalModel.Submitted() {
-		return "", nil, true, nil // User cancelled (Ctrl+C)
+		return "", nil, false, true, nil // User cancelled (Ctrl+C)
+	}
+
+	// A wake submit carries no text to echo: the inbox is the prompt.
+	if finalModel.WakeFired() {
+		return "", finalModel.PastedImages(), true, false, nil
 	}
 
 	input := strings.TrimSpace(finalModel.Value())
@@ -184,7 +233,7 @@ func (u *UI) readInput() (string, []string, bool, error) {
 	}
 	fmt.Println()
 
-	return input, finalModel.PastedImages(), false, nil
+	return input, finalModel.PastedImages(), false, false, nil
 }
 
 // buildPromptText builds the prompt text with session info
@@ -236,6 +285,34 @@ func (u *UI) handleCommand(input string) bool {
 	cmd := strings.TrimPrefix(input, ":")
 	parts := strings.Fields(cmd)
 	if len(parts) == 0 {
+		return false
+	}
+
+	// :mN / :eN select the model and its effort; :e <value> sets the effort
+	// by canonical value. This precedes the exact-match switch: no existing
+	// command is m/e-plus-digits, and matching digits-only keeps a future
+	// :memory from colliding.
+	if kind, n, ok := config.ParseIndexedCommand(parts[0]); ok {
+		switch kind {
+		case 'm':
+			u.switchModel(n)
+		case 'e':
+			u.setEffortIndex(n)
+		}
+		return false
+	}
+	if parts[0] == "e" {
+		if len(parts) < 2 {
+			fmt.Println("Usage: :e <effort>  (or :eN for the Nth level in :help)")
+			fmt.Println()
+			return false
+		}
+		u.setEffortValue(strings.Join(parts[1:], " "))
+		return false
+	}
+	if parts[0] == "m" {
+		fmt.Println("Usage: :mN  (e.g. :m1; the list is in :help)")
+		fmt.Println()
 		return false
 	}
 
@@ -323,11 +400,19 @@ func (u *UI) handleCommand(input string) bool {
 
 	case "config":
 		fmt.Printf("Config: %s\n", u.configPath)
-		fmt.Printf("Model: %s\n", u.cfg.ModelDisplay())
-		fmt.Printf("Base URL: %s\n", u.cfg.LLM.BaseURL)
+		fmt.Printf("Model: %s\n", u.activeDisplay())
+		fmt.Printf("Base URL: %s\n", u.activeBaseURL())
 		fmt.Printf("Agent: %s\n", u.agentPath)
 		if u.currentSession != "" {
 			fmt.Printf("Session: %s\n", u.currentSession)
+		}
+		fmt.Println("Models:")
+		for i, e := range u.models {
+			marker := ""
+			if i == u.currentModel {
+				marker = " *"
+			}
+			fmt.Printf("  :m%d %s (%s)%s\n", i+1, e.Name, config.EntryDisplay(e, u.effortFor(i)), marker)
 		}
 		fmt.Println()
 
@@ -367,6 +452,144 @@ func (u *UI) handleCommand(input string) bool {
 	return false
 }
 
+// currentEntry is the selected catalog row.
+func (u *UI) currentEntry() config.ModelEntry {
+	if u.currentModel < 0 || u.currentModel >= len(u.models) {
+		u.currentModel = 0
+	}
+	return u.models[u.currentModel]
+}
+
+// effectiveEffort is what the current row runs with: the :eN override when
+// set, else the entry default ("" for a model with no menu).
+func (u *UI) effectiveEffort() string {
+	if u.currentEffort != "" {
+		return u.currentEffort
+	}
+	return u.cfg.DefaultEffort(u.currentEntry())
+}
+
+// effortFor is what catalog row i would run with: the override when it is
+// the current row, else the entry default.
+func (u *UI) effortFor(i int) string {
+	if i == u.currentModel {
+		return u.effectiveEffort()
+	}
+	return u.cfg.DefaultEffort(u.models[i])
+}
+
+// activeDisplay is the banner/:config model string for the selection.
+func (u *UI) activeDisplay() string {
+	return config.EntryDisplay(u.currentEntry(), u.effectiveEffort())
+}
+
+// activeBaseURL is the endpoint the selection sends to.
+func (u *UI) activeBaseURL() string {
+	if base := u.currentEntry().BaseURL; base != "" {
+		return base
+	}
+	return u.cfg.LLM.BaseURL
+}
+
+// switchModel handles :mN: select models[N-1] and reset the effort to the
+// new entry's default (cleared when it has no menu). KVIT_RUN_ID is left
+// alone: the prompt cache is keyed per model server-side, and a new ID would
+// also drop the shared prefix.
+func (u *UI) switchModel(n int) {
+	if n < 1 || n > len(u.models) {
+		fmt.Printf("unknown model :m%d; use one of :m1-:m%d\n\n", n, len(u.models))
+		return
+	}
+	u.currentModel = n - 1
+	u.currentEffort = ""
+	e := u.currentEntry()
+	shown := u.effectiveEffort()
+	if shown == "" {
+		shown = "no effort"
+	}
+	fmt.Printf("Switched to %s (%s:%s) @ %s\n\n", e.Name, e.Model, shown, u.activeBaseURL())
+}
+
+// setEffortIndex handles :eN: the Nth row of the current model's menu, in
+// config order.
+func (u *UI) setEffortIndex(n int) {
+	e := u.currentEntry()
+	menu := u.cfg.EffortOptions(e)
+	if len(menu) == 0 {
+		fmt.Printf("current model %q does not support reasoning effort\n\n", e.Name)
+		return
+	}
+	if n < 1 || n > len(menu) {
+		names := make([]string, len(menu))
+		for i, o := range menu {
+			names[i] = o.Value
+		}
+		fmt.Printf("unknown effort level ':e%d'; use one of: :e1-:e%d (%s)\n\n",
+			n, len(menu), strings.Join(names, ", "))
+		return
+	}
+	u.currentEffort = menu[n-1].Value
+	fmt.Printf("Effort set to %s for %s\n\n", menu[n-1].Value, e.Name)
+}
+
+// setEffortValue handles :e <value>: the same menu by canonical value, for
+// scripts and menus longer than :e9 is comfortable for.
+func (u *UI) setEffortValue(value string) {
+	e := u.currentEntry()
+	v, err := u.cfg.ResolveEffort(e, strings.TrimSpace(value))
+	if err != nil {
+		fmt.Printf("%v\n\n", err)
+		return
+	}
+	u.currentEffort = v
+	if v == "" {
+		fmt.Printf("Effort cleared for %s\n\n", e.Name)
+		return
+	}
+	fmt.Printf("Effort set to %s for %s\n\n", v, e.Name)
+}
+
+// showModels prints the :mN catalog and the current entry's :eN menu, the
+// list :h promises. Numbering is 1-based config-file order, with * on the
+// active row like :sessions.
+func (u *UI) showModels() {
+	fmt.Println("Models (:mN to switch):")
+	for i, e := range u.models {
+		marker := " "
+		if i == u.currentModel {
+			marker = "*"
+		}
+		eff := u.effortFor(i)
+		if eff != "" {
+			eff = " :" + eff
+		}
+		base := e.BaseURL
+		if base == "" {
+			base = u.cfg.LLM.BaseURL
+		}
+		fmt.Printf("  :m%d %s %s (%s)%s @ %s\n", i+1, marker, e.Name, e.Model, eff, base)
+	}
+	e := u.currentEntry()
+	menu := u.cfg.EffortOptions(e)
+	if len(menu) == 0 {
+		fmt.Printf("No effort levels for %s (non-reasoning model)\n", e.Name)
+		return
+	}
+	fmt.Printf("Effort for %s (:eN to set):\n", e.Name)
+	active := u.effectiveEffort()
+	for i, o := range menu {
+		marker := " "
+		if o.Value == active {
+			marker = "*"
+		}
+		def := ""
+		if o.Default {
+			def = " (default)"
+		}
+		fmt.Printf("  :e%d %s %s%s\n", i+1, marker, o.Display(), def)
+	}
+}
+
 // showHelp displays the help message
 func (u *UI) showHelp() {
 	fmt.Println("Available commands:")
@@ -380,7 +603,11 @@ func (u *UI) showHelp() {
 	fmt.Println("  :clear           Clear the terminal")
 	fmt.Println("  :config          Show configuration")
 	fmt.Println("  :image <path>..  Stage image files for the next turn")
-	fmt.Println("  :paste            Stage the clipboard image for the next turn")
+	fmt.Println("  :paste           Stage the clipboard image for the next turn")
+	fmt.Println("  :mN              Switch model (e.g. :m1; the list follows)")
+	fmt.Println("  :eN, :e <level>  Set reasoning effort for the current model")
+	fmt.Println()
+	u.showModels()
 	fmt.Println()
 	fmt.Println("Enter any other text to send as a prompt to the agent.")
 	fmt.Println("Attach images: Alt+V pastes the clipboard image as an [imageN]")
@@ -392,9 +619,17 @@ func (u *UI) showHelp() {
 	fmt.Println()
 }
 
-// runAgent spawns kvit-coder with the given prompt
+// runAgent spawns kvit-coder with the given prompt. An empty prompt is an
+// inbox-only turn: the inbox files are the prompt, so --wake replaces -p
+// (an empty -p would not even select exec mode) and the agent skips the
+// user message.
 func (u *UI) runAgent(prompt string, images []string) {
-	args := []string{"-p", prompt}
+	var args []string
+	if strings.TrimSpace(prompt) == "" {
+		args = []string{"--wake"}
+	} else {
+		args = []string{"-p", prompt}
+	}
 
 	// Images travel as paths, not pixels: the agent normalizes them into the
 	// session on arrival. argv stays small and the prompt cache undisturbed.
@@ -412,6 +647,26 @@ func (u *UI) runAgent(prompt string, images []string) {
 	// Pass session if set
 	if u.currentSession != "" {
 		args = append(args, "-s", u.currentSession)
+	}
+
+	// The selection travels per turn as explicit wire fields, so a skewed
+	// UI/agent config pair still sends the right endpoint. Empty effort is
+	// omitted: with --model the agent falls back to the entry default (which
+	// is empty for a model with no menu), without it the config is unchanged.
+	entry := u.currentEntry()
+	args = append(args, "--model", entry.Model)
+	if base := u.activeBaseURL(); base != "" {
+		args = append(args, "--base-url", base)
+	}
+	backend := entry.APIBackend
+	if backend == "" {
+		backend = u.cfg.LLM.APIBackend
+	}
+	if backend != "" {
+		args = append(args, "--api-backend", backend)
+	}
+	if eff := u.effectiveEffort(); eff != "" {
+		args = append(args, "--effort", eff)
 	}
 
 	// The UI took the flag, but the agent it spawns is what enforces paths.

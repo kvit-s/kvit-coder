@@ -1,3 +1,55 @@
+# Several models to pick from in kvit-coder-ui with :m1, :m2, ... (order is
+# stable: :m1 is the first entry) and effort levels with :e1, :e2, ...; :h
+# lists both, and headless runs use --model/--effort instead. The first entry
+# whose wire id matches llm.model below is the default. default:true marks an
+# entry's effort default (xhigh on spark-go keeps the previous
+# llm.reasoning_effort default). An entry without efforts: is a non-reasoning
+# model: it has no :eN menu, and switching to it clears the effort.
+models:
+  - id: "spark-go"
+    name: "Muse Spark 1.3 Go"
+    model: "muse-spark-1.3-contributor"
+    base_url: "https://opencode.ai/zen/go/v1"
+    api_backend: "responses"
+    api_key_env: "OPENCODE_API_KEY"
+    context: 1048576
+    efforts:
+      - value: "minimal"
+      - value: "low"
+      - value: "medium"
+      - value: "high"
+      - value: "xhigh"
+        default: true
+  - id: "spark-zen"
+    name: "Muse Spark 1.3 Zen Free"
+    model: "muse-spark-1.3-contributor-free"
+    base_url: "https://opencode.ai/zen/v1"
+    api_backend: "responses"
+    api_key_env: "OPENCODE_API_KEY"
+    context: 1048576
+    efforts:
+      - value: "minimal"
+      - value: "low"
+      - value: "medium"
+      - value: "high"
+        default: true
+      - value: "xhigh"
+  - id: "qwen-local"
+    # Home Qwen3.8-27B through the llama-swap-plus front door on strixhalo
+    # (see ~/qwen/README.md): the only address that handles pictures, by
+    # encoding them on strixhalo's vision tower and naming them for the
+    # expander beside the model on Aorus. Pointing this at the expander
+    # (127.0.0.1:8090 from Aorus) or straight at vLLM (127.0.0.1:18089)
+    # reaches the same weights for text but sends pictures to a model served
+    # without its vision tower, which cannot read them. No credentials:
+    # chat completions through the front door are open.
+    name: "Qwen3.8-27B (local)"
+    model: "qwen3.8-27b-nvfp4-dflash2"
+    base_url: "http://192.168.138.186:8090/v1"
+    api_backend: "chat_completions"
+    context: 262144
+    # no efforts and no api_key_env: non-reasoning local model
+
 # Default model: Muse Spark 1.3 on the opencode.ai Go subscription, the same
 # model and endpoint the `krok` CLI uses (see ~/.krok/config.toml). Export
 # OPENCODE_API_KEY first, or `source ~/.config/grok/env`, which is where krok

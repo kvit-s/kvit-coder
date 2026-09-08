@@ -201,6 +201,29 @@ func (i *Inbox) Drain() []Message {
 	return append(queued, i.drainDir()...)
 }
 
+// PendingCount reports how many inbox files are waiting in dir without
+// removing anything, so a watcher sitting at a turn boundary can decide
+// whether there is anything worth waking for. It applies the same filter as
+// the drain — directories and dotfiles (including half-written .partial-*)
+// do not count — and missing directory means none.
+func PendingCount(dir string) int {
+	if dir == "" {
+		return 0
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		n++
+	}
+	return n
+}
+
 func (i *Inbox) drainDir() []Message {
 	if i.dir == "" {
 		return nil

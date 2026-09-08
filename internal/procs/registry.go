@@ -392,13 +392,20 @@ func (r *Registry) List() []Info {
 
 // Kill stops a process and everything it started. Killing one that has already
 // finished is not an error: the caller wanted it stopped, and it is stopped.
+// When refresh discovers the process already exited or went away, that
+// transition is saved, so Ended is stamped when it was found rather than
+// drifting to the next Status.
 func (r *Registry) Kill(id string) error {
 	info, err := r.load(id)
 	if err != nil {
 		return err
 	}
-	current, _ := r.refresh(info)
+
+	current, changed := r.refresh(info)
 	if !current.Running() {
+		if changed {
+			return r.save(current)
+		}
 		return nil
 	}
 	if err := killGroup(current.PID); err != nil {
@@ -511,7 +518,16 @@ func (r *Registry) eventFor(info Info) (string, Info, bool) {
 		} else {
 			text += "."
 		}
+
 		return text, info, true
+	}
+
+	// A finished process reports its ending once and then goes quiet: no
+	// pattern match, no output notice, no tick. Without this a dead process
+	// with a tick interval keeps saying "still running" forever — which is
+	// what bg1/bg2 did after going gone.
+	if !info.Running() {
+		return "", info, false
 	}
 
 	// A running process only interrupts when it was asked to, in priority

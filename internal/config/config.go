@@ -85,6 +85,19 @@ type Config struct {
 	MCP MCPConfig `yaml:"mcp"`
 
 	UI UIConfig `yaml:"ui"`
+
+	// Models is the optional multi-model catalog (docs/model-selection.md).
+	// Order is stable: :m1 is the first entry, :m2 the second. When absent,
+	// ModelList synthesizes a one-entry catalog from the llm: block, so old
+	// configs behave exactly as before.
+	Models []ModelEntry `yaml:"models"`
+	// DefaultModel selects the catalog row a fresh session starts on: a
+	// 1-based index, id, display name or wire model id (see ResolveModel).
+	// Empty means the row matching llm.model, else the first row.
+	DefaultModel string `yaml:"default_model"`
+	// DefaultEffortValue is the effort fallback after an entry's own
+	// `default: true` row and llm.reasoning_effort.
+	DefaultEffortValue string `yaml:"default_effort"`
 }
 
 // UIConfig controls terminal output styling.
@@ -803,6 +816,12 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("failed to resolve workspace root: %w", err)
 		}
 		cfg.Workspace.Root = absRoot
+	}
+
+	// The models: catalog is validated here so a typo fails at startup with
+	// the file path and entry number, not mid-session at the API.
+	if err := cfg.validateModels(path); err != nil {
+		return nil, err
 	}
 
 	// Initialize runtime fields

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/kvit-s/kvit-coder/internal/config"
 	"github.com/kvit-s/kvit-coder/internal/llm"
@@ -79,6 +80,8 @@ func HandleMetaCommand(
 		fmt.Println("  :clear         - Clear conversation history")
 		fmt.Println("  :history       - Show conversation history")
 		fmt.Println("  :help, :h      - Show this help message")
+		fmt.Println("\nModel switching (:mN, :eN) lives in kvit-coder-ui;")
+		fmt.Println("headless runs use the --model and --effort flags.")
 		fmt.Println("\nREPL features:")
 		fmt.Println("  - Use Up/Down arrows to navigate history")
 		fmt.Println("  - Press ESC to cancel ongoing LLM requests")
@@ -86,6 +89,13 @@ func HandleMetaCommand(
 		return false, nil
 
 	default:
+		// Model switching lives in kvit-coder-ui; say so instead of
+		// "unknown command" so the two helps do not silently diverge.
+		rest := strings.TrimPrefix(input, ":")
+		if _, _, ok := config.ParseIndexedCommand(rest); ok || rest == "m" || rest == "e" || strings.HasPrefix(rest, "e ") {
+			fmt.Println("Model switching (:mN, :eN) lives in kvit-coder-ui; headless runs use --model and --effort.")
+			return false, nil
+		}
 		fmt.Printf("Unknown command: %s\n", input)
 		fmt.Println("Type :help for available commands")
 		return false, nil

@@ -1,0 +1,352 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
+
+	"github.com/kvit-s/kvit-coder/internal/llm"
+)
+
+// This file is the `models:` catalog from docs/model-selection.md: several
+// named endpoints in config.yaml, picked with :mN in kvit-coder-ui (or
+// --model headless) and a per-model effort menu picked with :eN (or --effort).
+//
+// When `models:` is absent the catalog is one entry synthesized from the
+// legacy single-model `llm:` block, so old configs behave exactly as before.
+
+// CanonicalEfforts are the reasoning-effort values the Responses backend
+// passes through verbatim (cf. krok's ReasoningEffort enum). The config's
+// per-model menu is the authority on what is *selectable*; this set is only
+// what is *spellable*.
+var CanonicalEfforts = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+
+// LegacyEfforts is the effort menu for a `responses` model that lists no
+// explicit menu, in presentation order.
+var LegacyEfforts = []string{"xhigh", "high", "medium", "low"}
+
+// IsCanonicalEffort reports whether s names a known effort value.
+func IsCanonicalEffort(s string) bool {
+	for _, e := range CanonicalEfforts {
+		if strings.EqualFold(s, e) {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidBackend reports whether b names a known wire protocol (or is empty,
+// which means the chat-completions default).
+func ValidBackend(b string) bool {
+	return b == "" || b == llm.BackendChatCompletions || b == llm.BackendResponses
+}
+
+// EffortOption is one row of a model's :eN menu. Order in the file is
+// presentation order; Default marks the entry's effort default.
+type EffortOption struct {
+	Value   string `yaml:"value"`
+	Label   string `yaml:"label"`
+	Default bool   `yaml:"default"`
+}
+
+// Display returns the menu text: the label when set, else the value.
+func (e EffortOption) Display() string {
+	if e.Label != "" {
+		return e.Label
+	}
+	return e.Value
+}
+
+// ModelEntry is one catalog row: everything about an endpoint that switching
+// models can change. Non-endpoint settings (headers, timeouts,
+// merge_thinking, ...) always come from the `llm:` block.
+type ModelEntry struct {
+	ID         string         `yaml:"id"`
+	Name       string         `yaml:"name"`
+	Model      string         `yaml:"model"`
+	BaseURL    string         `yaml:"base_url"`
+	APIBackend string         `yaml:"api_backend"`
+	APIKey     string         `yaml:"api_key"`
+	APIKeyEnv  string         `yaml:"api_key_env"`
+	Context    int            `yaml:"context"`
+	Efforts    []EffortOption `yaml:"efforts"`
+}
+
+// ModelList returns the catalog: `models:` in file order, or one entry
+// synthesized from the `llm:` block when `models:` is absent. It never
+// returns an empty slice, so callers can index [DefaultModelIndex()].
+func (c *Config) ModelList() []ModelEntry {
+	if len(c.Models) > 0 {
+		return c.Models
+	}
+	return []ModelEntry{{
+		ID:         "default",
+		Name:       c.LLM.Model,
+		Model:      c.LLM.Model,
+		BaseURL:    c.LLM.BaseURL,
+		APIBackend: c.LLM.APIBackend,
+		APIKey:     c.LLM.APIKey,
+		APIKeyEnv:  c.LLM.APIKeyEnv,
+		Context:    c.LLM.Context,
+	}}
+}
+
+// DefaultModelIndex is which catalog row a fresh UI (or a headless run with
+// no --model) starts on: `default_model` when it resolves, else the row
+// whose wire id matches `llm.model`, else the first row.
+func (c *Config) DefaultModelIndex() int {
+	list := c.ModelList()
+	if c.DefaultModel != "" {
+		if _, idx, err := c.ResolveModel(c.DefaultModel); err == nil {
+			return idx
+		}
+	}
+	for i, e := range list {
+		if e.Model == c.LLM.Model {
+			return i
+		}
+	}
+	return 0
+}
+
+// ResolveModel finds a catalog row by 1-based index ("1"), id, display name,
+// or wire model id, in that order. Indexing is stable config-file order;
+// rows are never sorted (prompt-cache determinism).
+func (c *Config) ResolveModel(ref string) (ModelEntry, int, error) {
+	list := c.ModelList()
+	ref = strings.TrimSpace(ref)
+	if n, err := strconv.Atoi(ref); err == nil {
+		if n >= 1 && n <= len(list) {
+			return list[n-1], n - 1, nil
+		}
+		return ModelEntry{}, 0, fmt.Errorf("unknown model %q; use one of: %s", ref, modelListHint(list))
+	}
+	for i, e := range list {
+		if strings.EqualFold(e.ID, ref) {
+			return e, i, nil
+		}
+	}
+	for i, e := range list {
+		if strings.EqualFold(e.Name, ref) {
+			return e, i, nil
+		}
+	}
+	for i, e := range list {
+		if e.Model == ref {
+			return e, i, nil
+		}
+	}
+	for i, e := range list {
+		if strings.EqualFold(e.Model, ref) {
+			return e, i, nil
+		}
+	}
+	return ModelEntry{}, 0, fmt.Errorf("unknown model %q; use one of: %s", ref, modelListHint(list))
+}
+
+func modelListHint(list []ModelEntry) string {
+	parts := make([]string, len(list))
+	for i, e := range list {
+		parts[i] = fmt.Sprintf(":m%d %s (%s)", i+1, e.ID, e.Name)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// EffortOptions returns the :eN menu for an entry in config order: its own
+// list, else the legacy four for a `responses` model without one, else empty
+// (a non-reasoning model has no menu and switching to it clears the effort).
+func (c *Config) EffortOptions(entry ModelEntry) []EffortOption {
+	if len(entry.Efforts) > 0 {
+		return entry.Efforts
+	}
+	if entry.APIBackend == llm.BackendResponses {
+		opts := make([]EffortOption, len(LegacyEfforts))
+		for i, v := range LegacyEfforts {
+			opts[i] = EffortOption{Value: v}
+		}
+		return opts
+	}
+	return nil
+}
+
+// DefaultEffort is the effort a fresh selection of this entry runs with: ""
+// when the entry has no menu (a non-reasoning model never takes an effort,
+// so switching to one clears it), else its `default: true` row, else
+// `llm.reasoning_effort`, else `default_effort`, else "" (no `reasoning:`
+// object on the wire).
+func (c *Config) DefaultEffort(entry ModelEntry) string {
+	if len(c.EffortOptions(entry)) == 0 {
+		return ""
+	}
+	for _, o := range entry.Efforts {
+		if o.Default {
+			return o.Value
+		}
+	}
+	if c.LLM.ReasoningEffort != "" {
+		return c.LLM.ReasoningEffort
+	}
+	return c.DefaultEffortValue
+}
+
+// ResolveEffort checks an --effort token (or :e value) against one entry's
+// menu. "" always resolves to "" (clear: omit `reasoning:`), which is what a
+// non-reasoning model needs. A value the model does not offer is rejected
+// with the offered list rather than sent to the API.
+func (c *Config) ResolveEffort(entry ModelEntry, token string) (string, error) {
+	if token == "" {
+		return "", nil
+	}
+	menu := c.EffortOptions(entry)
+	if len(menu) == 0 {
+		return "", fmt.Errorf("model %q does not support reasoning effort", entry.Name)
+	}
+	for _, o := range menu {
+		if strings.EqualFold(o.Value, token) {
+			return o.Value, nil
+		}
+	}
+	offered := make([]string, len(menu))
+	for i, o := range menu {
+		offered[i] = o.Value
+	}
+	return "", fmt.Errorf("unknown effort level %q; use one of: %s", token, strings.Join(offered, ", "))
+}
+
+// EntryAPIKey resolves which key an entry authenticates with: its env var
+// when set, else its literal, else none (a local endpoint needs no key, and
+// the client omits the Authorization header then).
+func EntryAPIKey(entry ModelEntry) string {
+	if entry.APIKeyEnv != "" {
+		return os.Getenv(entry.APIKeyEnv)
+	}
+	return entry.APIKey
+}
+
+// ApplyModel makes an entry plus a resolved effort the active endpoint: the
+// `llm:` fields a model switch can change are overwritten, everything else
+// (headers, timeouts, merge_thinking, ...) stays from the `llm:` block.
+// Downstream code (client construction, session records, context accounting)
+// reads cfg.LLM, so it follows the selection with no other change.
+func (c *Config) ApplyModel(entry ModelEntry, effort string) {
+	c.LLM.Model = entry.Model
+	if entry.BaseURL != "" {
+		c.LLM.BaseURL = entry.BaseURL
+	}
+	if entry.APIBackend != "" {
+		c.LLM.APIBackend = entry.APIBackend
+	}
+	if entry.Context != 0 {
+		c.LLM.Context = entry.Context
+	}
+	if entry.APIKeyEnv != "" || entry.APIKey != "" {
+		c.LLM.APIKeyEnv = entry.APIKeyEnv
+		c.LLM.APIKey = EntryAPIKey(entry)
+	} else {
+		c.LLM.APIKeyEnv = ""
+		c.LLM.APIKey = ""
+	}
+	c.LLM.ReasoningEffort = effort
+}
+
+// EntryDisplay is ModelDisplay for a catalog row: "model:effort" when an
+// effort is set, plain "model" otherwise.
+func EntryDisplay(entry ModelEntry, effort string) string {
+	if effort != "" {
+		return entry.Model + ":" + effort
+	}
+	return entry.Model
+}
+
+// WireID strips a ":effort" suffix back off a display string, so a recorded
+// "model:effort" can be compared against a wire id. A suffix that is not a
+// known effort value is left alone (the wire id itself may contain colons).
+func WireID(display string) string {
+	if i := strings.LastIndex(display, ":"); i >= 0 && IsCanonicalEffort(display[i+1:]) {
+		return display[:i]
+	}
+	return display
+}
+
+// ParseIndexedCommand parses the word after the colon of :mN / :eN: 'm' or
+// 'e' followed only by digits. Anything else (including bare "m"/"e", which
+// take a value argument) is not an indexed command.
+func ParseIndexedCommand(cmd string) (kind byte, n int, ok bool) {
+	if len(cmd) < 2 || (cmd[0] != 'm' && cmd[0] != 'e') {
+		return 0, 0, false
+	}
+	for _, r := range cmd[1:] {
+		if r < '0' || r > '9' {
+			return 0, 0, false
+		}
+	}
+	n, err := strconv.Atoi(cmd[1:])
+	if err != nil {
+		return 0, 0, false
+	}
+	return cmd[0], n, true
+}
+
+// validateModels checks the `models:` catalog at load: unknown backends or
+// effort values, duplicate or empty ids, an unresolvable default_model, and
+// more than one default effort per entry. Effort values are lowercased in
+// place so later comparisons stay simple. A nil catalog (legacy single-model
+// config) is valid.
+func (c *Config) validateModels(configPath string) error {
+	if len(c.Models) == 0 {
+		if c.DefaultModel != "" {
+			return fmt.Errorf("%s: default_model %q with no models: list", configPath, c.DefaultModel)
+		}
+		if c.DefaultEffortValue != "" && !IsCanonicalEffort(c.DefaultEffortValue) {
+			return fmt.Errorf("%s: unknown default_effort %q; use one of: %s",
+				configPath, c.DefaultEffortValue, strings.Join(CanonicalEfforts, ", "))
+		}
+		return nil
+	}
+	seen := map[string]int{}
+	for i := range c.Models {
+		e := &c.Models[i]
+		where := fmt.Sprintf("%s: models entry %d", configPath, i+1)
+		if e.ID == "" {
+			return fmt.Errorf("%s: missing id", where)
+		}
+		if key := strings.ToLower(e.ID); seen[key] > 0 {
+			return fmt.Errorf("%s: duplicate id %q", configPath, e.ID)
+		} else {
+			seen[key] = i + 1
+		}
+		if e.Model == "" {
+			return fmt.Errorf("%s (%s): missing model wire id", where, e.ID)
+		}
+		if !ValidBackend(e.APIBackend) {
+			return fmt.Errorf("%s (%s): unknown api_backend %q; use %q or %q",
+				where, e.ID, e.APIBackend, llm.BackendChatCompletions, llm.BackendResponses)
+		}
+		defaults := 0
+		for j := range e.Efforts {
+			v := strings.ToLower(strings.TrimSpace(e.Efforts[j].Value))
+			if !IsCanonicalEffort(v) {
+				return fmt.Errorf("%s (%s): unknown effort value %q; use one of: %s",
+					where, e.ID, e.Efforts[j].Value, strings.Join(CanonicalEfforts, ", "))
+			}
+			e.Efforts[j].Value = v
+			if e.Efforts[j].Default {
+				defaults++
+			}
+		}
+		if defaults > 1 {
+			return fmt.Errorf("%s (%s): more than one default effort", where, e.ID)
+		}
+	}
+	if c.DefaultEffortValue != "" && !IsCanonicalEffort(c.DefaultEffortValue) {
+		return fmt.Errorf("%s: unknown default_effort %q; use one of: %s",
+			configPath, c.DefaultEffortValue, strings.Join(CanonicalEfforts, ", "))
+	}
+	if c.DefaultModel != "" {
+		if _, _, err := c.ResolveModel(c.DefaultModel); err != nil {
+			return fmt.Errorf("%s: bad default_model: %v", configPath, err)
+		}
+	}
+	return nil
+}

@@ -336,6 +336,43 @@ func (s *Session) Settings(model string, mergeThinking bool, tools []string) err
 	})
 }
 
+// LastSettingsModel returns the model the most recent turn recorded in its
+// settings event ("model:effort" once model selection exists, a bare wire id
+// before it), or "" when no turn has recorded one yet. A turn that switches
+// models compares this against its own to decide whether the tail of the
+// history was produced by a different model.
+func (s *Session) LastSettingsModel() (string, error) {
+	f, err := os.Open(s.HistoryPath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to open session history: %w", err)
+	}
+	defer f.Close()
+
+	last := ""
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var ev Event
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			return "", fmt.Errorf("failed to parse session event: %w", err)
+		}
+		if ev.Kind == KindSettings && ev.Model != "" {
+			last = ev.Model
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("failed to read session history: %w", err)
+	}
+	return last, nil
+}
+
 // Load returns the conversation, in order, as the messages to send to the
 // model. Lines that carry no message — notices and settings — are skipped, so
 // the API history is derived from the record rather than kept beside it.

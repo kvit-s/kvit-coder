@@ -342,3 +342,38 @@ func TestAskCancelsAndTimesOut(t *testing.T) {
 		t.Errorf("outcome after the timeout is %v, want timed out", outcome)
 	}
 }
+
+// TestPendingCountPeeksWithoutConsuming: the turn-boundary watcher counts
+// what is waiting — files, not queued memory — without unlinking anything,
+// ignoring dotfiles and half-written partials like the drain does.
+func TestPendingCountPeeksWithoutConsuming(t *testing.T) {
+	if got := PendingCount(""); got != 0 {
+		t.Errorf("empty dir = %d, want 0", got)
+	}
+	if got := PendingCount(filepath.Join(t.TempDir(), "missing")); got != 0 {
+		t.Errorf("missing dir = %d, want 0", got)
+	}
+
+	dir := t.TempDir()
+	if _, err := Deliver(dir, Message{Kind: KindUserLine, Text: "one"}); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	if _, err := Deliver(dir, Message{Kind: KindProcessEvent, Text: "two"}); err != nil {
+		t.Fatalf("Deliver: %v", err)
+	}
+	// A half-written delivery and a stray directory must not count.
+	if err := os.WriteFile(filepath.Join(dir, ".partial-123"), []byte("half"), 0644); err != nil {
+		t.Fatalf("write partial: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "subdir"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	if got := PendingCount(dir); got != 2 {
+		t.Errorf("PendingCount = %d, want 2", got)
+	}
+	// Nothing was consumed: the drain still sees both.
+	if got := New(dir).Drain(); len(got) != 2 {
+		t.Errorf("drain after peek returned %d messages, want 2", len(got))
+	}
+}

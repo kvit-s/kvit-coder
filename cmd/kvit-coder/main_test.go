@@ -326,6 +326,65 @@ func TestBackgroundUnknownSession(t *testing.T) {
 	}
 }
 
+// TestInterruptCleanupNoopOnNormalExit: the deferred cleanup is a no-op when
+// no signal arrived, so a normal turn end leaves persistent processes for the
+// next turn.
+func TestInterruptCleanupNoopOnNormalExit(t *testing.T) {
+	mgr := backgroundTestManager(t)
+	id := backgroundTestSession(t, mgr, "sess-normal", "sleep 30", true)
+	sess, err := mgr.Open("sess-normal")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	reg, err := procRegistryFor(mgr, "sess-normal")
+	if err != nil {
+		t.Fatalf("procRegistryFor: %v", err)
+	}
+	var out bytes.Buffer
+	cleanup := killBackgroundOnInterrupt(context.Background(), reg, sess, testWriter(&out))
+	cleanup()
+
+	if info, _ := reg.Status(id); !info.Running() {
+		t.Errorf("the cleanup killed %s on a normal exit, want it still running", id)
+	}
+	_ = reg.Kill(id)
+}
+
+// TestInterruptCleanupKillsOnSignal: on a real interrupt the same cleanup stops
+// everything synchronously and records killed (not gone), so the save lands
+// before the process exits.
+func TestInterruptCleanupKillsOnSignal(t *testing.T) {
+	mgr := backgroundTestManager(t)
+	id := backgroundTestSession(t, mgr, "sess-intr", "sleep 30", true)
+	sess, err := mgr.Open("sess-intr")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	reg, err := procRegistryFor(mgr, "sess-intr")
+	if err != nil {
+		t.Fatalf("procRegistryFor: %v", err)
+	}
+	var out bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	cleanup := killBackgroundOnInterrupt(ctx, reg, sess, testWriter(&out))
+	cancel()
+	cleanup()
+
+	info, err := reg.Status(id)
+	if err != nil {
+		t.Fatalf("Status: %v", err)
+	}
+	if info.Running() {
+		t.Fatalf("%s is still running after the interrupt cleanup", id)
+	}
+	if info.State != procs.StateKilled {
+		t.Errorf("state is %s, want killed (a save lost to the exit race shows gone)", info.State)
+	}
+	if info.Ended.IsZero() {
+		t.Error("the interrupt kill did not stamp Ended")
+	}
+}
+
 // TestProcRegistryForReadsSessionDir: the CLI reads the same proc/ directory
 // the turn writes, or the reaper would miss what the turn started.
 func TestProcRegistryForReadsSessionDir(t *testing.T) {
