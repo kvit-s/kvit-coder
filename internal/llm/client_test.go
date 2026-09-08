@@ -200,8 +200,9 @@ func TestChatInvalidJSON(t *testing.T) {
 func TestChatContextCancellation(t *testing.T) {
 	// Create mock server with delay
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Never respond
-		select {}
+		// Never respond, but stop waiting when the client goes away, or
+		// Server.Close blocks on this handler forever.
+		<-r.Context().Done()
 	}))
 	defer server.Close()
 

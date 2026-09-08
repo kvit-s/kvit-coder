@@ -98,13 +98,24 @@ func TestConfirmerAskOnceConsultsTheStore(t *testing.T) {
 
 	c := newConfirmer()
 	c.setApprovals(store)
+	// Simulate "no one at the terminal": refuse without touching /dev/tty,
+	// which would sit waiting for input whenever the test runs with a
+	// controlling terminal (e.g. plain `go test` in a terminal) and hang
+	// the suite until the go test timeout.
+	var prompted bool
+	SetLinePrompter(func(string) (string, bool) { prompted = true; return "", false })
+	t.Cleanup(func() { SetLinePrompter(nil) })
+
 	// Already approved: allowed without any prompt, which matters because
-	// there is no terminal in a test and asking would refuse.
+	// there is no one to answer in a test and asking would refuse.
 	if err := c.Confirm("mcp.x.y", "x", ConfirmAskOnce, ""); err != nil {
 		t.Errorf("an approved tool should not be asked about again: %v", err)
 	}
-	// Not approved, no terminal: refused rather than hanging.
+	if prompted {
+		t.Error("an approved tool must not prompt at all")
+	}
+	// Not approved, no one answering: refused rather than hanging.
 	if err := c.Confirm("mcp.x.other", "x", ConfirmAskOnce, ""); err == nil {
-		t.Error("an unapproved tool with no terminal should be refused")
+		t.Error("an unapproved tool with no one answering should be refused")
 	}
 }
