@@ -3,9 +3,9 @@
 **Usage:** `Write {"path": "<file>", "text": "<content>"}`
 
 Creates a new file or overwrites an existing file.
-
+{{if .PreviewMode}}
 **Overwrite Confirmation:**
 When overwriting an existing file, returns status="pending_confirmation".
 - `Write.confirm {}` - Apply the overwrite
 - `Write.cancel {}` - Cancel
-
+{{end}}

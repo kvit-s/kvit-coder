@@ -241,6 +241,11 @@ func (tc *ToolContext) GetAndClearPendingWrite() *pendingWrite {
 }
 
 // GetPendingWritePath returns the path of the pending write, or empty if none.
+// HasPendingWrite reports whether this process is holding a staged overwrite.
+func (tc *ToolContext) HasPendingWrite() bool {
+	return tc.GetPendingWritePath() != ""
+}
+
 func (tc *ToolContext) GetPendingWritePath() string {
 	tc.pendingWriteMu.Lock()
 	defer tc.pendingWriteMu.Unlock()

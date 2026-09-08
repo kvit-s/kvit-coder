@@ -126,6 +126,16 @@ func CheckPendingEditBlockWithState(toolName string, state PendingEditState, cfg
 		return nil // No pending edit according to history, allow all tools
 	}
 
+	// The history spans turns and the pending operation itself does not: it is
+	// held in this process's memory, and the process that staged it has since
+	// exited. When the history says an edit is pending and nothing here holds
+	// it, there is nothing to confirm and nothing to cancel — blocking would
+	// send the model to Edit.confirm, which answers no_pending_operation, and
+	// cost it the turn. Let it through.
+	if toolCtx != nil && !toolCtx.HasPendingEdit() && !toolCtx.HasPendingWrite() {
+		return nil
+	}
+
 	// Allow all confirm/cancel tools (Edit.* and Write.* are synonyms), plus
 	// Edit.undo_autoindent which revises (re-stores) the pending edit in place.
 	if toolName == "Edit.confirm" || toolName == "Edit.cancel" ||
@@ -1085,16 +1095,23 @@ func (t *WriteFileTool) PromptCategory() string     { return "filesystem" }
 func (t *WriteFileTool) PromptOrder() int           { return 15 } // Between Read (10) and Edit (20)
 func (t *WriteFileTool) PromptTemplateName() string { return "write" }
 func (t *WriteFileTool) PromptSection() string {
-	return `### Write - Write Files
+	base := `### Write - Write Files
 
 **Usage:** ` + "`" + `Write {"path": "<file>", "text": "<content>"}` + "`" + `
 
-Creates a new file or overwrites an existing file.
+Creates a new file or overwrites an existing file.`
+	// Only describe the handshake where it exists. Without this the prompt
+	// told the model to answer a pending_confirmation with tools that are not
+	// registered, and it went looking for them.
+	if t.config.Tools.Edit.PreviewMode {
+		base += `
 
 **Overwrite Confirmation:**
 When overwriting an existing file, returns status="pending_confirmation".
 - ` + "`" + `Write.confirm {}` + "`" + ` - Apply the overwrite
 - ` + "`" + `Write.cancel {}` + "`" + ` - Cancel`
+	}
+	return base
 }
 
 func (t *WriteFileTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
@@ -1135,8 +1152,12 @@ func (t *WriteFileTool) Call(ctx context.Context, args json.RawMessage) (any, er
 	fileInfo, statErr := os.Stat(fullPath)
 	isNewFile := os.IsNotExist(statErr)
 
-	// If file exists, require confirmation before overwriting
-	if !isNewFile {
+	// Overwriting an existing file is staged for confirmation only when
+	// preview_mode is on, the same switch that governs Edit's handshake. With
+	// it off — the default, and what the strong profile sets — Write writes,
+	// and the previous contents are in the turn's checkpoint if they are
+	// wanted back.
+	if !isNewFile && t.config.Tools.Edit.PreviewMode {
 		// Count lines in existing file
 		oldContent, err := os.ReadFile(fullPath)
 		oldLines := 0

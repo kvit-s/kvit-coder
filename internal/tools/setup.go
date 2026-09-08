@@ -83,17 +83,21 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		registry.Enable(writeFileTool)
 		debug(fmt.Sprintf("Enabled tool: %s", writeFileTool.Name()))
 
-		// Write.confirm and Write.cancel for overwrite confirmation
-		confirmWriteTool := NewConfirmWriteTool(cfg, toolCtx)
-		registry.Enable(confirmWriteTool)
-		debug(fmt.Sprintf("Enabled tool: %s", confirmWriteTool.Name()))
-
-		cancelWriteTool := NewCancelWriteTool(cfg, toolCtx)
-		registry.Enable(cancelWriteTool)
-		debug(fmt.Sprintf("Enabled tool: %s", cancelWriteTool.Name()))
-
-		// edit.confirm and edit.cancel only available when edit is enabled AND preview_mode is true
+		// The confirm handshake, for Write as much as for Edit, exists only
+		// when preview_mode asks for it. Registering Write.confirm and
+		// Write.cancel unconditionally offered a model two tools that had
+		// nothing to confirm, and under the strong profile — where the
+		// handshake is off — they were the tools it reached for when a stale
+		// pending edit appeared in the history.
 		if cfg.Tools.Edit.PreviewMode {
+			confirmWriteTool := NewConfirmWriteTool(cfg, toolCtx)
+			registry.Enable(confirmWriteTool)
+			debug(fmt.Sprintf("Enabled tool: %s", confirmWriteTool.Name()))
+
+			cancelWriteTool := NewCancelWriteTool(cfg, toolCtx)
+			registry.Enable(cancelWriteTool)
+			debug(fmt.Sprintf("Enabled tool: %s", cancelWriteTool.Name()))
+
 			confirmEditTool := NewConfirmEditTool(cfg, toolCtx)
 			registry.Enable(confirmEditTool)
 			debug(fmt.Sprintf("Enabled tool: %s", confirmEditTool.Name()))

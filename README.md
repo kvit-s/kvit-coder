@@ -506,7 +506,10 @@ skips all of it; `profile: weak` reproduces the earlier behaviour exactly.
 Each tool group has `enabled: true/false` plus tool-specific options:
 
 - **`edit.mode`** — `"lines"`, `"searchreplace"`, or `"patch"`
-- **`edit.preview_mode`** — Enable confirm/cancel workflow for edits
+- **`edit.preview_mode`** — Stage edits and overwrites for confirmation, which is
+  what registers `Edit.confirm`/`Edit.cancel` and `Write.confirm`/`Write.cancel`.
+  Off under `agent.profile: strong`, where Write overwrites directly and the
+  previous contents are in the turn's checkpoint.
 - **`edit.fuzzy_threshold`** — Fuzzy matching for searchreplace mode (0 = exact only)
 - **`edit.read_before_edit_msgs`** — Require a read within N messages before editing
 - **`shell.allowed_commands`** / **`shell.disallowed_commands`** — Command allow/blocklists

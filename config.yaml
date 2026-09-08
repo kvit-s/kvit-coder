@@ -90,7 +90,10 @@ tools:
     enabled: true
     mode: "lines"               # "lines" (default), "searchreplace", or "patch"
     max_file_size_kb: 128
-    preview_mode: false         # enables edit.confirm/edit.cancel
+    preview_mode: false         # stage edits and overwrites for confirmation:
+                                # enables Edit.confirm/Edit.cancel and
+                                # Write.confirm/Write.cancel. Off under
+                                # agent.profile: strong.
     read_before_edit_msgs: 0    # require read within N messages before edit (0 = disabled)
     pending_confirm_retries: 5  # max retries when LLM ignores confirm/cancel (0 = disabled, default 5)
     fuzzy_threshold: 0.0        # for searchreplace mode: 0 = exact only, 0.8 = enable fuzzy matching
