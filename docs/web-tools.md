@@ -98,11 +98,12 @@ Brave retired that free tier in February 2026 and replaced it with metered
 billing: $5 per 1,000 requests on the Search plan, with $5 of credit granted each
 month in exchange for attributing the API somewhere public, which for a personal
 tool means a line in the README. Keys issued under the old free tier still
-answer, as this one does, but they do not get the newer options. Roughly 1,000
-requests a month therefore cost nothing on the paid plan, which for an agent
-doing web research a handful of times a day is more than it will use.
+answer, as this one does, but they do not get the newer options — which is what
+puts `llm/context` out of reach, and section 2.2 takes that decision rather than
+leaving it open. The practical consequence is that the free key's limits are the
+limits: one per second, two thousand a month, with nothing behind them.
 
-### 2.2 The LLM Context endpoint, and why it is worth the upgrade
+### 2.2 The LLM Context endpoint, evaluated and not taken
 
 `GET /res/v1/llm/context` takes a query and returns extracted page content rather
 than a list of links: `grounding.generic` holds text chunks pulled from the pages
@@ -122,8 +123,29 @@ for the `Batch` tool, applied to the one workflow where the round trips are
 unavoidable rather than merely likely.
 
 Against that, it gives up control: you take the chunks Brave chose from the pages
-Brave ranked, and you cannot say "not that page, this one." Both shapes are worth
-having, which is why section 3 registers both.
+Brave ranked, and you cannot say "not that page, this one."
+
+**The decision is not to take it.** Reaching that endpoint means moving to the
+Search plan, which is a paid subscription, and one more recurring bill is not
+worth the round trips it saves. This is recorded rather than left open because
+the endpoint is attractive enough on its own terms that it will look like an
+oversight to a later reader, and because two things follow from the decision that
+shape the rest of the document.
+
+The first is that **search-then-read is the only path**, so the quality of
+`Web.fetch` (section 4) now carries work the endpoint would otherwise have done.
+Converting a page to clean text is no longer a convenience next to a better
+option; it is the option.
+
+The second is that **the free plan's ceilings are permanent**: one request per
+second, two thousand a month, shared with every other client using the key. Two
+thousand is roughly sixty-six a day, which for searches that are already
+described as infrequent is unlikely to bind — but there is no upgrade path
+behind it any more, so the exhausted-month error in section 3 is a case that can
+really happen rather than a formality. If it starts happening, the answer that
+costs no subscription is a self-hosted SearXNG instance on the home network,
+which has no key and no quota, put behind the same `Web.search` tool as a second
+backend. That is a fallback to reach for on evidence, not something to build now.
 
 ### 2.3 What kvit-coder already has that these tools would reuse
 
@@ -139,9 +161,10 @@ having, which is why section 3 registers both.
   fetch needs this; `ObserveWaitTool` and `QuestionTool` already use it.
 - **`ParallelSafeTool`** and the `Batch` tool, so a read-only tool marked safe
   can run several at a time in one model call.
-- **`golang.org/x/net` is already in `go.mod`** as an indirect dependency, so
-  `golang.org/x/net/html` costs a promotion to the direct require block rather
-  than a new module. The project builds without cgo and stays that way.
+- **`golang.org/x/net` is already in `go.mod`** as an indirect dependency at
+  v0.33.0, so `golang.org/x/net/html` costs a promotion to the direct require
+  block rather than a new module — though section 4 raises the version and, with
+  it, the project's Go floor. The project builds without cgo and stays that way.
 - **The MCP client**, with per-server trust policy, call timeout, tool filter,
   and deterministic tool ordering for prompt caching.
 
@@ -162,21 +185,15 @@ get right, test and change in this repository than in somebody else's server.
 ### Tool surface
 
 ```
-Web.search   {query, count, freshness, country}
-                → [{title, url, description, age}]
-Web.research {query, max_tokens, max_urls, freshness}
-                → [{url, title, chunks: [text, ...]}]     # Brave llm/context
+Web.search {query, count, freshness, country}
+              → [{title, url, description, age}]
 ```
 
-`Web.search` works on the key as it stands today. `Web.research` returns
-`OPTION_NOT_IN_PLAN` until the plan is upgraded, so register it behind a config
-switch (`tools.web.research.enabled`, default false) rather than letting the
-model discover the failure at runtime — an unusable tool in the spec is a tool
-the model will waste a turn on.
-
-When both are registered, the prompt section should say that `Web.research` is
-the first thing to reach for and `Web.search` is what to use when you need to
-choose the pages yourself. That instruction is the point of having both.
+One tool, against the Brave Web Search API, working on the key as it stands.
+There is no second search tool: `llm/context` needed a paid plan and section 2.2
+declines it, so the model searches and then reads what it chose, and the prompt
+section should say so plainly — a result description is there to pick a page
+with, not to answer from.
 
 ### Details that matter
 
@@ -241,11 +258,6 @@ tools:
       max_attempts: 4           # tries before giving up on a 429
       timeout: 20               # seconds for one request, retries included
 
-    research:                   # Brave llm/context; needs the Search plan
-      enabled: false
-      max_tokens: 8192          # 1024-32768; the binding limit on response size
-      max_urls: 20
-
     fetch:
       enabled: true
       timeout: 30               # a page can be slow in a way an API is not
@@ -255,11 +267,13 @@ tools:
 
 `max_attempts` is the one most worth having as a setting rather than a constant.
 Four is right for one request per second, where a collision clears in about a
-second and retrying quietly beats handing the model a failure. On the Search
-plan's fifty requests per second, collisions between a handful of sparse clients
-stop happening at all, and four attempts becomes code that never runs and would
-only delay a real failure — one is the right value there. Changing a plan should
-not mean changing a constant and rebuilding.
+second and retrying quietly beats handing the model a failure to reason about.
+What would make it wrong is the rate limit changing under it — a faster plan, or
+a second backend such as the self-hosted instance section 2.2 names as the
+fallback, where collisions stop happening and four attempts only delays a real
+failure. Neither is planned, and that is the point: the number depends on a fact
+about the far side that this program does not control, so it belongs in the file
+you edit rather than in the binary you rebuild.
 
 The same argument applies more weakly to `timeout` and `count`, which are
 settings because every other tool in this program has its limits in the config
@@ -281,30 +295,108 @@ conversion is the entire value of the tool.
 
 ```
 Web.fetch {url, max_bytes}
-    → {url, final_url, status, title, content, truncated, path}
+    → {url, final_url, status, title, lines, path, content}
+                                       # small page: the whole thing
+    → {url, final_url, status, title, lines, path, head, outline}
+                                       # large page: where to look instead
 ```
 
-`content` is the converted text up to the same caps the Read tool uses; `path`
-is where the whole conversion was written under the session's `tmp/`, so the
-model can `Search` it or `Read` a range without another network call. Cache by a
-hash of the URL in the same place, so fetching a page twice in one session costs
-nothing the second time.
+The whole conversion always goes to a file under the session's `tmp/`, keyed by
+a hash of the URL so fetching the same page twice in one session costs nothing
+the second time. What comes back in the message depends on size, under the same
+caps the Read tool uses — 150 lines or 24 KB.
 
 ### The conversion
 
-Parse with `golang.org/x/net/html`, drop `script`, `style`, `nav`, `header`,
-`footer`, `form` and `svg` subtrees, and emit text that keeps the structure the
-model needs: headings as headings, list items as list items, link text with its
-target, and — this is the part that matters most for a coding agent —
-`<pre>` and `<code>` contents preserved verbatim. A documentation page whose code
-samples have been reflowed into prose is worse than useless, because it looks
-like it worked.
+Use `github.com/JohannesKaufmann/html-to-markdown/v2`, and split the job in two:
+prune the page yourself, then let the library generate the markdown.
 
-That is roughly 200 lines against a package already in the dependency tree.
-A dedicated HTML-to-markdown module would do a better job on tables and nested
-lists; whether that is worth a new direct dependency is a judgement call, and
-starting without it and adding it if tables turn out to matter is the cheaper
-order.
+Parse with `golang.org/x/net/html` and drop the `script`, `style`, `nav`,
+`header`, `footer`, `form` and `svg` subtrees. Then hand the pruned tree to
+`htmltomarkdown.ConvertNode(*html.Node)`, which the library exposes alongside its
+string and reader entry points. That split puts each half where it belongs: which
+parts of a page are content is a judgement that changes per site and wants to sit
+in code you can adjust, whereas turning a cleaned tree into well-formed markdown
+is tedious, well-specified work that somebody has already done properly.
+
+**What the library gets right that matters most here.** Fenced code blocks
+survive, including multi-line ones, and its table plugin handles alignment,
+rowspan and colspan. Converting `go.dev/blog/context` — a code-heavy page — turns
+50,758 bytes of HTML into 20,385 bytes of markdown with all fifteen code blocks
+intact and correctly fenced. A documentation page whose samples were reflowed into
+prose is worse than one that failed outright, because it looks like it worked, and
+that failure is exactly what a hand-written converter takes several iterations to
+stop doing.
+
+**What it costs**, measured rather than assumed:
+
+- Two new modules, `html-to-markdown/v2` (MIT, actively maintained, v2.5.2 at the
+  time of writing) and the author's small `dom` helper.
+- `golang.org/x/net` moves from the v0.33.0 already in the tree to v0.55.0.
+- **The `go` directive has to go from 1.24.0 to 1.25.0**, which is the only part
+  worth pausing on. It is x/net v0.55.0 that requires it rather than the converter
+  itself. The toolchain on this machine is already 1.25.4, so nothing breaks
+  today, but `CLAUDE.md` records the project as Go 1.24 and that line needs
+  changing with it.
+- Nothing pulls in cgo, so the project keeps building without it.
+
+The 40% ratio above is for the whole document including navigation and footer,
+which is why the pruning pass is not optional: without it the tool spends most of
+its output budget on site furniture.
+
+### When the page is too large
+
+A converted page is often larger than a tool result should be — the `go.dev`
+example above is 20 KB — so `Web.fetch` should behave the way Search and Shell
+already do rather than inventing anything: write the whole thing to disk, and
+return enough for the model to decide what part it wants.
+
+**The disk half needs no new code.** Spilled tool output already goes to the
+session's `tmp/` (`TempFileManager`, wired at `cmd/kvit-coder/main.go:457`), and
+the session directory is added to `allowed_paths` at turn start
+(`cmd/kvit-coder/main.go:425`), so the existing `Read` tool opens a spilled file
+by path with no path-safety prompt and `Search` greps it. There is no need for a
+`Web.fetch.range` or any other retrieval tool: the model reads a range of the
+file with the same tool it reads source with, and `Read`'s own offset and limit
+already do the paging.
+
+**The message half should be an outline rather than the first 150 lines.**
+Truncating at the top gives the model the navigation and the introduction and
+then stops, which is the least useful slice of a long page. A heading outline
+with line numbers, plus the opening few lines, tells it both what the page
+contains and where each part starts:
+
+```
+Web.fetch {"url": "https://go.dev/blog/context"}
+
+→ 50,758 bytes of HTML → 1,182 lines of markdown
+  <session>/tmp/fetch-3f9a2c.md
+
+     1  # Go Concurrency Patterns: Context
+    18  ## Introduction
+    47  ## Context
+    52  ### The Context type
+   128  ### Derived contexts
+   301  ## Example: Google Web Search
+   ...
+```
+
+**This is nearly free here, which it would not be elsewhere.** Appendix A.1 of
+`redesign.md` proposes exactly this shape for source files — a skeleton with line
+numbers, then targeted reads — and defers it because it needs per-language
+parsing to be worth much. A web page needs none: the heading levels are in the
+HTML as `<h1>`–`<h6>`, the converter emits them as markdown headings, and
+building the outline is counting the `#` prefixes in output you already have.
+The argument that appendix makes for the idea applies unchanged, and it is the
+better argument now that a 1M window makes tokens the lesser concern: a skeleton
+plus two targeted reads leaves less irrelevant material competing for the model's
+attention than 20 KB of page does.
+
+Two details that decide whether it works. The line numbers in the outline must be
+the line numbers of the file on disk, so a `Read` at the offset the outline gave
+lands where the model expected. And a page small enough to return whole should be
+returned whole, with no outline at all — making the model take two steps to read
+three kilobytes is the cost this is supposed to avoid.
 
 ### Where it stops, said plainly
 
@@ -473,49 +565,37 @@ later ones.
 4. **Move MCP approval memory into the session directory** (an hour). Independent
    of everything else, and a prerequisite for any MCP server being pleasant to
    use.
-5. **Decide the Brave plan.** If upgrading, add `Web.research` against
-   `llm/context` behind its config switch and make it the first move in the
-   prompt. Roughly 1,000 calls a month are covered by the monthly credit, in
-   exchange for an attribution line in the README.
-6. **Configure a browser MCP server** — Playwright MCP or Chrome DevTools MCP,
+5. **Configure a browser MCP server** — Playwright MCP or Chrome DevTools MCP,
    stdio transport, headless Chromium inside WSL — and use it as-is, paying the
    per-turn respawn. A week of that answers the question the daemon exists to
    answer, and answers it with observation rather than argument.
-7. **Build the daemon** per `redesign-mcp.md`, with the per-session lane from
+6. **Build the daemon** per `redesign-mcp.md`, with the per-session lane from
    section 6 above.
-8. **Stagehand, only if step 6 shows the primitive layer is too chatty**, and
+7. **Stagehand, only if step 5 shows the primitive layer is too chatty**, and
    then as an MCP server wrapping it rather than as a library linked into this
    program.
 
 ## 8. Open questions
 
-- **Does `Web.research` make `Web.search` and `Web.fetch` redundant in
-  practice?** If the extracted chunks answer the question nearly every time, two
-  of the three tools are dead weight in the prompt and should be dropped. This is
-  only answerable after the plan upgrade and a fortnight of use.
 - **How often does a page actually need a browser?** The guess is that raw and
   plain-text URLs cover most of what a coding agent reads, and that the browser
   is for the occasional dashboard or JavaScript-rendered reference. If the guess
-  is wrong, steps 6 and 7 move up the list.
+  is wrong, steps 5 and 6 move up the list.
 - **Is the one-per-second limit a real constraint in practice?** The judgement it
   rests on is that searches are sparse and the clients sharing the key are
   well-behaved, so two landing in the same second is rare. The bounded retry
-  covers the rare case. If the 429s turn out to be common, the answer is the
-  Search plan's 50 requests per second rather than coordination between machines
+  covers the rare case. If the 429s turn out to be common, the answer is a second
+  backend without a per-second limit rather than coordination between machines
   that cannot see each other.
-- **Is the rate limit per key or per account?** A 429 body reports
-  `org_rate_limit: null` alongside the per-key numbers, which suggests an
-  account-level limit exists on some plans. If it is per key, issuing a second
-  key gives another consumer its own budget; if it is per account, that buys
-  nothing. Unanswered, and it only matters after a plan upgrade.
-- **On a metered plan the shared resource changes shape.** A quota refuses you
-  when it runs out; a card does not. If the Search plan is taken, the guard rail
-  stops being "may I make one more request" and becomes "how much has been spent
-  this month," which no single machine can answer and the Brave dashboard can.
-- **Is the HTML-to-text conversion good enough without a dedicated library?**
-  Tables and nested lists are where a hand-written converter shows its limits.
-  The trigger for taking the dependency is the first documentation page that
-  comes back garbled in a way that matters.
+- **Does two thousand a month bind?** Sixty-six a day across every client sharing
+  the key, with no paid tier behind it. The guess is that it does not come close.
+  What settles it is the monthly remaining figure the tool already reports, read
+  after a month of use.
+- **Does the pruning list need to be per-site?** Dropping `nav`, `header` and
+  `footer` is a blunt rule that will keep boilerplate on some pages and cut
+  content on others. A measured output ratio per fetch is the cheapest way to
+  notice, since a page converting at 40% is mostly furniture and one at 5% may
+  have lost its content.
 - **Should `Web.fetch` follow cross-host redirects?** Following silently means a
   URL the model chose is not the page it read. Returning the redirect and letting
   the model call again costs a round trip. Returning the content along with the
