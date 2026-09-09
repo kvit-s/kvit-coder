@@ -130,8 +130,10 @@ type UIConfig struct {
 
 // TerminalTitleConfig controls the terminal's window title, which a tabbed
 // terminal such as the one in VS Code also uses as the tab label.
-// kvit-coder-ui sets it to an icon for what it is doing followed by the
-// session's title; the agent on its own never touches it.
+// kvit-coder-ui sets it to an icon for what is happening followed by the
+// session's title. The agent process it spawns writes it too, but only while
+// a prompt of its own is waiting for an answer and only when it was started
+// by the front end; a headless run leaves the title alone.
 //
 // The pointers are so that "unset" and "set to empty" are different things:
 // an unset icon takes the default, an icon set to "" means that state shows
@@ -141,29 +143,35 @@ type TerminalTitleConfig struct {
 	// it is only ever written to a terminal, so there is nothing for a
 	// piped run to break.
 	Enabled *bool `yaml:"enabled"`
-	// Running is the icon shown while a turn is running, Waiting the one
-	// shown while the prompt is open. Unset takes
-	// ui.DefaultTitleRunningIcon and ui.DefaultTitleWaitingIcon.
+	// Running is the icon shown while a turn is running, Asking the one
+	// shown while a prompt is waiting for an answer (a Question, a path or
+	// MCP confirmation, the pause prompt), and Waiting the one shown while
+	// nothing is running and the composer is open. Unset takes the
+	// ui.DefaultTitle*Icon defaults.
 	Running *string `yaml:"running"`
 	Waiting *string `yaml:"waiting"`
+	Asking  *string `yaml:"asking"`
 }
 
 // On reports whether the front end should set the window title.
 func (t TerminalTitleConfig) On() bool { return t.Enabled == nil || *t.Enabled }
 
 // Icons returns the configured icons, falling back to the defaults passed in
-// for whichever of the two the config leaves unset. The defaults come from
+// for whichever of the three the config leaves unset. The defaults come from
 // the caller because internal/ui, which owns them, is a package this one
 // cannot import.
-func (t TerminalTitleConfig) Icons(defRunning, defWaiting string) (string, string) {
-	running, waiting := defRunning, defWaiting
+func (t TerminalTitleConfig) Icons(defRunning, defWaiting, defAsking string) (string, string, string) {
+	running, waiting, asking := defRunning, defWaiting, defAsking
 	if t.Running != nil {
 		running = *t.Running
 	}
 	if t.Waiting != nil {
 		waiting = *t.Waiting
 	}
-	return running, waiting
+	if t.Asking != nil {
+		asking = *t.Asking
+	}
+	return running, waiting, asking
 }
 
 // AgentConfig configures the agent loop and startup instruction sources.

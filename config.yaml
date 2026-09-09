@@ -426,8 +426,8 @@ ui:
 
   # The window title kvit-coder-ui keeps up to date, which a tabbed terminal
   # (VS Code, Windows Terminal, iTerm) also uses as the tab label: an icon
-  # for what the front end is doing, then the session's title. Set an icon
-  # to "" for that state to show the title on its own.
+  # for what is happening, then the session's title. Set an icon to "" for
+  # that state to show the title on its own.
   #
   # The terminal has to be willing to take the title. In VS Code that means
   # "terminal.integrated.tabs.title": "${sequence}" in settings.json; in
@@ -435,4 +435,5 @@ ui:
   terminal_title:
     enabled: true
     running: "⏳"   # a turn is running
-    waiting: "💬"   # the prompt is waiting for input
+    asking: "💬"    # a question or a confirmation is waiting for your answer
+    waiting: "💤"   # nothing is running; the composer is open

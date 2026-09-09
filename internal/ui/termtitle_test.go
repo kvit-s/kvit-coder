@@ -10,9 +10,11 @@ func TestTerminalTitleWritesStateAndSession(t *testing.T) {
 	title := NewTerminalTitle(&buf)
 
 	title.Running("fix the parser")
+	title.Asking("fix the parser")
 	title.Waiting("fix the parser")
 
 	want := "\033]0;" + DefaultTitleRunningIcon + " fix the parser\007" +
+		"\033]0;" + DefaultTitleAskingIcon + " fix the parser\007" +
 		"\033]0;" + DefaultTitleWaitingIcon + " fix the parser\007"
 	if got := buf.String(); got != want {
 		t.Fatalf("title stream = %q, want %q", got, want)
@@ -54,12 +56,13 @@ func TestTerminalTitleSilentWhenOff(t *testing.T) {
 func TestTerminalTitleCustomAndEmptyIcons(t *testing.T) {
 	var buf strings.Builder
 	title := NewTerminalTitle(&buf)
-	title.SetIcons("*", "")
+	title.SetIcons("*", "", "?")
 
 	title.Running("build")
 	title.Waiting("build")
+	title.Asking("build")
 
-	want := "\033]0;* build\007" + "\033]0;build\007"
+	want := "\033]0;* build\007" + "\033]0;build\007" + "\033]0;? build\007"
 	if got := buf.String(); got != want {
 		t.Fatalf("title stream = %q, want %q", got, want)
 	}

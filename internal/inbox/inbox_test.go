@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -375,5 +377,40 @@ func TestPendingCountPeeksWithoutConsuming(t *testing.T) {
 	// Nothing was consumed: the drain still sees both.
 	if got := New(dir).Drain(); len(got) != 2 {
 		t.Errorf("drain after peek returned %d messages, want 2", len(got))
+	}
+}
+
+// TestAskNotifierBracketsTheWait: the notifier says when a prompt starts
+// waiting for an answer and when the wait ends, whichever way it ends. It is
+// what puts the terminal's window title into its "waiting on you" state while
+// a question, a confirmation or the pause prompt is up.
+func TestAskNotifierBracketsTheWait(t *testing.T) {
+	in := New("")
+	var states []bool
+	var mu sync.Mutex
+	in.SetAskNotifier(func(asking bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		states = append(states, asking)
+	})
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		in.Push(Message{Kind: KindUserLine, Text: "y"})
+	}()
+	if _, outcome := in.Ask(context.Background(), nil, "", 0); outcome != AskAnswered {
+		t.Fatalf("outcome is %v, want answered", outcome)
+	}
+
+	// A wait that nobody ends still hands the state back.
+	if _, outcome := in.Ask(context.Background(), nil, "", 50*time.Millisecond); outcome != AskTimedOut {
+		t.Fatalf("outcome is %v, want timed out", outcome)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []bool{true, false, true, false}
+	if !reflect.DeepEqual(states, want) {
+		t.Fatalf("notifier saw %v, want %v", states, want)
 	}
 }

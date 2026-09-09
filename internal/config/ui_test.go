@@ -61,15 +61,15 @@ func TestTerminalTitleParses(t *testing.T) {
 	if !bare.UI.TerminalTitle.On() {
 		t.Error("with no terminal_title section the title should still be set")
 	}
-	if r, w := bare.UI.TerminalTitle.Icons("R", "W"); r != "R" || w != "W" {
-		t.Errorf("icons = %q/%q, want the defaults R/W", r, w)
+	if r, w, a := bare.UI.TerminalTitle.Icons("R", "W", "A"); r != "R" || w != "W" || a != "A" {
+		t.Errorf("icons = %q/%q/%q, want the defaults R/W/A", r, w, a)
 	}
 
-	set := write("set.yaml", "\nui:\n  terminal_title:\n    enabled: false\n    running: \"*\"\n    waiting: \"\"\n")
+	set := write("set.yaml", "\nui:\n  terminal_title:\n    enabled: false\n    running: \"*\"\n    waiting: \"\"\n    asking: \"?\"\n")
 	if set.UI.TerminalTitle.On() {
 		t.Error("enabled: false should turn the title off")
 	}
-	if r, w := set.UI.TerminalTitle.Icons("R", "W"); r != "*" || w != "" {
-		t.Errorf("icons = %q/%q, want */\"\"", r, w)
+	if r, w, a := set.UI.TerminalTitle.Icons("R", "W", "A"); r != "*" || w != "" || a != "?" {
+		t.Errorf("icons = %q/%q/%q, want */\"\"/?", r, w, a)
 	}
 }

@@ -644,6 +644,20 @@ func main() {
 		}
 		config.SetLinePrompter(ask)
 		mcp.SetLinePrompter(ask)
+
+		// Under the front end, a prompt waiting for an answer takes the
+		// window title over. Only under the front end: a headless run has
+		// no long-lived process to put the title back afterwards, so it
+		// leaves the title alone. See installAskTitle.
+		if session.FromUI() {
+			// The same label the front end shows: the session's display
+			// title once it has one, its directory name until then.
+			label := sess.Meta().Title
+			if label == "" {
+				label = sess.Name()
+			}
+			installAskTitle(steering, cfg, os.Stdout, label)
+		}
 	}
 
 	// Setup tool registry using the new setup function

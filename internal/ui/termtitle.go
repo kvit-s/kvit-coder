@@ -8,13 +8,16 @@ import (
 	"sync"
 )
 
-// Default icons for the two states TerminalTitle shows. The hourglass means
-// a turn is running and the speech balloon means the prompt is waiting for
-// something to be typed. Both are configurable under ui.terminal_title in
-// config.yaml, and either can be set to the empty string for no icon.
+// Default icons for the three states TerminalTitle shows. The hourglass
+// means a turn is running, the speech balloon means something is waiting for
+// you to answer it — a Question, a path or MCP confirmation, the pause
+// prompt — and the sleep symbol means nothing is running and the composer is
+// open. All three are configurable under ui.terminal_title in config.yaml,
+// and any of them can be set to the empty string for no icon.
 const (
 	DefaultTitleRunningIcon = "⏳"
-	DefaultTitleWaitingIcon = "💬"
+	DefaultTitleAskingIcon  = "💬"
+	DefaultTitleWaitingIcon = "💤"
 )
 
 // titleMaxRunes caps the session title inside the window title. A tab bar
@@ -23,11 +26,17 @@ const (
 const titleMaxRunes = 48
 
 // TerminalTitle sets the terminal's window title, which a tabbed terminal
-// such as the one in VS Code also uses as the tab label. The front end
-// keeps it showing an icon for what it is doing — a turn is running, or the
-// prompt is waiting for input — followed by the session's title, so a
-// window that is not on screen still says whether the agent is still
-// working.
+// such as the one in VS Code also uses as the tab label. It shows an icon
+// for what is happening — a turn is running, a prompt is waiting for you to
+// answer it, or nothing is running — followed by the session's title, so a
+// window that is not on screen still says whether the agent is still working
+// or has stopped to ask something.
+//
+// Two processes write it. The front end owns it between turns and around a
+// turn; the agent process borrows it while a prompt of its own is waiting,
+// because the front end is blocked on the agent and cannot see the prompt.
+// They never write at the same time: the front end is inside cmd.Run while
+// the agent has it.
 //
 // A terminal takes its title from the escape sequence ESC ] 0 ; text BEL,
 // which sets the window title and the icon name in one go and is understood
@@ -46,6 +55,7 @@ type TerminalTitle struct {
 	on      bool
 	running string
 	waiting string
+	asking  string
 	// last is the title written most recently. Repeating a title writes
 	// nothing, which keeps the sequence out of the stream on the common
 	// path where a state does not actually change.
@@ -64,6 +74,7 @@ func NewTerminalTitle(out io.Writer) *TerminalTitle {
 		on:      terminalTitleSupported(out),
 		running: DefaultTitleRunningIcon,
 		waiting: DefaultTitleWaitingIcon,
+		asking:  DefaultTitleAskingIcon,
 	}
 }
 
@@ -85,12 +96,12 @@ func terminalTitleSupported(out io.Writer) bool {
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
 }
 
-// SetIcons replaces the two state icons. An empty string means that state
+// SetIcons replaces the three state icons. An empty string means that state
 // gets no icon, leaving the session title on its own.
-func (t *TerminalTitle) SetIcons(running, waiting string) {
+func (t *TerminalTitle) SetIcons(running, waiting, asking string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.running, t.waiting = running, waiting
+	t.running, t.waiting, t.asking = running, waiting, asking
 }
 
 // Disable stops the title being touched at all, for ui.terminal_title.enabled
@@ -104,8 +115,12 @@ func (t *TerminalTitle) Disable() {
 // Running shows that a turn is under way in the named session.
 func (t *TerminalTitle) Running(session string) { t.set(t.running, session) }
 
-// Waiting shows that the turn has finished and the prompt is open.
+// Waiting shows that the turn has finished and the composer is open.
 func (t *TerminalTitle) Waiting(session string) { t.set(t.waiting, session) }
+
+// Asking shows that the turn has stopped to put something to you and is
+// waiting for the answer.
+func (t *TerminalTitle) Asking(session string) { t.set(t.asking, session) }
 
 // Clear empties the title on the way out. There is no way to ask a terminal
 // what its title was before, so the empty title is what a program that has

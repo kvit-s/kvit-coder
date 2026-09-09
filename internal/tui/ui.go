@@ -71,6 +71,8 @@ type UI struct {
 	currentEffort string
 	// title writes the terminal's window title, which is also the tab label
 	// in a tabbed terminal: a running or waiting icon, then sessionLabel.
+	// The agent process writes it too while a prompt of its own waits for an
+	// answer, which is a state only that process can see.
 	title *ui.TerminalTitle
 	// sessionTitle caches the display title read from the session's
 	// meta.json, and titledSession says which session it was read for so a
@@ -126,7 +128,8 @@ func New(opts Options) *UI {
 	if !opts.Config.UI.TerminalTitle.On() {
 		u.title.Disable()
 	}
-	u.title.SetIcons(opts.Config.UI.TerminalTitle.Icons(ui.DefaultTitleRunningIcon, ui.DefaultTitleWaitingIcon))
+	u.title.SetIcons(opts.Config.UI.TerminalTitle.Icons(
+		ui.DefaultTitleRunningIcon, ui.DefaultTitleWaitingIcon, ui.DefaultTitleAskingIcon))
 
 	u.pinRunID()
 	return u

@@ -64,6 +64,9 @@ type Inbox struct {
 	// reader consults it so it does not report a prompt's answer as queued
 	// steering, which read as the answer having been swallowed.
 	asking int
+	// askNotify, when set, is told when the first prompt starts waiting and
+	// when the last one stops. See SetAskNotifier.
+	askNotify func(bool)
 
 	// pauseRequested is set by an empty Enter at the terminal: the turn
 	// should stop at its next iteration boundary and ask for steering.
@@ -84,6 +87,20 @@ type Inbox struct {
 // benchmark run wants.
 func New(dir string) *Inbox {
 	return &Inbox{dir: dir, signal: make(chan struct{}, 1)}
+}
+
+// SetAskNotifier installs a function called with true when a prompt starts
+// waiting for someone to type an answer and false when the wait ends, however
+// it ends. cmd/kvit-coder uses it to put the terminal's window title into its
+// "waiting on you" state for as long as the wait lasts, since the front end
+// is blocked on the turn and cannot see that it has stopped to ask something.
+//
+// Only the outermost prompt is reported: the count is what decides, so a
+// prompt nested inside another would not clear the state early.
+func (i *Inbox) SetAskNotifier(fn func(asking bool)) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	i.askNotify = fn
 }
 
 // Awaiting reports whether a prompt is waiting for someone to type an answer.
@@ -362,13 +379,21 @@ const (
 func (i *Inbox) Ask(ctx context.Context, out io.Writer, prompt string, timeout time.Duration) (string, AskOutcome) {
 	i.mu.Lock()
 	i.asking++
+	first, notify := i.asking == 1, i.askNotify
 	i.mu.Unlock()
+	if first && notify != nil {
+		notify(true)
+	}
 
 	var notForUs []Message
 	defer func() {
 		i.mu.Lock()
 		i.asking--
+		last, notify := i.asking == 0, i.askNotify
 		i.mu.Unlock()
+		if last && notify != nil {
+			notify(false)
+		}
 		for _, m := range notForUs {
 			i.Push(m)
 		}

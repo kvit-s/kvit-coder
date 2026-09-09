@@ -207,21 +207,56 @@ Plan/Checkpoint tools and Tasks tools are mutually exclusive — enable one grou
 #### Window title
 
 While it runs, `kvit-coder-ui` keeps the terminal's window title — which a
-tabbed terminal such as VS Code's shows as the tab label — saying what it is
-doing: `⏳ <session title>` while a turn is running, `💬 <session title>` while
-the prompt is waiting for input. The session title is the short summary of the
-first prompt that `--sessions` lists; until the first turn has produced one the
-session's directory name stands in.
+tabbed terminal such as VS Code's shows as the tab label — saying what is
+happening, so a window that is not on screen still tells you whether it needs
+you:
 
-The terminal has to be willing to take a title from the program running in it:
+| Title | State |
+|---|---|
+| `⏳ <session title>` | a turn is running |
+| `💬 <session title>` | the turn has stopped to ask you something and is waiting for the answer: a [`Question`](#questions), a path or MCP confirmation, or the pause prompt |
+| `💤 <session title>` | nothing is running and the composer is open |
 
-- **VS Code** ignores it until `"terminal.integrated.tabs.title": "${sequence}"`
-  is set in `settings.json`.
-- **tmux** needs `set -g set-titles on`.
-- Most other terminals (Windows Terminal, iTerm2, GNOME Terminal, Alacritty,
-  Kitty) do it out of the box.
+The session title is the short summary of the first prompt that `--sessions`
+lists; until the first turn has produced one the session's directory name
+stands in.
 
-Both icons are configurable and the whole thing can be turned off; see
+The front end sets the title around each turn. The `💬` state is set by the
+agent process itself, because the front end is blocked waiting for the turn to
+finish and cannot see that it has stopped to ask something; the agent hands
+the title back when the answer arrives. A headless `kvit-coder` run never
+touches the title — there is no long-lived process to put it back afterwards.
+
+The terminal has to be willing to take a title from the program running in it.
+Most of them already are — Windows Terminal, iTerm2, GNOME Terminal, Alacritty
+and Kitty need nothing — but two need a setting:
+
+**VS Code** labels each terminal tab with the shell's name and ignores the
+title the program set, until you tell it otherwise. Open the command palette
+(`Ctrl+Shift+P`), run *Preferences: Open User Settings (JSON)*, and add:
+
+```json
+"terminal.integrated.tabs.title": "${sequence}"
+```
+
+`${sequence}` means "the title the running program set". You can combine it
+with the others to keep a fallback for terminals running something that sets no
+title: `${process}` is the shell's name (what the default shows), and
+`${separator}` is a dash that appears only when there is something on both
+sides of it, so `"${sequence}${separator}${process}"` gives you the agent's
+title when there is one and the shell's name when there is not.
+
+When VS Code is connected to a container, an SSH host or WSL, this one belongs
+in the *local* settings file rather than the remote one, because the tab is
+drawn by the window on your own machine. That is what *Open User Settings
+(JSON)* gives you by default; on Windows the file is at
+`%APPDATA%\Code\User\settings.json`, and from inside WSL the same file is
+`/mnt/c/Users/<you>/AppData/Roaming/Code/User/settings.json`.
+
+**tmux** needs `set -g set-titles on` in `~/.tmux.conf` before it passes a
+title through to the terminal around it.
+
+All three icons are configurable and the whole thing can be turned off; see
 [`ui`](#ui) below. Nothing is written when output is redirected, and
 `KVIT_CODER_NO_TITLE=1` in the environment turns it off without a config edit.
 
@@ -675,7 +710,8 @@ ui:
   terminal_title:
     enabled: true          # false leaves the terminal's title alone
     running: "⏳"           # icon while a turn is running ("" for none)
-    waiting: "💬"           # icon while the prompt is open ("" for none)
+    asking: "💬"            # icon while a prompt waits for your answer
+    waiting: "💤"           # icon while nothing is running and the composer is open
 ```
 
 ## Benchmarking
