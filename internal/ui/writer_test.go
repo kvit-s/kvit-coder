@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/kvit-s/kvit-coder/internal/report"
 )
 
 // newProgressWriter builds a headless writer whose stderr is a buffer, with the
@@ -679,5 +681,44 @@ func TestSteeringQuietSuppresses(t *testing.T) {
 	w.Steering("paused — type steering, Enter to resume (empty resumes):")
 	if out := buf.String(); out != "" {
 		t.Errorf("quiet steering printed %q, want silence", out)
+	}
+}
+
+// The report printed at the end of a headless turn wraps to the terminal, and
+// is left alone when the answer is piped somewhere that is not one.
+func TestReportPrintWrapsOnlyForATerminal(t *testing.T) {
+	rep := &report.Report{
+		TaskStatus: report.StatusCompleted,
+		Headline:   "Renamed the ordering helper.",
+		Blocks: []report.Block{{
+			Type: report.BlockVerification, ID: "tests", Status: report.VerifyPassed,
+			Summary:  "All 14 tests pass.",
+			Evidence: strings.Repeat("go test ./internal/store ", 12),
+		}},
+	}
+	t.Setenv("COLUMNS", "80")
+
+	var piped bytes.Buffer
+	w := NewWriter(0)
+	w.SetHeadless(true)
+	w.SetStdout(&piped)
+	w.SetStdoutIsTerminal(false)
+	w.Report(rep)
+	for _, line := range strings.Split(piped.String(), "\n") {
+		if strings.Contains(line, "Evidence:") && len([]rune(line)) < 100 {
+			t.Errorf("piped output was wrapped: %q", line)
+		}
+	}
+
+	var term bytes.Buffer
+	w = NewWriter(0)
+	w.SetHeadless(true)
+	w.SetStdout(&term)
+	w.SetStdoutIsTerminal(true)
+	w.Report(rep)
+	for _, line := range strings.Split(term.String(), "\n") {
+		if n := len([]rune(line)); n > 80 {
+			t.Errorf("a %d-column line was printed to an 80-column terminal: %q", n, line)
+		}
 	}
 }

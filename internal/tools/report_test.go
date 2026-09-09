@@ -255,3 +255,16 @@ func TestTheDocumentedExamplesAreValid(t *testing.T) {
 		}
 	}
 }
+
+// The flag that decides whether a run uses reports is the only thing that
+// registers the tool, so a run without it never sees Report in its tool list.
+func TestReportToolIsRegisteredOnlyWhenEnabled(t *testing.T) {
+	cfg := newTestConfig()
+	if reg := SetupRegistry(SetupConfig{Cfg: cfg}); reg.Get("Report") != nil {
+		t.Error("Report was registered with reports switched off")
+	}
+	cfg.Tools.Report.Enabled = true
+	if reg := SetupRegistry(SetupConfig{Cfg: cfg}); reg.Get("Report") == nil {
+		t.Error("Report was not registered with reports switched on")
+	}
+}

@@ -241,19 +241,38 @@ func (w *Writer) WriteJSONOutput(stats *JSONStats) {
 // renderer: the card is already laid out, and styling it as Markdown would
 // reflow the very columns that make it readable.
 //
+// On a terminal the lines are wrapped to its width, with continuations hanging
+// under the field they belong to. Piped output is left as it was written, the
+// same rule the markdown renderer follows, so a log or a script sees the
+// layout the agent produced rather than one shaped by whoever ran it.
+//
 // In JSON mode nothing is printed; the report rides in the JSON document
 // instead, as both the rendered text and the structure behind it.
-func (w *Writer) Report(rep *report.Report, text string) {
+func (w *Writer) Report(rep *report.Report) {
+	text := report.Render(rep, report.Options{ExpandAll: true})
 	if w.jsonMode {
 		jsonContent = text
 		jsonReport = rep
 		return
+	}
+	if w.answerTTY() {
+		text = wrapReport(text, termWidth())
 	}
 	if w.headless {
 		fmt.Fprintf(w.stdout, "%s\n", text)
 		return
 	}
 	fmt.Fprintf(color.Output, "%s\n\n", text)
+}
+
+// wrapReport wraps a rendered report to width, hanging each continuation under
+// the field it continues.
+func wrapReport(text string, width int) string {
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		out = append(out, wrapCardLine(line, width)...)
+	}
+	return strings.Join(out, "\n")
 }
 
 // Manual ANSI codes mirror the fatih/color palette above, but they are

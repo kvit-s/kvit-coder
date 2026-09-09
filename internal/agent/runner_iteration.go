@@ -414,7 +414,7 @@ func (r *Runner) finishOnReport(rep *report.Report, state *runState) {
 	totalTime := time.Since(state.requestStartTime)
 	r.writer.Divider(turnStatsMessage(state, totalTime))
 	if !session.FromUI() {
-		r.writer.Report(rep, rep.PlainText())
+		r.writer.Report(rep)
 	}
 	r.recordTurnTimes(state, totalTime)
 }

@@ -523,3 +523,54 @@ func blockTypeStrings() []string {
 	}
 	return out
 }
+
+// Choice is one option the report offers, located by the block and option it
+// sits in and numbered as the card shows it.
+type Choice struct {
+	// Block indexes Report.Blocks; Option indexes that block's Options.
+	Block, Option int
+	// Number is what the user presses, 1-based. Options past the ninth get 0:
+	// there is no key for them, so the card shows them without a number.
+	Number int
+}
+
+// MaxChoices is how many options one card can offer to a keypress, which is
+// how many digits there are to press.
+const MaxChoices = 9
+
+// Choices lists every option in the report, in display order, numbered
+// continuously across blocks. Numbering across blocks rather than within one
+// selected block is what lets a digit answer any question the report asks
+// without a selection to move first.
+func (r *Report) Choices() []Choice {
+	if r == nil {
+		return nil
+	}
+	var out []Choice
+	n := 0
+	for _, bi := range r.Order() {
+		b := &r.Blocks[bi]
+		if !b.Interactive() {
+			continue
+		}
+		for oi := range b.Options {
+			c := Choice{Block: bi, Option: oi}
+			if n < MaxChoices {
+				n++
+				c.Number = n
+			}
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// Choice returns what the given key number picks, or nil.
+func (r *Report) Choice(number int) *Choice {
+	for i, c := range r.Choices() {
+		if c.Number == number {
+			return &r.Choices()[i]
+		}
+	}
+	return nil
+}

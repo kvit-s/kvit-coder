@@ -93,9 +93,10 @@ type InputModel struct {
 	// puts on an inbox-only turn, and lasts only as long as this composer:
 	// the next one reads the same report again, and :report names that.
 	cardDismissed bool
-	// cardSelected is the highlighted block, as an index into the display
-	// order rather than into Blocks.
-	cardSelected int
+	// termCols is the terminal's width as the last resize reported it, which
+	// is what the report card wraps to. m.width is the textarea's width and
+	// has a margin taken off it already, so it is too narrow for the card.
+	termCols int
 	// cardExpanded holds the ids of blocks showing their details.
 	cardExpanded map[string]bool
 	// cardAnswer is what the user picked, for the driver to act on.
@@ -723,6 +724,7 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, wakeTickCmd()
 	case tea.WindowSizeMsg:
+		m.termCols = msg.Width
 		// Adjust width based on terminal size
 		m.width = msg.Width - 10 // Leave some margin
 		if m.width < 40 {

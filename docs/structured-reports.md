@@ -201,22 +201,28 @@ ends with prose rather than spending the iteration budget being asked again —
 and a turn that used up its repair attempts is not asked at all, having already
 been told to stop trying.
 
-When a report is required is a configuration value with four settings, defaulting
-to `mutating`:
+**Whether a run uses reports at all** is the `--structured` flag rather than a
+setting in the config file. `kvit-coder-ui` passes it for every turn it spawns,
+so reports are the default there; a bare `kvit-coder -p` leaves them off, so a
+scripted run keeps the prose ending it was written against and a caller that
+wants machine-readable output opts in per invocation rather than through a
+config file it may not control. `kvit-coder-ui --structured=false` turns them
+off for a front-end session.
+
+**Which turns owe one** is configuration, with four settings:
 
 ```yaml
 tools:
   report:
-    enabled: true
     mode: mutating        # off | mutating | tools | always
     max_repair_attempts: 3
     max_blocks: 20
 ```
 
-`mutating` means a turn that edited a file, ran a command or started a process
-must report; a turn that only read and answered need not. The same answer
-decides what a `completed` report has to show (section 2.4), so the two rules
-cannot disagree about what the turn did.
+`mutating`, the default, means a turn that edited a file, ran a command or
+started a process must report; a turn that only read and answered need not. The
+same answer decides what a `completed` report has to show (section 2.4), so the
+two rules cannot disagree about what the turn did.
 
 ### 3.4 Where the report is stored
 
@@ -286,17 +292,29 @@ mode of that kind:
 
 | Key | Effect |
 |---|---|
-| `1`–`9` | Pick that option of the active block, while the composer is empty |
-| `alt+↑` / `alt+↓` | Move between blocks, which moves which block a digit answers |
-| `alt+d` | Toggle the selected block's details |
+| `1`–`9` | Pick that option, wherever in the report it sits, while the composer is empty |
+| `0` | Show or hide every block's details, while the composer is empty |
 | `esc` | Dismiss the card for this composer |
 | anything else | Goes to the textarea, as before |
 
-The card claims no bare letter, and the digits only while nothing has been
-typed. A bare letter would make every message starting with that letter
-unwritable for as long as a card is up, which is most of the time between turns,
-and plain arrows are already history navigation. The footer under the card lists
-the keys it is holding, so none of this has to be remembered.
+Digits are the whole keyboard interface deliberately, and they are claimed only
+while nothing has been typed. A bare letter would make every message starting
+with it unwritable for as long as a card is up, which is most of the time
+between turns; alt combinations do not reach the application in every terminal,
+the VS Code one included; and the arrows are already history navigation.
+Numbering every option continuously across blocks rather than within
+one selected block is what makes a single digit enough to answer anything the
+report asks, with no selection to move first — and it is why there is no
+selection, and no highlight. Options past the ninth are shown without a number,
+because there is no key for them. The footer lists only the keys that would do
+something on this particular report: no answer key without options, no details
+key without details.
+
+Lines are wrapped to the terminal, with continuations hanging two columns
+further in so a folded `Impact` or `Evidence` still reads as one field rather
+than as a new one. The agent's own printing does the same when its output is a
+terminal, and leaves the text alone when it is piped, which is the rule the
+markdown renderer already follows for a prose answer.
 
 ### 4.4 What answering does
 

@@ -27,6 +27,11 @@ type Options struct {
 	Config      *config.Config
 	// Yolo passes --yolo to every turn: read and write anywhere, no prompts.
 	Yolo bool
+	// Structured passes --structured to every turn, so the turn ends with a
+	// report this front end draws as a card. It is on by default here and off
+	// in a bare "kvit-coder -p", which keeps a scripted run's output the shape
+	// it was written against.
+	Structured bool
 	// InitialModelSet/InitialModel select the startup row, from -m/--model:
 	// a :mN, index, id, name or wire id, with optional :effort ("m3:xhigh").
 	// Unset means the configured default.
@@ -48,6 +53,7 @@ type UI struct {
 	sessionMgr     *session.Manager
 	cfg            *config.Config
 	yolo           bool
+	structured     bool
 	history        []string
 	historyFile    string
 	// pendingImages are image files staged by :image and :paste for the next
@@ -80,6 +86,7 @@ func New(opts Options) *UI {
 		sessionMgr:     opts.SessionMgr,
 		cfg:            opts.Config,
 		yolo:           opts.Yolo,
+		structured:     opts.Structured,
 		history:        history,
 		historyFile:    historyFile,
 	}
@@ -720,7 +727,11 @@ func (u *UI) showHelp() {
 // inbox-only turn: the inbox files are the prompt, so --wake replaces -p
 // (an empty -p would not even select exec mode) and the agent skips the
 // user message.
-func (u *UI) runAgent(prompt string, images []string) {
+// agentArgs is the command line one turn is spawned with. It is separate from
+// runAgent so what the front end asks of the agent can be read without starting
+// a process.
+func (u *UI) agentArgs(prompt string, images []string) []string {
+
 	var args []string
 	if strings.TrimSpace(prompt) == "" {
 		args = []string{"--wake"}
@@ -731,8 +742,7 @@ func (u *UI) runAgent(prompt string, images []string) {
 	// Images travel as paths, not pixels: the agent normalizes them into the
 	// session on arrival. argv stays small and the prompt cache undisturbed.
 	// Numbered to match the [imageN] labels the composer list showed.
-	for i, img := range images {
-		fmt.Printf("\033[38;5;136m[image%d: %s]\033[0m\n", i+1, img)
+	for _, img := range images {
 		args = append(args, "-image", img)
 	}
 
@@ -769,6 +779,20 @@ func (u *UI) runAgent(prompt string, images []string) {
 	// The UI took the flag, but the agent it spawns is what enforces paths.
 	if u.yolo {
 		args = append(args, "-yolo")
+	}
+
+	// Reports are this front end's default because it has somewhere to put
+	// them; the agent on its own defaults to prose.
+	if u.structured {
+		args = append(args, "-structured")
+	}
+	return args
+}
+
+func (u *UI) runAgent(prompt string, images []string) {
+	args := u.agentArgs(prompt, images)
+	for i, img := range images {
+		fmt.Printf("\033[38;5;136m[image%d: %s]\033[0m\n", i+1, img)
 	}
 
 	// Ctrl-C at the terminal signals every process in the foreground group,

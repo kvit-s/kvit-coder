@@ -45,9 +45,6 @@ type Options struct {
 	// ExpandAll shows every block's details, which is what a headless run and
 	// the full viewer do.
 	ExpandAll bool
-	// Active is the id of the block whose options are numbered. Empty numbers
-	// the first block that asks the user something.
-	Active string
 }
 
 const indent = "  "
@@ -63,11 +60,11 @@ func Lines(r *Report, opts Options) []Line {
 		Text:  r.TaskStatus.Chip() + " · " + r.Headline,
 	}}
 
-	active := opts.Active
-	if active == "" || r.Block(active) == nil || !r.Block(active).Interactive() {
-		if i := r.FirstInteractive(); i >= 0 {
-			active = r.Blocks[i].ID
-		}
+	// Every option is numbered, continuously across blocks, so a digit
+	// reaches any of them without a selection to move first.
+	numbers := map[[2]int]int{}
+	for _, c := range r.Choices() {
+		numbers[[2]int{c.Block, c.Option}] = c.Number
 	}
 
 	for _, i := range r.Order() {
@@ -87,13 +84,11 @@ func Lines(r *Report, opts Options) []Line {
 		}
 
 		if b.Interactive() {
-			numbered := b.ID == active
 			for j := range b.Options {
 				o := &b.Options[j]
-				n := 0
+				n := numbers[[2]int{i, j}]
 				marker := "-"
-				if numbered {
-					n = j + 1
+				if n > 0 {
 					marker = fmt.Sprintf("%d)", n)
 				}
 				line := fmt.Sprintf("%s%s %s", indent, marker, o.Label)

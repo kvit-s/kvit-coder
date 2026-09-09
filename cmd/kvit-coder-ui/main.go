@@ -30,6 +30,7 @@ func main() {
 	effortFlag := flag.String("effort", "", "startup reasoning effort for the selected model (overrides the :effort suffix)")
 	effortShort := flag.String("e", "", "shorthand for --effort")
 	yolo := flag.Bool("yolo", false, "read and write anywhere on the filesystem, without asking")
+	structured := flag.Bool("structured", true, "end each turn with a structured report, shown as a card at the prompt (--structured=false for prose)")
 	showVersion := flag.Bool("version", false, "show version information and exit")
 
 	// Session management flags (pass-through to kvit-coder)
@@ -189,6 +190,7 @@ func main() {
 		SessionMgr:       sessionMgr,
 		Config:           cfg,
 		Yolo:             *yolo,
+		Structured:       *structured,
 		InitialModelSet:  initialModelSet,
 		InitialModel:     initialModel,
 		InitialEffortSet: initialEffortSet,

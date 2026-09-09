@@ -60,6 +60,7 @@ func main() {
 	quietPrompt := flag.String("pq", "", "quiet exec mode: run with this prompt and only print final LLM response")
 	wakeOnly := flag.Bool("wake", false, "inbox-only turn: skip the user message and process pending inbox/proc events")
 	jsonOutput := flag.Bool("json", false, "output structured JSON messages to stderr")
+	structured := flag.Bool("structured", false, "end the turn with a structured report instead of prose (see docs/structured-reports.md)")
 	showVersion := flag.Bool("version", false, "show version information and exit")
 
 	// Benchmark flags
@@ -314,6 +315,15 @@ func main() {
 		cfg.Tools.Shell.AllowWithoutAsking = true
 		writer.Warn("--yolo: full filesystem access, no prompts (dd/mkfs still ask)")
 	}
+
+	// --structured is the only switch for the Report tool, so a scripted run
+	// gets the prose ending it was written against unless it asks for
+	// otherwise, and a caller that wants machine-readable output opts in per
+	// invocation rather than through a config file it may not control.
+	// kvit-coder-ui passes it for every turn it spawns, which is what makes
+	// reports the default there and off here. The config file still supplies
+	// the mode and the limits (tools.report).
+	cfg.Tools.Report.Enabled = *structured
 
 	// Override workspace for benchmark mode - set BEFORE tools are initialized
 	// Store original workspace root for finding benchmarks.yaml

@@ -84,3 +84,31 @@ func TestNoCardWithoutASession(t *testing.T) {
 		t.Errorf("a front end with no session offered a card: %v", rep)
 	}
 }
+
+func hasArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
+// The front end is what makes reports the default: it asks for one on every
+// turn it spawns, while a bare "kvit-coder -p" leaves them off.
+func TestFrontEndAsksForAReportPerTurn(t *testing.T) {
+	u := newTestUI(t, "cards", nil)
+	u.structured = true
+	if args := u.agentArgs("rename the helper", nil); !hasArg(args, "-structured") {
+		t.Errorf("the turn was spawned without -structured: %v", args)
+	}
+	// An inbox-only turn is still a turn, and still reports.
+	if args := u.agentArgs("", nil); !hasArg(args, "-structured") {
+		t.Errorf("a wake turn was spawned without -structured: %v", args)
+	}
+
+	u.structured = false
+	if args := u.agentArgs("rename the helper", nil); hasArg(args, "-structured") {
+		t.Errorf("--structured=false still asked for a report: %v", args)
+	}
+}

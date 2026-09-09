@@ -28,7 +28,6 @@ type CardAnswer struct {
 func (m *InputModel) SetReport(rep *report.Report) {
 	m.card = rep
 	m.cardDismissed = false
-	m.cardSelected = 0
 	m.cardExpanded = map[string]bool{}
 	m.cardAnswer = nil
 }
@@ -49,48 +48,37 @@ func (m *InputModel) cardHolds() bool {
 	return m.cardShowing() && m.card.HasInteractive()
 }
 
-// cardBlocks is the report's blocks in display order.
-func (m *InputModel) cardBlocks() []int {
+// anyDetails reports whether any block has details, which decides whether the
+// footer offers the key that shows them.
+func (m *InputModel) anyDetails() bool {
 	if m.card == nil {
-		return nil
+		return false
 	}
-	return m.card.Order()
-}
-
-// activeBlock is the block a digit key answers: the highlighted one when it
-// asks something, otherwise the first one that does.
-func (m *InputModel) activeBlock() *report.Block {
-	order := m.cardBlocks()
-	if len(order) == 0 {
-		return nil
-	}
-	if m.cardSelected >= 0 && m.cardSelected < len(order) {
-		if b := &m.card.Blocks[order[m.cardSelected]]; b.Interactive() {
-			return b
+	for i := range m.card.Blocks {
+		if m.card.Blocks[i].Details != "" {
+			return true
 		}
 	}
-	if i := m.card.FirstInteractive(); i >= 0 {
-		return &m.card.Blocks[i]
-	}
-	return nil
+	return false
 }
 
-// handleCardKey gives the card first refusal on a keypress. It takes only the
-// keys it advertises, and only while the text is empty, so the composer never
-// traps a message: start typing and every key is the textarea's again.
+// handleCardKey gives the card first refusal on a keypress. It takes only
+// digits and esc, and the digits only while the text is empty, so the composer
+// never traps a message: start typing and every key is the textarea's again.
 //
-// The digits are the reason the card exists — one keypress answers a decision —
-// and the rest are alt combinations rather than bare letters, because a bare
-// letter would make a word starting with it unwritable for as long as a card is
-// up, which is most of the time.
+// Digits are the whole keyboard interface deliberately. A bare letter would
+// make every message starting with it unwritable for as long as a card is up,
+// alt combinations do not survive every terminal — the VS Code terminal eats
+// them — and the arrows are already history navigation. Numbering every option
+// continuously across blocks (report.Choices) is what makes one digit enough to
+// answer anything the report asks, with no selection to move first.
 func (m *InputModel) handleCardKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	if !m.cardShowing() {
 		return false, nil
 	}
 	key := msg.String()
 
-	switch key {
-	case "esc":
+	if key == "esc" {
 		// A completion list is nearer the cursor than the card, so it gets
 		// the first esc and the card gets the next one.
 		if m.completionListActive() || m.compNotice != "" {
@@ -98,38 +86,28 @@ func (m *InputModel) handleCardKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		}
 		m.cardDismissed = true
 		return true, nil
-	case "alt+d":
-		order := m.cardBlocks()
-		if m.cardSelected >= 0 && m.cardSelected < len(order) {
-			id := m.card.Blocks[order[m.cardSelected]].ID
-			m.cardExpanded[id] = !m.cardExpanded[id]
-		}
-		return true, nil
-	case "alt+up":
-		if m.cardSelected > 0 {
-			m.cardSelected--
-		}
-		return true, nil
-	case "alt+down":
-		if m.cardSelected < len(m.cardBlocks())-1 {
-			m.cardSelected++
-		}
-		return true, nil
 	}
 
-	if len(key) == 1 && key[0] >= '1' && key[0] <= '9' && m.textarea.Value() == "" {
-		return m.pickOption(int(key[0] - '0'))
+	if len(key) == 1 && m.textarea.Value() == "" {
+		switch {
+		case key[0] >= '1' && key[0] <= '9':
+			return m.pickOption(int(key[0] - '0'))
+		case key[0] == '0' && m.anyDetails():
+			m.toggleAllDetails()
+			return true, nil
+		}
 	}
 	return false, nil
 }
 
-// pickOption acts on the nth option of the block a digit answers.
+// pickOption acts on the option the given digit shows.
 func (m *InputModel) pickOption(n int) (bool, tea.Cmd) {
-	b := m.activeBlock()
-	if b == nil || n > len(b.Options) {
+	c := m.card.Choice(n)
+	if c == nil {
 		return false, nil
 	}
-	o := &b.Options[n-1]
+	b := &m.card.Blocks[c.Block]
+	o := &b.Options[c.Option]
 	m.cardAnswer = &CardAnswer{BlockID: b.ID, OptionID: o.ID, Effect: o.Effect}
 
 	switch o.Effect {
@@ -156,13 +134,29 @@ func (m *InputModel) pickOption(n int) (bool, tea.Cmd) {
 	}
 }
 
+// toggleAllDetails opens every block's details, or closes them all when any is
+// already open.
+func (m *InputModel) toggleAllDetails() {
+	open := false
+	for i := range m.card.Blocks {
+		if b := &m.card.Blocks[i]; b.Details != "" && m.cardExpanded[b.ID] {
+			open = true
+		}
+	}
+	for i := range m.card.Blocks {
+		if b := &m.card.Blocks[i]; b.Details != "" {
+			m.cardExpanded[b.ID] = !open
+		}
+	}
+}
+
 // Card colors. The status chip is the only part that changes color, because it
 // is the only part whose meaning is a single word.
 var (
 	cardDim         = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	cardText        = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	cardOption      = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
 	cardInstruction = lipgloss.NewStyle().Foreground(lipgloss.Color("109"))
-	cardSelectedRow = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Bold(true)
 	cardChipDone    = lipgloss.NewStyle().Foreground(lipgloss.Color("71")).Bold(true)
 	cardChipAsk     = lipgloss.NewStyle().Foreground(lipgloss.Color("178")).Bold(true)
 	cardChipBad     = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true)
@@ -178,63 +172,92 @@ func chipStyle(s report.Status) lipgloss.Style {
 	return cardChipBad
 }
 
+// cardWidth is how wide the card may draw. It is the terminal less the two
+// columns the card indents by, so a wrapped line stops at the same place the
+// unwrapped ones do.
+func (m InputModel) cardWidth() int {
+	w := m.termCols
+	if w <= 0 {
+		w = 80
+	}
+	if w < 40 {
+		w = 40
+	}
+	return w - 2
+}
+
 // cardView draws the report above the prompt, or nothing when there is no
-// report to draw. It is the same layout the agent prints headless, painted.
+// report to draw. It is the same layout the agent prints headless, painted,
+// with the numbered options brightened because they are the part you act on,
+// and wrapped to the terminal so nothing runs off the right-hand side.
 func (m InputModel) cardView() string {
 	if !m.cardShowing() {
 		return ""
 	}
-	order := m.cardBlocks()
-	selected := ""
-	if m.cardSelected >= 0 && m.cardSelected < len(order) {
-		selected = m.card.Blocks[order[m.cardSelected]].ID
-	}
-
-	active := ""
-	if b := m.activeBlock(); b != nil {
-		active = b.ID
-	}
-
+	width := m.cardWidth()
 	var sb strings.Builder
-	for _, line := range report.Lines(m.card, report.Options{
-		Expanded: m.cardExpanded,
-		Active:   active,
-	}) {
-		switch line.Kind {
-		case report.LineHeader:
-			chip, rest, found := strings.Cut(line.Text, " · ")
-			if found {
-				sb.WriteString(chipStyle(m.card.TaskStatus).Render(chip) + cardText.Render(" · "+rest))
-			} else {
-				sb.WriteString(cardText.Render(line.Text))
-			}
-		case report.LineBlock:
-			if line.BlockID == selected && len(order) > 1 {
-				sb.WriteString(cardSelectedRow.Render("▸ " + line.Text))
-			} else {
-				sb.WriteString(cardText.Render("  " + line.Text))
-			}
-		case report.LineInstruction:
-			sb.WriteString(cardInstruction.Render("  " + line.Text))
-		default:
-			sb.WriteString(cardDim.Render("  " + line.Text))
+
+	paint := func(kind report.LineKind, option int, text string) string {
+		switch {
+		case kind == report.LineBlock:
+			return cardText.Render(text)
+		case kind == report.LineOption && option > 0:
+			return cardOption.Render(text)
+		case kind == report.LineInstruction:
+			return cardInstruction.Render(text)
 		}
-		sb.WriteString("\n")
+		return cardDim.Render(text)
+	}
+
+	for _, line := range report.Lines(m.card, report.Options{Expanded: m.cardExpanded}) {
+		text := line.Text
+		if line.Kind != report.LineHeader {
+			text = "  " + text
+		}
+		for i, out := range wrapCardLine(text, width) {
+			if line.Kind == report.LineHeader {
+				// The chip is a word, so it only ever sits on the first
+				// wrapped line of the headline.
+				if chip, rest, found := strings.Cut(out, " · "); found && i == 0 {
+					sb.WriteString(chipStyle(m.card.TaskStatus).Render(chip) + cardText.Render(" · "+rest))
+				} else {
+					sb.WriteString(cardText.Render(out))
+				}
+			} else {
+				sb.WriteString(paint(line.Kind, line.Option, out))
+			}
+			sb.WriteString("\n")
+		}
 	}
 	sb.WriteString(cardDim.Render(m.cardHint()) + "\n\n")
 	return sb.String()
 }
 
-// cardHint is the footer that says which keys the card is holding, so nothing
-// about it has to be remembered or guessed.
+// wrapCardLine breaks one already-indented card line to fit the terminal,
+// hanging the continuations two columns further in so a wrapped Impact or
+// Evidence still reads as one field rather than as a new one.
+func wrapCardLine(text string, width int) []string {
+	indent := text[:len(text)-len(strings.TrimLeft(text, " "))]
+	return wrapLine(indent, text[len(indent):], width, indent+"  ")
+}
+
+// cardHint is the footer that says which keys the card is holding. It lists
+// only the ones that would do something on this report, so it never advertises
+// a key that does nothing.
 func (m InputModel) cardHint() string {
 	var parts []string
-	if b := m.activeBlock(); b != nil && len(b.Options) > 0 {
-		parts = append(parts, fmt.Sprintf("1-%d answer", len(b.Options)))
+	if n := len(m.card.Choices()); n > 0 {
+		if n > report.MaxChoices {
+			n = report.MaxChoices
+		}
+		if n == 1 {
+			parts = append(parts, "1 answers")
+		} else {
+			parts = append(parts, fmt.Sprintf("1-%d answer", n))
+		}
 	}
-	parts = append(parts, "alt+d details")
-	if len(m.cardBlocks()) > 1 {
-		parts = append(parts, "alt+↑/↓ block")
+	if m.anyDetails() {
+		parts = append(parts, "0 details")
 	}
 	parts = append(parts, "esc dismiss", ":report reopen")
 	return "  [" + strings.Join(parts, " · ") + "]"

@@ -133,7 +133,9 @@ func TestDispatchInstructionIsShownInFull(t *testing.T) {
 	}
 }
 
-func TestOptionsAreNumberedOnTheActiveBlockOnly(t *testing.T) {
+// Options are numbered continuously across every block that asks something, so
+// one digit reaches any of them.
+func TestOptionsAreNumberedAcrossBlocks(t *testing.T) {
 	r := completedReport()
 	r.TaskStatus = StatusNeedsAction
 	first := decisionBlock()
@@ -141,28 +143,21 @@ func TestOptionsAreNumberedOnTheActiveBlockOnly(t *testing.T) {
 	second.ID = "second-decision"
 	r.Blocks = append(r.Blocks, first, second)
 
-	numbered := map[string]int{}
+	numbers := map[string][]int{}
 	for _, l := range Lines(r, Options{}) {
 		if l.Kind == LineOption && l.Option > 0 {
-			numbered[l.BlockID]++
+			numbers[l.BlockID] = append(numbers[l.BlockID], l.Option)
 		}
 	}
-	if numbered["filtered-reordering"] == 0 {
-		t.Error("the first decision's options were not numbered")
+	if len(numbers["filtered-reordering"]) == 0 || len(numbers["second-decision"]) == 0 {
+		t.Fatalf("not every block was numbered: %v", numbers)
 	}
-	if numbered["second-decision"] != 0 {
-		t.Error("a second decision's options were numbered too")
+	// The second block picks up where the first left off.
+	if numbers["second-decision"][0] <= numbers["filtered-reordering"][0] {
+		t.Errorf("numbering restarted on the second block: %v", numbers)
 	}
-
-	// Selecting the second one moves the numbers to it.
-	numbered = map[string]int{}
-	for _, l := range Lines(r, Options{Active: "second-decision"}) {
-		if l.Kind == LineOption && l.Option > 0 {
-			numbered[l.BlockID]++
-		}
-	}
-	if numbered["second-decision"] == 0 {
-		t.Error("the active block's options were not numbered")
+	if c := r.Choice(3); c == nil || r.Blocks[c.Block].ID != "second-decision" {
+		t.Errorf("digit 3 does not reach the second block: %v", c)
 	}
 }
 

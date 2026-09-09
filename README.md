@@ -38,12 +38,12 @@ scripts/install.sh
 ```
 
 That builds both binaries and links them from `~/.local/bin` (or `$KVIT_BIN_DIR`,
-or `--bin-dir <dir>`) back into the checkout, under three names: `kc` and
-`kvit-coder-ui` for the interactive front end, `kvit-coder` for the headless
-agent. They are symlinks, so a later `scripts/build.sh` is all it takes to update
+or `--bin-dir <dir>`) back into the checkout, under four names: `kcu` and
+`kvit-coder-ui` for the interactive front end, `kc` and `kvit-coder` for the
+headless agent. They are symlinks, so a later `scripts/build.sh` is all it takes to update
 them. `scripts/install.sh --uninstall` removes them again.
 
-Once they are on the `$PATH`, `kc` starts a session in whatever directory it is
+Once they are on the `$PATH`, `kcu` starts a session in whatever directory it is
 run from, and that directory is the workspace the model reads and writes.
 
 ### Configure
@@ -86,7 +86,7 @@ tools:
 Without `-config`, both binaries take the first of these that exists:
 `$KVIT_CODER_CONFIG`, `config.yaml` in the directory the command was run in,
 `~/.kvit-coder/config.yaml`, and `config.yaml` next to the binary itself. The
-last one is what the installed `kc` normally uses, since the symlink resolves
+last one is what the installed `kcu` normally uses, since the symlink resolves
 into the checkout; a file at `~/.kvit-coder/config.yaml` overrides it everywhere,
 and a `config.yaml` in a project directory overrides it for that project. A
 `config.yaml` belonging to some other program is passed over rather than loaded,
@@ -98,7 +98,7 @@ section to count as one of ours.
 ```bash
 # Interactive, in any directory once scripts/install.sh has run;
 # the directory it starts in is the workspace
-kc
+kcu
 
 # The same thing from the checkout, without installing
 ./kvit-coder-ui
@@ -184,6 +184,7 @@ Plan/Checkpoint tools and Tasks tools are mutually exclusive — enable one grou
 | `-agent-file <path>` | Append file content to system prompt | - |
 | `-log <path>` | Log file (empty to disable) | `~/.kvit-coder/logs/kvit-coder.log` |
 | `--json` | Structured JSON output to stderr | false |
+| `--structured` | End the turn with a structured report instead of prose ([docs](docs/structured-reports.md)) | false |
 | `-s <name>` | Continue or create named session | - |
 | `-c` | Continue the most recent session | - |
 | `--yolo` | Read and write anywhere, and run anything that would have asked | false |
@@ -201,6 +202,7 @@ Plan/Checkpoint tools and Tasks tools are mutually exclusive — enable one grou
 | `-s <name>` | Continue or create named session | - |
 | `-c` | Continue the most recent session | - |
 | `--yolo` | Read and write anywhere, and run anything that would have asked (passed to each turn) | false |
+| `--structured` | End each turn with a structured report, drawn as a card at the prompt (`--structured=false` for prose) | true |
 
 ## Sessions
 

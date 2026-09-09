@@ -10,16 +10,8 @@ import (
 )
 
 func key(s string) tea.KeyMsg {
-	switch s {
-	case "esc":
+	if s == "esc" {
 		return tea.KeyMsg{Type: tea.KeyEsc}
-	case "alt+up":
-		return tea.KeyMsg{Type: tea.KeyUp, Alt: true}
-	case "alt+down":
-		return tea.KeyMsg{Type: tea.KeyDown, Alt: true}
-	}
-	if strings.HasPrefix(s, "alt+") {
-		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s[4:]), Alt: true}
 	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }
@@ -182,48 +174,34 @@ func TestCardClaimsNoBareLetters(t *testing.T) {
 	}
 }
 
-func TestAltDTogglesDetails(t *testing.T) {
-	m := withCard(decisionReport())
-	if strings.Contains(m.View(), "ran the suite twice") {
-		t.Error("details were shown before being asked for")
+// A digit that no option claims opens every block's details, so there is one
+// details key that needs no alt modifier and no selection.
+func TestZeroTogglesAllDetails(t *testing.T) {
+	rep := decisionReport()
+	rep.Blocks[1].Details = "the filter hides rows 3 and 7"
+	m := withCard(rep)
+
+	m = press(m, "0")
+	view := m.View()
+	if !strings.Contains(view, "ran the suite twice") || !strings.Contains(view, "hides rows 3 and 7") {
+		t.Errorf("0 did not open every block's details:\n%s", view)
 	}
-	// The decision is selected first, being what needs attention; the block
-	// with details is the one below it.
-	m = press(m, "alt+down", "alt+d")
-	if !strings.Contains(m.View(), "ran the suite twice") {
-		t.Errorf("alt+d did not show the details:\n%s", m.View())
-	}
-	m = press(m, "alt+d")
+	m = press(m, "0")
 	if strings.Contains(m.View(), "ran the suite twice") {
-		t.Error("alt+d did not hide the details again")
+		t.Error("0 did not close them again")
 	}
 }
 
-// Moving the selection moves which block a digit answers, so a report with two
-// questions can answer either.
-func TestAltArrowsMoveTheSelection(t *testing.T) {
-	rep := decisionReport()
-	second := rep.Blocks[1]
-	second.ID = "second"
-	second.Options = []report.Option{
-		{ID: "yes", Label: "Yes", Effect: report.EffectDispatch, Instruction: "Do the second thing."},
-		{ID: "no", Label: "No", Effect: report.EffectResolve},
+// With nothing to expand, the footer does not advertise the keys that would
+// expand it, and 0 stays an ordinary character.
+func TestNoDetailsKeysWhenThereAreNoDetails(t *testing.T) {
+	m := withCard(doneReport())
+	if strings.Contains(m.View(), "details") {
+		t.Errorf("the footer offered a details key with nothing to show:\n%s", m.View())
 	}
-	rep.Blocks = append(rep.Blocks, second)
-
-	m := withCard(rep)
-	if b := m.activeBlock(); b == nil || b.ID != "filtered" {
-		t.Fatalf("the first decision is not active: %v", b)
-	}
-	// Display order puts the two decisions first, so one step down selects
-	// the second of them.
-	m = press(m, "alt+down")
-	if b := m.activeBlock(); b == nil || b.ID != "second" {
-		t.Fatalf("alt+down did not move the active block: %v", b)
-	}
-	m = press(m, "1")
-	if m.Value() != "Do the second thing." {
-		t.Errorf("submitted %q, want the selected block's option", m.Value())
+	m = press(m, "0")
+	if got := m.textarea.Value(); got != "0" {
+		t.Errorf("textarea = %q, want the digit typed", got)
 	}
 }
 
@@ -276,5 +254,127 @@ func TestWakeStillFiresUnderAReportWithNothingToAnswer(t *testing.T) {
 	mod, _ := m.Update(wakeTickMsg{})
 	if !mod.(InputModel).WakeFired() {
 		t.Error("a finished build waited behind a card that only needed reading")
+	}
+}
+
+// Every option is numbered continuously across blocks, so a digit reaches a
+// second question without a selection to move first. Nothing on the card needs
+// a modifier key: alt combinations do not reach the app in every terminal.
+func TestDigitsReachEveryBlocksOptions(t *testing.T) {
+	rep := decisionReport()
+	second := rep.Blocks[1]
+	second.ID = "second"
+	second.Options = []report.Option{
+		{ID: "yes", Label: "Yes", Effect: report.EffectDispatch, Instruction: "Do the second thing."},
+		{ID: "no", Label: "No", Effect: report.EffectResolve},
+	}
+	rep.Blocks = append(rep.Blocks, second)
+
+	// Three options on the first decision, then two on the second.
+	if got := len(rep.Choices()); got != 5 {
+		t.Fatalf("the report offers %d numbered choices, want 5", got)
+	}
+	view := withCard(rep).View()
+	if !strings.Contains(view, "4) Yes") {
+		t.Errorf("the second block's options were not numbered on from the first:\n%s", view)
+	}
+	if !strings.Contains(view, "1-5 answer") {
+		t.Errorf("the footer does not offer every option:\n%s", view)
+	}
+
+	m := press(withCard(rep), "4")
+	if m.Value() != "Do the second thing." {
+		t.Errorf("submitted %q, want the second block's first option", m.Value())
+	}
+}
+
+// A tenth option has no key, so it is shown without a number rather than with
+// one that does nothing.
+func TestOptionsPastTheNinthAreNotNumbered(t *testing.T) {
+	rep := decisionReport()
+	for i := 0; i < 3; i++ {
+		b := rep.Blocks[1]
+		b.ID = "extra-" + string(rune('a'+i))
+		rep.Blocks = append(rep.Blocks, b)
+	}
+	numbered := 0
+	for _, c := range rep.Choices() {
+		if c.Number > 0 {
+			numbered++
+		}
+	}
+	if numbered != report.MaxChoices {
+		t.Errorf("%d options got a key, want %d", numbered, report.MaxChoices)
+	}
+}
+
+// longReport has fields that overrun any sensible terminal, which is what the
+// card has to fold rather than push off the right-hand side.
+func longReport() *report.Report {
+	return &report.Report{
+		TaskStatus: report.StatusCompletedWithNotes,
+		Headline:   "Committed the tools-stats caveat; left the rest of the working tree uncommitted for now.",
+		Blocks: []report.Block{{
+			Type: report.BlockWarning, ID: "dirty-tree",
+			Summary:  "The rest of the working tree is still dirty, with 28 modified files and 12 untracked ones.",
+			Severity: "medium",
+			Impact:   "The uncommitted work spans internal/report, the agent runner, the Report tool, the front-end card and the config, and none of it survives a crash or is visible to review.",
+		}},
+	}
+}
+
+func widest(text string) int {
+	w := 0
+	for _, line := range strings.Split(text, "\n") {
+		if n := len([]rune(line)); n > w {
+			w = n
+		}
+	}
+	return w
+}
+
+func TestCardWrapsToTheTerminal(t *testing.T) {
+	m := withCard(longReport())
+	mod, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
+	m = mod.(InputModel)
+
+	view := m.cardView()
+	if got := widest(view); got > 90 {
+		t.Errorf("a card line is %d columns wide in a 90-column terminal:\n%s", got, view)
+	}
+	// Folding must not lose anything.
+	flat := strings.Join(strings.Fields(view), " ")
+	if !strings.Contains(flat, "none of it survives a crash or is visible to review.") {
+		t.Errorf("the end of a wrapped field went missing:\n%s", view)
+	}
+}
+
+// A narrower terminal folds more, and still nothing overruns.
+func TestCardWrapsAgainWhenTheTerminalNarrows(t *testing.T) {
+	m := withCard(longReport())
+	mod, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	wide := mod.(InputModel)
+	mod, _ = wide.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
+	narrow := mod.(InputModel)
+
+	if got := widest(narrow.cardView()); got > 60 {
+		t.Errorf("a card line is %d columns wide in a 60-column terminal", got)
+	}
+	if len(strings.Split(narrow.cardView(), "\n")) <= len(strings.Split(wide.cardView(), "\n")) {
+		t.Error("narrowing the terminal did not fold the card further")
+	}
+}
+
+// Continuations hang under the field rather than returning to the margin, so a
+// folded Impact still reads as one field and not as a new block.
+func TestWrappedContinuationsHangUnderTheirField(t *testing.T) {
+	lines := wrapCardLine("    Impact: "+strings.Repeat("word ", 40), 60)
+	if len(lines) < 2 {
+		t.Fatalf("nothing wrapped: %v", lines)
+	}
+	for _, l := range lines[1:] {
+		if !strings.HasPrefix(l, "      ") {
+			t.Errorf("continuation %q does not hang under its field", l)
+		}
 	}
 }

@@ -222,7 +222,11 @@ tools:
     timeout: 0
 
   report:
-    enabled: true            # end a turn with a validated structured report instead of prose
+    # Whether a turn ends with a validated structured report instead of prose is
+    # the --structured flag, not a setting here: kvit-coder-ui passes it for
+    # every turn, and "kvit-coder -p" leaves it off unless asked. What follows
+    # applies to the runs that do use one.
+    #
     # Which turns owe one: off, mutating (changed a file, ran a command,
     # started a process), tools (used any tool), always.
     mode: mutating
