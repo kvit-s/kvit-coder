@@ -27,12 +27,28 @@ type BatchTool struct {
 
 	mu       sync.Mutex
 	registry *Registry
+	toolCtx  *ToolContext
 }
 
 // NewBatchTool builds the tool. The registry it dispatches through is set
 // afterwards with SetRegistry, because the registry is what holds this tool.
 func NewBatchTool(cfg *config.Config) *BatchTool {
 	return &BatchTool{cfg: cfg}
+}
+
+// SetToolContext gives the tool the shared state its inner calls report into.
+// A batch is one call to the loop, so without this a batch that edited a file
+// would look like a turn that only read.
+func (t *BatchTool) SetToolContext(tc *ToolContext) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.toolCtx = tc
+}
+
+func (t *BatchTool) context() *ToolContext {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.toolCtx
 }
 
 // SetRegistry gives the tool the registry it looks calls up in.
@@ -174,6 +190,7 @@ func (t *BatchTool) Call(ctx context.Context, args json.RawMessage) (any, error)
 	}
 
 	results := make([]BatchResult, len(parsed.Calls))
+	tc := t.context()
 
 	// Calls that only read cannot interfere with each other, so they run at
 	// the same time. Everything else runs in order afterwards, because it
@@ -187,6 +204,7 @@ func (t *BatchTool) Call(ctx context.Context, args json.RawMessage) (any, error)
 			continue
 		}
 		if !isParallelSafe(tool) {
+			tc.NoteMutatingTool()
 			sequential = append(sequential, i)
 			continue
 		}
@@ -257,4 +275,18 @@ func isParallelSafe(tool Tool) bool {
 		return p.ParallelSafe()
 	}
 	return false
+}
+
+// Mutates reports whether running this tool can change something outside the
+// conversation: the workspace, a background process, the checkpoint history.
+// It is the same question isParallelSafe asks for Batch, so the two answers
+// cannot drift — a tool safe to run beside another is one that only reads.
+//
+// Report is excluded. It records what a turn did rather than doing anything,
+// and counting it would make every reported turn look like a mutating one.
+func Mutates(t Tool) bool {
+	if t == nil || t.Name() == "Report" {
+		return false
+	}
+	return !isParallelSafe(t)
 }

@@ -68,8 +68,15 @@ func (r *Runner) executeTools(
 
 		result.lastExecutedIdx = idx
 
-		if strings.HasPrefix(r.registry.InternalName(tc.Function.Name), "Tasks.") {
+		internalName := r.registry.InternalName(tc.Function.Name)
+		if strings.HasPrefix(internalName, "Tasks.") {
 			result.tasksToolExecuted = true
+		}
+		// Report mode "mutating" asks for a report from a turn that changed
+		// something. Recording it here, per call, is what tells a turn that
+		// edited a file apart from one that only read.
+		if tools.Mutates(r.registry.Get(internalName)) {
+			r.toolCtx.NoteMutatingTool()
 		}
 	}
 

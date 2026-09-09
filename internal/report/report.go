@@ -15,7 +15,10 @@
 // docs/structured-reports.md is the design.
 package report
 
-import "sort"
+import (
+	"fmt"
+	"sort"
+)
 
 // Status is the task_status field: what the turn amounted to.
 type Status string
@@ -410,4 +413,113 @@ func (r *Report) Order() []int {
 		return false
 	})
 	return idx
+}
+
+// JSONSchema is the tool's parameter schema as the model sees it.
+//
+// The nine block types share one object rather than being expressed as a
+// discriminated union: several endpoints handle oneOf poorly, and a model that
+// cannot decode the schema sends nothing usable at all. Each field's
+// description says which types require it, and Validate is what actually
+// enforces that, reporting every violation at once so a wrong guess costs one
+// round trip rather than nine.
+func JSONSchema(maxBlocks int) map[string]any {
+	if maxBlocks <= 0 {
+		maxBlocks = DefaultMaxBlocks
+	}
+	str := func(desc string) map[string]any {
+		return map[string]any{"type": "string", "description": desc}
+	}
+	enum := func(desc string, values []string) map[string]any {
+		vals := make([]any, len(values))
+		for i, v := range values {
+			vals[i] = v
+		}
+		return map[string]any{"type": "string", "description": desc, "enum": vals}
+	}
+
+	option := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"id":          str("Short kebab-case name for this option, unique within the block."),
+			"label":       str(fmt.Sprintf("The choice in a few words, at most %d characters.", LabelMax)),
+			"description": str(fmt.Sprintf("What choosing it means, at most %d characters.", TextMax)),
+			"consequence": str(fmt.Sprintf("What follows from choosing it, at most %d characters.", TextMax)),
+			"preview":     str("Optional excerpt of what this option would produce."),
+			"effect": enum("What picking it does. 'dispatch' sends this option's instruction as the next prompt; "+
+				"'collect' puts an answer in the composer to edit and send; 'resolve' records a stop and starts no turn.",
+				Effects),
+			"instruction": str("For a 'dispatch' option only: the prompt picking it will send. It is shown in full " +
+				"before the choice is made, so write it as the instruction you want to receive."),
+		},
+		"required": []string{"id", "label", "effect"},
+	}
+
+	block := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"type": enum("Which kind of item this is. 'change' is work output; 'finding' is something learned; "+
+				"'verification' is how the work was checked; 'warning' is a risk; 'decision' is a choice only the user "+
+				"can make; 'question' is information only the user has; 'blocked' is work that cannot continue; "+
+				"'next_step' is a proposed continuation; 'unclassified' is the last resort.",
+				blockTypeStrings()),
+			"id":      str("Short kebab-case name for this block, unique within the report, such as \"reorder-tests\"."),
+			"summary": str(fmt.Sprintf("The block's fact in one sentence that stands on its own, at most %d characters.", SummaryMax)),
+
+			"impact":         str("Required on 'finding' (why it matters) and 'warning' (what breaks if ignored). Optional elsewhere: what changed for the user, in one line."),
+			"recommendation": str("On 'decision', 'blocked' and 'next_step': the id of the option you recommend, and required there. On 'question': the same, when a safe default exists. On 'finding' and 'warning': free text saying what to do."),
+			"details":        str(fmt.Sprintf("Markdown evidence, logs and file-by-file notes, at most %d bytes. Hidden until the user opens it, so nothing here is needed to understand the summary.", DetailsMax)),
+			"related_files":  map[string]any{"type": "array", "description": "Workspace-relative paths this block is about.", "items": map[string]any{"type": "string"}},
+			"importance":     enum("Required on 'finding': how much it matters.", Levels),
+			"blocks_current_task": map[string]any{"type": "boolean",
+				"description": "Required on 'finding': whether it stops the current task."},
+			"status":                enum("Required on 'verification': how the check went.", VerifyStatuses),
+			"evidence":              str("On 'verification': the command or check behind the outcome."),
+			"limitation":            str("Required on a 'partial' or 'not_run' verification: what was not checked, and why."),
+			"required_to_verify":    str("On 'verification': what would be needed to check it. Accepted in place of 'limitation'."),
+			"severity":              enum("Required on 'warning': how bad it is.", Levels),
+			"question":              str("Required on 'question': the question, phrased as a question."),
+			"blocker":               str("Required on 'blocked': what is stopping the work."),
+			"required_action":       str("Required on 'blocked': what must happen before it can continue."),
+			"options":               map[string]any{"type": "array", "description": fmt.Sprintf("Required on 'decision', 'question', 'blocked' and 'next_step': %d to %d ways forward. A 'next_step' needs one 'dispatch' accept option and at least one 'collect' or 'resolve' alternative.", MinOptions, MaxOptions), "items": option},
+			"response_type":         enum("Required on any block with options. Free text is always allowed alongside them.", []string{ResponseSingle}),
+			"recommendation_reason": str("Required on any block with options: why you recommend what you recommend, or why no safe default can be inferred."),
+			"reason_unclassified":   str("Required on 'unclassified': why no other block type fits."),
+			"suggested_type":        str("On 'unclassified': the type that came closest."),
+		},
+		"required": []string{"type", "id", "summary"},
+	}
+
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"task_status": enum("What this turn amounted to. A report that asks the user anything is 'needs_action' or 'blocked'. "+
+				"'completed' and 'completed_with_notes' need a verification block.", statusStrings()),
+			"headline": str(fmt.Sprintf("One sentence, at most %d characters, no line break. It is the part that gets read, so put the "+
+				"material fact in it rather than a label for it.", HeadlineMax)),
+			"blocks": map[string]any{
+				"type": "array",
+				"description": fmt.Sprintf("The typed items behind the headline, 0 to %d of them. Fewer is better: several routine steps "+
+					"belong in one block's details, not one block each.", maxBlocks),
+				"items": block,
+			},
+		},
+		"required": []string{"task_status", "headline", "blocks"},
+	}
+}
+
+func statusStrings() []string {
+	out := make([]string, len(Statuses))
+	for i, s := range Statuses {
+		out[i] = string(s)
+	}
+	return out
+}
+
+func blockTypeStrings() []string {
+	out := make([]string, len(BlockTypes))
+	for i, t := range BlockTypes {
+		out[i] = string(t)
+	}
+	return out
 }

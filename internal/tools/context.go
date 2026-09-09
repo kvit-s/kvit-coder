@@ -7,6 +7,7 @@ import (
 
 	"github.com/kvit-s/kvit-coder/internal/inbox"
 	"github.com/kvit-s/kvit-coder/internal/permissions"
+	"github.com/kvit-s/kvit-coder/internal/report"
 )
 
 // ToolContext holds shared mutable state for all tools in a session.
@@ -56,6 +57,15 @@ type ToolContext struct {
 	// image tools fall back to the OS temp directory.
 	sessionTmpMu sync.Mutex
 	sessionTmp   string
+
+	// reportMu guards everything about the turn's structured report: the one
+	// that was accepted, how many were rejected first, and whether anything
+	// this turn changed the workspace (which is what decides a report is owed
+	// under report mode "mutating").
+	reportMu       sync.Mutex
+	acceptedReport *report.Report
+	reportRepairs  int
+	mutated        bool
 }
 
 // NewToolContext creates a new ToolContext with initialized state.
@@ -280,4 +290,72 @@ func (tc *ToolContext) SessionTmp() string {
 	tc.sessionTmpMu.Lock()
 	defer tc.sessionTmpMu.Unlock()
 	return tc.sessionTmp
+}
+
+// AcceptReport records the report that ends this turn. The loop reads it after
+// each round of tool calls: an accepted report is what stops the turn, in place
+// of the model choosing to stop.
+func (tc *ToolContext) AcceptReport(r *report.Report) {
+	if tc == nil {
+		return
+	}
+	tc.reportMu.Lock()
+	defer tc.reportMu.Unlock()
+	tc.acceptedReport = r
+}
+
+// AcceptedReport returns the report this turn submitted, or nil.
+func (tc *ToolContext) AcceptedReport() *report.Report {
+	if tc == nil {
+		return nil
+	}
+	tc.reportMu.Lock()
+	defer tc.reportMu.Unlock()
+	return tc.acceptedReport
+}
+
+// RecordReportRepair counts one rejected report and returns how many this turn
+// has had. Past the configured budget the model is told to stop repairing, so a
+// model that cannot satisfy the schema ends its turn rather than spending it
+// resubmitting.
+func (tc *ToolContext) RecordReportRepair() int {
+	if tc == nil {
+		return 0
+	}
+	tc.reportMu.Lock()
+	defer tc.reportMu.Unlock()
+	tc.reportRepairs++
+	return tc.reportRepairs
+}
+
+// ReportRepairs is how many reports this turn has had rejected.
+func (tc *ToolContext) ReportRepairs() int {
+	if tc == nil {
+		return 0
+	}
+	tc.reportMu.Lock()
+	defer tc.reportMu.Unlock()
+	return tc.reportRepairs
+}
+
+// NoteMutatingTool records that this turn ran a tool that changes something
+// outside the conversation. Report mode "mutating" asks for a report only from
+// a turn that did.
+func (tc *ToolContext) NoteMutatingTool() {
+	if tc == nil {
+		return
+	}
+	tc.reportMu.Lock()
+	defer tc.reportMu.Unlock()
+	tc.mutated = true
+}
+
+// MutatedThisTurn reports whether any tool that changes something has run.
+func (tc *ToolContext) MutatedThisTurn() bool {
+	if tc == nil {
+		return false
+	}
+	tc.reportMu.Lock()
+	defer tc.reportMu.Unlock()
+	return tc.mutated
 }

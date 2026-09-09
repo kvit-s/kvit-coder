@@ -36,6 +36,7 @@ var CategoryHeaders = map[string]string{
 	"checkpoint": "## Checkpoints and Undo",
 	"web":        "## Web Tools",
 	"mcp":        "## MCP Tools (external servers)",
+	"report":     "## Ending the Turn",
 }
 
 var modelToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
@@ -524,7 +525,7 @@ func (r *Registry) GenerateToolPrompt() string {
 	var sb strings.Builder
 
 	// Generate in deterministic order
-	categories := []string{"filesystem", "shell", "plan", "checkpoint", "mcp"}
+	categories := []string{"filesystem", "shell", "plan", "checkpoint", "mcp", "report"}
 	for _, cat := range categories {
 		docs, ok := sections[cat]
 		if !ok || len(docs) == 0 {
@@ -584,7 +585,7 @@ func (r *Registry) ToolsInCategory(category string) []Tool {
 
 // EnabledCategories returns the list of categories that have enabled tools
 func (r *Registry) EnabledCategories() []string {
-	categoryOrder := []string{"filesystem", "shell", "web", "plan", "checkpoint", "mcp"}
+	categoryOrder := []string{"filesystem", "shell", "web", "plan", "checkpoint", "mcp", "report"}
 	var enabled []string
 	for _, cat := range categoryOrder {
 		if len(r.ToolsInCategory(cat)) > 0 {

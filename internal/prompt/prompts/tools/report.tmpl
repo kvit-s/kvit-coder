@@ -1,0 +1,78 @@
+### Report - End the turn with a structured report
+
+Call `Report` once, as the last thing you do in a turn. The turn ends when the
+report is accepted, so everything you have to say goes in the report rather than
+after it. Do not call it twice, and do not write a prose summary as well.
+
+A report has three fields:
+
+- `task_status`: one of `completed`, `completed_with_notes`, `needs_action`,
+  `blocked`, `failed`.
+- `headline`: one sentence, at most 160 characters. It is the part that gets
+  read, so put the material fact in it.
+- `blocks`: the typed items behind the headline. Fewer is better — put related
+  steps in one block's `details`, not one block each.
+
+Every block has a `type`, a kebab-case `id` unique in the report, and a
+`summary` that states its fact on its own.
+
+```json
+{
+  "task_status": "needs_action",
+  "headline": "Drag-and-drop ordering works; one filtered-view behaviour needs a decision.",
+  "blocks": [
+    {"type": "change", "id": "reorder-impl",
+     "summary": "Added drag handles to the row list and persisted the new order.",
+     "related_files": ["internal/ui/rows.go", "internal/store/order.go"]},
+    {"type": "verification", "id": "reorder-tests",
+     "summary": "14/14 relevant tests pass and ordering survives a restart.",
+     "status": "passed", "evidence": "go test ./internal/store (14 passed)"},
+    {"type": "decision", "id": "filtered-reordering",
+     "summary": "Choose how reordering behaves while a filter hides some rows.",
+     "options": [
+       {"id": "preserve", "label": "Preserve hidden positions",
+        "consequence": "Hidden rows keep their slots; visible rows move around them.",
+        "effect": "dispatch",
+        "instruction": "Implement reordering while preserving hidden-row positions."},
+       {"id": "recompute", "label": "Recompute the whole ordering",
+        "consequence": "Hidden rows are pushed to the end.",
+        "effect": "dispatch",
+        "instruction": "Implement reordering by recomputing the whole ordering."}
+     ],
+     "recommendation": "preserve",
+     "recommendation_reason": "It disturbs the least unrelated state and keeps hidden rows stable.",
+     "response_type": "single"}
+  ]
+}
+```
+
+**Which block type to use.** `change` for work output. `finding` for something
+learned that matters, with `impact`, `importance` and `blocks_current_task`.
+`verification` for how you checked, with `status`. `warning` for a risk, with
+`severity` and `impact`. `decision` when only the user can choose. `question`
+when only the user has the information. `blocked` when something outside stops
+you. `next_step` when there is an obvious continuation to accept or redirect.
+`unclassified` only when nothing else fits, and say why.
+
+**The rules that get broken most.**
+
+- When the turn changed something, `completed` and `completed_with_notes` need a
+  `verification` block. If you ran nothing, say so: status `not_run` with a
+  `limitation` explaining why. Do not put an explanation in a verification block
+  that verified nothing. A turn that only read and explained puts its answer in
+  a `finding` and needs no verification.
+- Any block that asks the user something makes the whole report `needs_action`
+  or `blocked`.
+- An interactive block needs 2 to 6 options, a `recommendation_reason`, and
+  `response_type: "single"`. `decision`, `blocked` and `next_step` also need a
+  `recommendation` naming one option id; `question` may omit it when there is no
+  safe default, and then the reason says why.
+- An option's `effect` is `dispatch` (its `instruction` becomes the next prompt,
+  and the user reads it before choosing, so write it as an instruction you want
+  to receive), `collect` (the user writes an answer), or `resolve` (the user
+  stops here). Only a `dispatch` option has an `instruction`.
+- A `next_step` needs one `dispatch` accept option and at least one `collect` or
+  `resolve` alternative.
+
+A report that does not fit comes back as `REPORT_REJECTED` with every problem
+listed by field. Fix all of them and call again.

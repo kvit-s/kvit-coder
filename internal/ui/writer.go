@@ -10,6 +10,7 @@ import (
 	"github.com/fatih/color"
 
 	"github.com/kvit-s/kvit-coder/internal/markdown"
+	"github.com/kvit-s/kvit-coder/internal/report"
 	"github.com/kvit-s/kvit-coder/internal/tools"
 )
 
@@ -63,6 +64,10 @@ const (
 type JSONOutput struct {
 	Content string     `json:"content"`         // The final LLM response
 	Stats   *JSONStats `json:"stats,omitempty"` // Statistics (tokens, cost, etc.)
+	// Report is the structured report the turn ended with, when it ended with
+	// one. A consumer that wants the status or the blocks reads it here rather
+	// than parsing Content, which holds the same report as text.
+	Report *report.Report `json:"report,omitempty"`
 }
 
 // JSONStats represents statistics in JSON output
@@ -207,6 +212,9 @@ func (w *Writer) SetColorOutput(stdout io.Writer) {
 // jsonContent accumulates the final content for JSON output
 var jsonContent string
 
+// jsonReport accumulates the turn's structured report for JSON output.
+var jsonReport *report.Report
+
 // SetJSONContent sets the content to be output in JSON mode
 func (w *Writer) SetJSONContent(content string) {
 	jsonContent = content
@@ -220,10 +228,32 @@ func (w *Writer) WriteJSONOutput(stats *JSONStats) {
 	output := JSONOutput{
 		Content: jsonContent,
 		Stats:   stats,
+		Report:  jsonReport,
 	}
 	data, _ := json.MarshalIndent(output, "", "  ")
 	fmt.Fprintln(w.stdout, string(data))
 	jsonContent = "" // Reset for next use
+	jsonReport = nil
+}
+
+// Report prints the structured report a turn ended with. It goes where the
+// final answer goes — stdout when headless — but never through the markdown
+// renderer: the card is already laid out, and styling it as Markdown would
+// reflow the very columns that make it readable.
+//
+// In JSON mode nothing is printed; the report rides in the JSON document
+// instead, as both the rendered text and the structure behind it.
+func (w *Writer) Report(rep *report.Report, text string) {
+	if w.jsonMode {
+		jsonContent = text
+		jsonReport = rep
+		return
+	}
+	if w.headless {
+		fmt.Fprintf(w.stdout, "%s\n", text)
+		return
+	}
+	fmt.Fprintf(color.Output, "%s\n\n", text)
 }
 
 // Manual ANSI codes mirror the fatih/color palette above, but they are

@@ -13,6 +13,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kvit-s/kvit-coder/internal/config"
+	"github.com/kvit-s/kvit-coder/internal/report"
 	"github.com/kvit-s/kvit-coder/internal/session"
 	"github.com/kvit-s/kvit-coder/internal/ui"
 )
@@ -145,17 +146,24 @@ func (u *UI) Run() error {
 	fmt.Println()
 
 	for {
+		// The report the last turn ended with, when it is still the last
+		// message. It is drawn as a card above the composer, and while it is
+		// waiting on an answer it holds back the inbox turn below.
+		card := u.currentReport()
+
 		// Turn boundary, agent off: materialize due proc events into the
 		// inbox, then fire an inbox-only turn when anything waits — the
 		// startup case and the post-turn case alike. The composer below
-		// covers arrivals while it is open.
-		if n := u.checkWake(); n > 0 {
+		// covers arrivals while it is open. An unanswered decision is
+		// something in flight, so the turn waits behind it rather than
+		// starting out from under the card; the composer shows the count.
+		if n := u.checkWake(); n > 0 && !card.HasInteractive() {
 			fmt.Printf("\033[38;5;136m[inbox: %d pending — processing]\033[0m\n", n)
 			u.runAgent("", nil)
 			continue
 		}
 
-		input, composerImages, woke, shouldExit, err := u.readInput()
+		input, composerImages, woke, shouldExit, err := u.readInput(card)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\033[31m[error] Input error: %v\033[0m\n", err)
 			break
@@ -205,7 +213,7 @@ func (u *UI) Run() error {
 // references and clears the staging. woke reports that the composer
 // submitted itself on inbox activity: the input is empty and the inbox is
 // the prompt.
-func (u *UI) readInput() (string, []string, bool, bool, error) {
+func (u *UI) readInput(card *report.Report) (string, []string, bool, bool, error) {
 	promptText := u.buildPromptText()
 
 	// Create and run input model
@@ -213,6 +221,9 @@ func (u *UI) readInput() (string, []string, bool, bool, error) {
 	// While the composer is open, proc events materialize into the inbox
 	// and a pending inbox with still-empty text fires an inbox-only turn.
 	inputModel.SetWakePoll(u.wakePoll)
+	// The card the composer draws above itself. Nil leaves the composer
+	// exactly as it was before reports existed.
+	inputModel.SetReport(card)
 	// Seed the composer list so [imageN] numbering covers the already-staged
 	// images too, not just the ones pasted below.
 	inputModel.SetStagedImages(u.pendingImages)
@@ -402,6 +413,16 @@ func (u *UI) handleCommand(input string) bool {
 			}
 		}
 		fmt.Println()
+
+	case "report":
+		// The card comes back on its own: any command ends the composer and
+		// the next one reads the report again. This says so when there is
+		// nothing to come back to, which is the only case that needs words.
+		if u.currentReport() == nil {
+			fmt.Println("No report to show. The last message is not a report.")
+			fmt.Println()
+		}
+		return false
 
 	case "history":
 		if u.currentSession == "" {
@@ -675,6 +696,7 @@ func (u *UI) showHelp() {
 	fmt.Println("  :resume          Continue the most recent session")
 	fmt.Println("  :sessions        List all sessions")
 	fmt.Println("  :history         Show current session history")
+	fmt.Println("  :report          Show the last turn's report again")
 	fmt.Println("  :clear           Clear the terminal")
 	fmt.Println("  :config          Show configuration")
 	fmt.Println("  :image <path>..  Stage image files for the next turn")
@@ -795,4 +817,23 @@ func (u *UI) runAgent(prompt string, images []string) {
 	}
 
 	fmt.Println()
+}
+
+// currentReport is the report the last turn ended with, or nil when the
+// conversation's last message is not one.
+//
+// There is nothing to track between turns: a cancelled turn, an exhausted
+// iteration budget and an answered report each append messages of their own, so
+// each takes the card away by being there. A read error means no card rather
+// than a failed prompt — the report is a convenience, and the conversation is
+// still in the history either way.
+func (u *UI) currentReport() *report.Report {
+	if u.sessionMgr == nil || u.currentSession == "" {
+		return nil
+	}
+	rep, current, err := u.sessionMgr.LastReport(u.currentSession)
+	if err != nil || !current {
+		return nil
+	}
+	return rep
 }

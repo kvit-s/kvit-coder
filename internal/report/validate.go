@@ -80,12 +80,24 @@ func unfence(s string) string {
 	return s
 }
 
+// Rules are the parts of validation that depend on the turn rather than on the
+// report, so the same report can be right for one turn and wrong for another.
+type Rules struct {
+	// MaxBlocks bounds the block list. Zero selects DefaultMaxBlocks.
+	MaxBlocks int
+	// Mutated says whether the turn changed anything. It decides what
+	// "completed" has to show: a turn that edited files says how it checked
+	// them, while a turn that only read and explained is finished without a
+	// verification block. Demanding one of a question-answering turn is how
+	// the explanation ends up inside a block that verified nothing.
+	Mutated bool
+}
+
 // Validate checks a normalized report and returns everything wrong with it, so
 // the model can fix a whole report in one pass rather than one problem per
 // round trip. An empty result means the report is acceptable.
-//
-// maxBlocks bounds the block list; zero selects DefaultMaxBlocks.
-func Validate(r *Report, maxBlocks int) []Problem {
+func Validate(r *Report, rules Rules) []Problem {
+	maxBlocks := rules.MaxBlocks
 	if maxBlocks <= 0 {
 		maxBlocks = DefaultMaxBlocks
 	}
@@ -108,7 +120,7 @@ func Validate(r *Report, maxBlocks int) []Problem {
 	for i := range r.Blocks {
 		ps = append(ps, checkBlock(r, i, seen)...)
 	}
-	ps = append(ps, checkConsistency(r)...)
+	ps = append(ps, checkConsistency(r, rules)...)
 	return ps
 }
 
@@ -346,7 +358,7 @@ func checkInteractive(b *Block, at func(string) string) []Problem {
 // checkConsistency covers the rules between the status and the blocks: a turn
 // cannot claim to be done with nothing that says it was checked, and cannot ask
 // a question while claiming to be finished.
-func checkConsistency(r *Report) []Problem {
+func checkConsistency(r *Report, rules Rules) []Problem {
 	var ps []Problem
 	count := map[BlockType]int{}
 	for i := range r.Blocks {
@@ -356,9 +368,13 @@ func checkConsistency(r *Report) []Problem {
 
 	switch r.TaskStatus {
 	case StatusCompleted, StatusCompletedWithNotes:
-		if count[BlockVerification] == 0 {
+		switch {
+		case rules.Mutated && count[BlockVerification] == 0:
 			ps = append(ps, Problem{Path: "/blocks", Code: "status_needs_verification",
-				Message: "A completed turn says how it was checked: add a verification block. When nothing was run, use status \"not_run\" with a limitation saying why."})
+				Message: "This turn changed something, so the report says how that was checked: add a verification block. When you ran nothing, use status \"not_run\" with a limitation saying why."})
+		case !rules.Mutated && len(r.Blocks) == 0:
+			ps = append(ps, Problem{Path: "/blocks", Code: "status_needs_block",
+				Message: "A completed report needs at least one block. This turn changed nothing, so what it found goes in a finding rather than a verification."})
 		}
 	case StatusNeedsAction:
 		if count[BlockDecision]+count[BlockQuestion]+count[BlockNextStep] == 0 {

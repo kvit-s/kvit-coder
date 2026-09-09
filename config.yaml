@@ -221,6 +221,14 @@ tools:
     # With a terminal the tool waits as long as it takes.
     timeout: 0
 
+  report:
+    enabled: true            # end a turn with a validated structured report instead of prose
+    # Which turns owe one: off, mutating (changed a file, ran a command,
+    # started a process), tools (used any tool), always.
+    mode: mutating
+    max_repair_attempts: 3   # rejected reports one turn may resubmit before it is told to stop
+    max_blocks: 20           # typed items per report
+
   # Reaching the network. Enabling one of these is the decision to let the agent
   # out: unlike a shell curl, which is approved per command because the shell
   # can run anything, these two can only search and fetch.

@@ -566,6 +566,7 @@ type ToolsConfig struct {
 	Search      SearchToolConfig      `yaml:"search"`
 	Shell       ShellToolConfig       `yaml:"shell"`
 	Question    QuestionToolConfig    `yaml:"question"`
+	Report      ReportToolConfig      `yaml:"report"`
 	Procs       ProcsToolsConfig      `yaml:"procs"`
 	Batch       BatchToolConfig       `yaml:"batch"`
 	Plan        PlanToolsConfig       `yaml:"plan"`
@@ -685,6 +686,69 @@ type QuestionToolConfig struct {
 	// so a benchmark or scripted run never hangs on a question. A supervised
 	// headless run sets it to a few minutes.
 	Timeout int `yaml:"timeout"`
+}
+
+// ReportMode says which turns must end with a structured report.
+type ReportMode string
+
+const (
+	// ReportModeOff never asks for one.
+	ReportModeOff ReportMode = "off"
+	// ReportModeMutating asks for one from a turn that changed a file, ran a
+	// command or started a process. A turn that only read and answered ends
+	// with prose as before. This is the default.
+	ReportModeMutating ReportMode = "mutating"
+	// ReportModeTools asks for one from any turn that used a tool.
+	ReportModeTools ReportMode = "tools"
+	// ReportModeAlways asks for one from every turn.
+	ReportModeAlways ReportMode = "always"
+)
+
+// DefaultReportRepairAttempts is how many rejected reports a turn may submit
+// before it is told to stop repairing and end with prose instead. Past this the
+// model is spending the turn on the schema rather than on the work.
+const DefaultReportRepairAttempts = 3
+
+// ReportToolConfig configures the Report tool, which ends a turn with a
+// validated structured report instead of free prose. See
+// docs/structured-reports.md.
+type ReportToolConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// Mode is which turns must end with one: off, mutating (the default),
+	// tools, or always.
+	Mode ReportMode `yaml:"mode"`
+	// MaxRepairAttempts bounds how many rejected reports one turn may submit.
+	// Zero selects DefaultReportRepairAttempts.
+	MaxRepairAttempts int `yaml:"max_repair_attempts"`
+	// MaxBlocks bounds the block list. Zero selects the package default of 20.
+	MaxBlocks int `yaml:"max_blocks"`
+}
+
+// ResolvedMode returns the configured mode, defaulting to mutating. An
+// unrecognized value is treated as the default rather than failing a session,
+// because the cost of a stray report is a card nobody asked for.
+func (c ReportToolConfig) ResolvedMode() ReportMode {
+	switch c.Mode {
+	case ReportModeOff, ReportModeMutating, ReportModeTools, ReportModeAlways:
+		return c.Mode
+	}
+	return ReportModeMutating
+}
+
+// Required reports whether a turn with these properties owes a report.
+func (c ReportToolConfig) Required(usedTools, mutated bool) bool {
+	if !c.Enabled {
+		return false
+	}
+	switch c.ResolvedMode() {
+	case ReportModeAlways:
+		return true
+	case ReportModeTools:
+		return usedTools
+	case ReportModeMutating:
+		return mutated
+	}
+	return false
 }
 
 // BatchToolConfig configures the Batch tool, which runs several independent
@@ -1074,6 +1138,8 @@ func (c *Config) IsToolEnabled(toolName string) bool {
 		return c.Tools.Question.Enabled
 	case "batch", "Batch":
 		return c.Tools.Batch.Enabled
+	case "report", "Report":
+		return c.Tools.Report.Enabled
 	case "shell.start", "shell.output", "shell.status", "shell.list", "shell.kill",
 		"observe.wait", "observe.add":
 		return c.Tools.Procs.Enabled

@@ -6,6 +6,8 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/kvit-s/kvit-coder/internal/report"
 	rw "github.com/mattn/go-runewidth"
 	"github.com/rivo/uniseg"
 	"os"
@@ -82,6 +84,22 @@ type InputModel struct {
 	// non-empty while the text was still empty, so the driver should run an
 	// inbox-only turn rather than treat the empty submit as a no-op.
 	wakeFired bool
+
+	// card is the report the last turn ended with, drawn above the input.
+	// Nil when the conversation's last message was not a report. See
+	// report_card.go and docs/structured-reports.md.
+	card *report.Report
+	// cardDismissed is set by esc. It hides the card and lifts the hold it
+	// puts on an inbox-only turn, and lasts only as long as this composer:
+	// the next one reads the same report again, and :report names that.
+	cardDismissed bool
+	// cardSelected is the highlighted block, as an index into the display
+	// order rather than into Blocks.
+	cardSelected int
+	// cardExpanded holds the ids of blocks showing their details.
+	cardExpanded map[string]bool
+	// cardAnswer is what the user picked, for the driver to act on.
+	cardAnswer *CardAnswer
 }
 
 // SetImagePasteHandler installs the clipboard-image stager behind the paste
@@ -696,7 +714,7 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the prompt, not composing. Anything typed means they will send
 		// soon, and the turn they send picks the inbox up at its first
 		// iteration — so show a badge instead and keep waiting.
-		if pending > 0 && strings.TrimSpace(m.textarea.Value()) == "" {
+		if pending > 0 && strings.TrimSpace(m.textarea.Value()) == "" && !m.cardHolds() {
 			m.value = ""
 			m.submitted = true
 			m.wakeFired = true
@@ -738,6 +756,10 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			m.clearCompletion()
 		}
+		if handled, cmd := m.handleCardKey(msg); handled {
+			return m, cmd
+		}
+
 		switch msg.String() {
 		// Submit on Enter
 		case "enter":
@@ -977,7 +999,7 @@ func (m InputModel) View() string {
 
 	// Simplified view without borders for better performance
 	// Just show prompt and textarea with scroll indicator
-	out := m.prompt + scrollInfo + "\n" + m.textarea.View()
+	out := m.cardView() + m.prompt + scrollInfo + "\n" + m.textarea.View()
 	if m.pasteNotice != "" {
 		out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(m.pasteNotice)
 	}

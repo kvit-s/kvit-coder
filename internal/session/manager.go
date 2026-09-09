@@ -40,12 +40,16 @@ func NewManager() (*Manager, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get home directory: %w", err)
 	}
+	return NewManagerIn(filepath.Join(homeDir, ".kvit-coder", "sessions"))
+}
 
-	baseDir := filepath.Join(homeDir, ".kvit-coder", "sessions")
+// NewManagerIn returns a manager over a named sessions directory, creating it
+// if it is not there. NewManager is this with the usual location; a caller that
+// keeps sessions somewhere else says so here.
+func NewManagerIn(baseDir string) (*Manager, error) {
 	if err := os.MkdirAll(baseDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create sessions directory: %w", err)
 	}
-
 	return &Manager{baseDir: baseDir}, nil
 }
 

@@ -210,6 +210,12 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		debug(fmt.Sprintf("Enabled tool: %s", questionTool.Name()))
 	}
 
+	if cfg.Tools.Report.Enabled {
+		reportTool := NewReportTool(cfg, toolCtx)
+		registry.Enable(reportTool)
+		debug(fmt.Sprintf("Enabled tool: %s", reportTool.Name()))
+	}
+
 	// Tasks.* tools - mutually exclusive with Plan.* and Checkpoint.* tools
 	if cfg.Tools.Tasks.Enabled && sc.ContextMgr != nil {
 		tasksStartTool := NewTasksStartTool(sc.ContextMgr)
@@ -335,6 +341,7 @@ func SetupRegistry(sc SetupConfig) *Registry {
 	// Batch can only dispatch once everything it might call is registered.
 	if batchTool != nil {
 		batchTool.SetRegistry(registry)
+		batchTool.SetToolContext(toolCtx)
 	}
 
 	return registry

@@ -182,6 +182,11 @@ type runState struct {
 	agentStats      *stats.AgentStats
 	normalizer      *llm.ResponseNormalizer
 
+	// reportNudges counts how many times this turn has been told it owes a
+	// structured report, so a model that will not produce one ends with prose
+	// instead of being asked until the iteration budget runs out.
+	reportNudges int
+
 	// Anomaly interrogation state (Improvement 2), per-task.
 	interrogationCount int
 	seenInterrogations map[string]bool
@@ -411,6 +416,16 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 		}
 
 		if shouldBreak {
+			budgetExhausted = false
+			result.FinalMessages = state.messages
+			break
+		}
+
+		// An accepted report ends the turn. The model has said everything it
+		// had to say, in a form the front end can act on, so prose after it
+		// would only be a second ending.
+		if rep := r.toolCtx.AcceptedReport(); rep != nil {
+			r.finishOnReport(rep, state)
 			budgetExhausted = false
 			result.FinalMessages = state.messages
 			break

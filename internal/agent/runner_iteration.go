@@ -7,7 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kvit-s/kvit-coder/internal/config"
 	"github.com/kvit-s/kvit-coder/internal/llm"
+	"github.com/kvit-s/kvit-coder/internal/report"
+	"github.com/kvit-s/kvit-coder/internal/session"
 	"github.com/kvit-s/kvit-coder/internal/tools"
 	"github.com/kvit-s/kvit-coder/internal/ui"
 )
@@ -67,27 +70,23 @@ func (r *Runner) handleFinalAnswer(
 		r.writer.Warn(fmt.Sprintf("empty response (%s)", finishReason))
 	}
 
-	// The divider separates the step progress from the final report and
-	// carries the turn timing, so nothing prints after the report itself.
-	totalTime := time.Since(state.requestStartTime)
-	var statsMsg string
-	if state.totalToolCalls > 0 {
-		statsMsg = fmt.Sprintf("[%s: %s llm + %s tools x%d]",
-			ui.FormatDuration(totalTime),
-			ui.FormatDuration(state.totalLLMTime),
-			ui.FormatDuration(state.totalToolTime),
-			state.totalToolCalls)
-	} else {
-		statsMsg = fmt.Sprintf("[%s: %s llm]",
-			ui.FormatDuration(totalTime),
-			ui.FormatDuration(state.totalLLMTime))
+	// A turn that owes a structured report and has not submitted one is not
+	// finished, whatever it just wrote. Say so and let it call Report.
+	if msg := r.reportGateMessage(state); msg != "" {
+		state.messages = append(state.messages, llm.Message{
+			Role:    llm.RoleUser,
+			Content: msg,
+		})
+		return true // shouldContinue
 	}
-	r.writer.Divider(statsMsg)
+
+	// The divider separates the step progress from the final answer and
+	// carries the turn timing, so nothing prints after the answer itself.
+	totalTime := time.Since(state.requestStartTime)
+	r.writer.Divider(turnStatsMessage(state, totalTime))
 	r.writer.Assistant(assistantMsg.Content)
 
-	state.agentStats.TotalAgentTime = totalTime
-	state.agentStats.TotalLLMTime = state.totalLLMTime
-	state.agentStats.TotalToolTime = state.totalToolTime
+	r.recordTurnTimes(state, totalTime)
 
 	// File-first mode: persist messages
 	if rcfg.UseFileFirst && r.contextMgr != nil && !tasksToolExecuted && len(state.messages) > rollbackPoint {
@@ -342,4 +341,80 @@ func (r *Runner) handleToolError(
 		toolName:        tc.Function.Name,
 		reason:          err.Error(),
 	}
+}
+
+// turnStatsMessage is the timing that rides on the divider above a turn's
+// ending, whether that ending is prose or a report.
+func turnStatsMessage(state *runState, totalTime time.Duration) string {
+	if state.totalToolCalls > 0 {
+		return fmt.Sprintf("[%s: %s llm + %s tools x%d]",
+			ui.FormatDuration(totalTime),
+			ui.FormatDuration(state.totalLLMTime),
+			ui.FormatDuration(state.totalToolTime),
+			state.totalToolCalls)
+	}
+	return fmt.Sprintf("[%s: %s llm]",
+		ui.FormatDuration(totalTime),
+		ui.FormatDuration(state.totalLLMTime))
+}
+
+func (r *Runner) recordTurnTimes(state *runState, totalTime time.Duration) {
+	state.agentStats.TotalAgentTime = totalTime
+	state.agentStats.TotalLLMTime = state.totalLLMTime
+	state.agentStats.TotalToolTime = state.totalToolTime
+}
+
+// maxReportNudges bounds how many times one turn is told to submit a report it
+// has not submitted. A model that will not produce one is better off ending
+// with prose than spending the iteration budget being asked again.
+const maxReportNudges = 2
+
+// reportGateMessage returns what to tell a model that stopped without the
+// report its turn owes, or "" when nothing is owed. A turn owes one when the
+// Report tool is enabled, its mode covers what this turn did, and no report has
+// been accepted; a turn that already used up its repair attempts owes nothing,
+// because it was told to stop repairing and end with prose.
+func (r *Runner) reportGateMessage(state *runState) string {
+	if r.toolCtx == nil || r.registry == nil || r.registry.Get("Report") == nil {
+		return ""
+	}
+	if r.toolCtx.AcceptedReport() != nil {
+		return ""
+	}
+	if r.toolCtx.ReportRepairs() >= r.reportRepairBudget() {
+		return ""
+	}
+	if !r.cfg.Tools.Report.Required(state.totalToolCalls > 0, r.toolCtx.MutatedThisTurn()) {
+		return ""
+	}
+	if state.reportNudges >= maxReportNudges {
+		return ""
+	}
+	state.reportNudges++
+	r.writer.Warn("turn ended without a report, asking for one")
+	return "<system-reminder>\n" +
+		"This turn has not submitted a report. Call Report now with what you just said, " +
+		"in the schema: a task_status, a one-sentence headline, and the typed blocks behind it. " +
+		"The turn ends when the report is accepted, so put everything in the report rather than " +
+		"after it.\n</system-reminder>"
+}
+
+func (r *Runner) reportRepairBudget() int {
+	if r.cfg == nil || r.cfg.Tools.Report.MaxRepairAttempts <= 0 {
+		return config.DefaultReportRepairAttempts
+	}
+	return r.cfg.Tools.Report.MaxRepairAttempts
+}
+
+// finishOnReport ends a turn on an accepted report: the divider with the
+// turn's timing, then the report itself. Under the interactive front end the
+// card is drawn there, from the session, so the agent prints nothing and the
+// user sees one card rather than two.
+func (r *Runner) finishOnReport(rep *report.Report, state *runState) {
+	totalTime := time.Since(state.requestStartTime)
+	r.writer.Divider(turnStatsMessage(state, totalTime))
+	if !session.FromUI() {
+		r.writer.Report(rep, rep.PlainText())
+	}
+	r.recordTurnTimes(state, totalTime)
 }

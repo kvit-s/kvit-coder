@@ -2,28 +2,29 @@
 
 ## 1. What this document is
 
-A proposal, not yet built.
+How a turn ends with a structured report: what the report is, what checks it,
+what stops a turn ending without one, and how the interactive front end turns an
+accepted report into a card that one keypress answers.
 
-Today a kvit-coder turn ends when the model replies without asking for a tool.
-Whatever prose it writes at that moment is the answer: the loop prints it under a
-divider and the process exits (`internal/agent/runner_iteration.go:70`). The
-prose is unconstrained, so whether the turn says what it changed, whether it
-says what it ran to check the change, and whether it states the decision it is
-waiting on are all left to the model's judgement on the day.
+A turn that changes anything finishes by calling one tool, `Report`, whose
+arguments are JSON in a fixed shape. The tool refuses JSON that does not fit and
+says which field is wrong; the turn ends when a report is accepted, so the
+report is the last thing a turn does rather than a summary appended to it. The
+front end reads that report back out of the session between turns and draws it
+above the prompt, where a digit picks one of the ways forward the report offered
+and starts the next turn with it.
 
-This document describes replacing that ending with a **structured report**: the
-model finishes the turn by calling one tool whose arguments are JSON in a fixed
-shape, the tool refuses JSON that does not fit and says exactly what is wrong,
-and the turn cannot end until an acceptable report exists. The interactive front
-end then draws that JSON as a card at the prompt, where one keypress answers a
-decision the report raises and starts the next turn with the answer.
+A turn that owes no report ends the way every turn used to: the model replies
+without asking for a tool, and the prose it wrote is the answer
+(`internal/agent/runner_iteration.go:17`). Which turns owe one is configuration,
+and the default asks only from turns that changed something.
 
 The design is a port. The same feature exists in another agent in this author's
 tree, `~/krok`, where the tool is called `submit_report` and the design is
 written up in `~/krok/structured-report.md`. This document restates the parts of
 it that matter rather than assuming the reader has it open, and it departs from
-the original in several places where kvit-coder's architecture makes something
-easier or impossible. Section 6 lists those departures.
+the original where kvit-coder's architecture makes something easier or
+impossible. Section 6 lists those departures.
 
 ## 2. What a report is
 
@@ -137,8 +138,11 @@ at once, so the model can fix them in one pass rather than one per round trip.
 - `headline` is 1 to 160 characters on one line; `summary` is 1 to 240;
   `details` is at most 32 KiB per block.
 - Ids match `^[a-z0-9][a-z0-9-]{0,63}$` and are unique within the report.
-- `completed` and `completed_with_notes` need at least one `verification`
-  block. A `not_run` verification with a stated limitation satisfies this.
+- When the turn changed something, `completed` and `completed_with_notes` need
+  at least one `verification` block, and a `not_run` verification with a stated
+  limitation satisfies it. A turn that only read needs any block at all, so an
+  explanation goes in a `finding` rather than in a verification block that
+  verified nothing. The tool asks the turn which case it is (section 3.3).
 - `needs_action` needs at least one `decision`, `question` or `next_step`.
 - `blocked` needs at least one `blocked` block.
 - `failed` needs a `finding`, `warning` or `blocked` block explaining it.
@@ -181,18 +185,21 @@ records that no report was produced.
 
 Two halves, both small.
 
-**Ending the turn on acceptance.** The loop currently ends only when the model
-returns a message with no tool calls (`internal/agent/runner.go:359`). An
-accepted report must also end it, which is a field on `toolExecutionResult`
-(`runner.go:201`) beside the existing `tasksToolExecuted`, and a break where the
-loop reads that struct.
+**Ending the turn on acceptance.** The loop ends when the model returns a
+message with no tool calls, and now also when a report has been accepted: the
+tool records it on the tool context, and the loop checks for it after each round
+of calls (`internal/agent/runner.go`). `finishOnReport` then prints the divider
+with the turn's timing and, headless, the report itself.
 
 **Requiring one before the turn ends.** `handleFinalAnswer`
-(`internal/agent/runner_iteration.go:17`) decides what happens when the model
-stops asking for tools, and it already has two branches that inject a user
-message and return `shouldContinue = true` — one for a malformed tool call, one
-for an empty response. A third branch saying "this turn has not submitted a
-report; call Report now" is the same shape in the same function.
+(`internal/agent/runner_iteration.go`) decides what happens when the model stops
+asking for tools, alongside its branches for a malformed tool call and an empty
+response. `reportGateMessage` says whether this turn owes a report and has not
+submitted one; when it does, the loop appends a reminder and goes back to the
+model. Two such reminders are the limit — a model that will not produce a report
+ends with prose rather than spending the iteration budget being asked again —
+and a turn that used up its repair attempts is not asked at all, having already
+been told to stop trying.
 
 When a report is required is a configuration value with four settings, defaulting
 to `mutating`:
@@ -207,7 +214,9 @@ tools:
 ```
 
 `mutating` means a turn that edited a file, ran a command or started a process
-must report; a turn that only read and answered need not.
+must report; a turn that only read and answered need not. The same answer
+decides what a `completed` report has to show (section 2.4), so the two rules
+cannot disagree about what the turn did.
 
 ### 3.4 Where the report is stored
 
@@ -267,21 +276,27 @@ reader that stopped at the last line would miss the card there.
 
 The composer is rebuilt for every prompt — `readInput` constructs a fresh
 `ui.NewInputModel` and configures it with `SetWakePoll`, `SetStagedImages` and
-`SetCompletionBaseDir` (`internal/tui/ui.go:210-245`) — so `SetReport` is the
+`SetCompletionBaseDir` (`internal/tui/ui.go:210-250`) — so `SetReport` is the
 same shape as three things already there.
 
 The key handling has a close precedent too. `InputModel.Update` already supports
 a transient list that owns up/down and esc while the textarea keeps every other
-key (`internal/ui/input.go:723-740`, `completionListActive()`). The card is a
-second mode of that kind:
+key (`internal/ui/input.go`, `completionListActive()`). The card is a second
+mode of that kind:
 
 | Key | Effect |
 |---|---|
-| `1`–`9` | Pick that option of the first unresolved interactive block |
-| `↑`/`↓` | Move between blocks |
-| `d` | Toggle the highlighted block's details |
+| `1`–`9` | Pick that option of the active block, while the composer is empty |
+| `alt+↑` / `alt+↓` | Move between blocks, which moves which block a digit answers |
+| `alt+d` | Toggle the selected block's details |
 | `esc` | Dismiss the card for this composer |
-| anything else | Goes to the textarea, as now |
+| anything else | Goes to the textarea, as before |
+
+The card claims no bare letter, and the digits only while nothing has been
+typed. A bare letter would make every message starting with that letter
+unwritable for as long as a card is up, which is most of the time between turns,
+and plain arrows are already history navigation. The footer under the card lists
+the keys it is holding, so none of this has to be remembered.
 
 ### 4.4 What answering does
 
@@ -311,7 +326,7 @@ of which report is current.
 Its implementation is almost nothing, because a `:` command already ends the
 composer: the loop opens a fresh one, the fresh one has no dismissal flag, and
 the card reappears on its own. What `:report` adds is a name for that with a
-line in `showHelp` (`internal/tui/ui.go:617`), so someone who has just pressed
+line in `showHelp` (`internal/tui/ui.go`), so someone who has just pressed
 esc can find the way back, and a message for the case where there is nothing to
 show.
 
@@ -320,23 +335,26 @@ show.
 Background work reaches a session through its inbox: a process exiting, a file
 dropped by `kvit-coder steer`. Between turns the front end polls for those and,
 finding any, starts a turn with the inbox as the prompt. It does this in two
-places, both of which test "the composer text is empty" as a stand-in for "the
-user is idle and nothing is in flight":
+places, and both would otherwise take the card away:
 
-- **`internal/tui/ui.go:152`**, at the top of the loop, before the composer
-  opens at all. After a turn that produced a report, a non-empty inbox starts an
-  inbox-only turn and the card is never drawn.
-- **`internal/ui/input.go:699`**, in the composer's tick. A card is on screen, a
-  build exits, and the composer submits itself out from under the decision.
+- The top of the front end's loop, before the composer opens at all
+  (`internal/tui/ui.go`). Left alone, a non-empty inbox after a turn that
+  produced a report starts an inbox-only turn and the card is never drawn.
+- The composer's own tick (`wakeTickMsg` in `internal/ui/input.go`). Left alone,
+  a card is on screen, a build exits, and the composer submits itself out from
+  under the decision.
 
-An unanswered report means something is in flight, so the test becomes empty
-text *and* no report awaiting an answer, in both places, from the one reader.
+Both tested "the composer text is empty" as a stand-in for "the user is idle and
+nothing is in flight". An unanswered report means something is in flight, so the
+test is empty text *and* no report awaiting an answer, in both places, from the
+one reader.
 
-Holding back costs nothing to build, because the badge path exists already:
-`input.go:987` renders `[inbox: N pending — submit to include]` when the wake is
+Holding back cost nothing to build, because the badge path was already there:
+the composer renders `[inbox: N pending — submit to include]` when the wake is
 held for a user who is typing. The wording stays true here, since picking an
-option starts a turn and the turn drains the inbox at its first iteration. The
-background events arrive together with the answer instead of in place of it.
+option starts a turn and the turn drains the inbox at its first iteration, so
+the background events arrive together with the answer instead of in place of
+it.
 
 **Only interactive reports hold.** A `completed` report with nothing to answer
 should not make a finished build wait behind a card that only needs reading, and
@@ -348,11 +366,11 @@ background events in the inbox indefinitely. They are files, so nothing is lost,
 but a session left overnight on a card wakes up with a queue. `esc` lifts the
 hold for anyone who wants the queue drained first.
 
-## 6. What is not being ported
+## 6. What is not ported
 
 krok renders its reports inside a long-running program that owns its own
-scrollback, and several features follow from that rather than from the report
-itself:
+scrollback, and several of its features follow from that rather than from the
+report itself:
 
 - **The report dock and composer takeover.** Between-turns rendering here is a
   card above the prompt, not a pane with its own layout.
@@ -370,59 +388,52 @@ itself:
 - **Schema version 1.0 compatibility and replay.** There is no stored history
   to stay compatible with.
 
-## 7. Work list
+## 7. How it is built
 
-| Piece | Where | Lines |
-|---|---|---|
-| Types and JSON schema | `internal/report/report.go` | ~350 |
-| Validation and the problem list | `internal/report/validate.go` | ~350 |
-| Plain-text rendering | `internal/report/render.go` | ~250 |
-| The tool: parse, validate, accept | `internal/tools/report.go` | ~200 |
-| Reader for the most recent report | `internal/session/report.go` | ~50 |
-| End the turn on acceptance; require one before the final answer | `internal/agent/runner.go`, `runner_iteration.go` | ~60 |
-| Card mode, keys, the wake hold | `internal/ui/input.go` | ~250 |
-| Wiring, `:report`, help, the boundary hold | `internal/tui/ui.go` | ~80 |
-| Config, registration, prompt template | | ~120 |
-| Tests | | 700–900 |
+| Piece | Where |
+|---|---|
+| Types, limits and the JSON schema the model reads | `internal/report/report.go` |
+| Normalization and the checks, returning every problem at once | `internal/report/validate.go` |
+| Rendering, as structured lines a caller can paint | `internal/report/render.go` |
+| The tool: parse, normalize, check, accept, or reject with the list | `internal/tools/report.go` |
+| The accepted report, the repair count, and whether the turn changed anything | `internal/tools/context.go` |
+| Finding the most recent report and saying whether it is current | `internal/session/report.go` |
+| Ending the turn on acceptance, and asking for one that is owed | `internal/agent/runner.go`, `runner_iteration.go` |
+| The card, its keys, and the inbox hold | `internal/ui/report_card.go` |
+| Reading the report between turns, `:report`, the boundary hold | `internal/tui/ui.go` |
+| What the model is told about the tool | `internal/prompt/prompts/tools/report.tmpl`, and `ShortPromptSection` for the strong profile |
 
-About 1,700 lines of non-test Go. The same feature in krok is 5,400 lines of
-Rust in the tool plus roughly 5,900 more for its session gate and its interface;
-Go's struct tags and `encoding/json` absorb most of what its 1,767-line
-`types.rs` spends on shapes, and the between-turns card is a smaller thing to
-build than a live dock.
-
-**Put the types in their own package.** The front-end binary must not import
+**The types are in their own package.** The front-end binary does not import
 `internal/tools`. `internal/report` holds the types, the validator and the
-renderer, and is imported by the tool, by the session reader and by the
-composer.
+renderer, and depends on nothing else in kvit-coder, so the tool that produces a
+report, the session reader that finds one and the composer that draws it all
+work from one definition.
 
-**Build order.** First the schema with four block types — `change`,
-`verification`, `finding`, `next_step` — the gate, and the plain-text rendering
-where `writer.Assistant` prints the final answer today. That is roughly 500
-lines, it establishes the vocabulary and the enforcement, and the remaining five
-types are additive. The card and its keys come second, and the headless paths
-(`-p`, `-pq`, the JSON document from `WriteJSONOutput` at
-`internal/ui/writer.go:216`) third.
+**A report is stored once.** It reaches history as the arguments of the `Report`
+tool call the model made, and nothing writes a second copy.
 
-**Draw the card once.** The agent already knows when it is running under the
-front end: `session.FromUIVar` is set so the child skips the banner and prompt
-echo the front end has printed (`internal/tui/ui.go:727`). The same flag
-suppresses the agent's own rendering of the report, so under the front end the
-card is drawn once, by the front end, and a headless run prints it itself.
+**The card is drawn once.** The agent already knows when it runs under the front
+end: `session.FromUI` is set so the child skips the banner and prompt echo the
+front end has printed. The same flag suppresses the agent's own rendering of the
+report, so under the front end the card is drawn by the front end, and a
+headless run prints it itself (`--json` puts both the rendered text and the
+structure in the document).
 
-## 8. Decisions still open
+**Which turns owe a report** is decided from what ran, not from a list of tool
+names. A tool that declares itself safe to run beside others in a `Batch` is one
+that only reads, so `tools.Mutates` is the negation of that and cannot drift
+from it. `Batch` marks its own inner calls, since a batch is one call to the
+loop and would otherwise make a turn that edited a file look like one that only
+read.
 
-**The verification requirement misfires on turns that only answer a question.**
-krok's own write-up records this: `completed` demands a `verification` block, so
-a turn that explained something and changed nothing puts the explanation in a
-verification block's evidence field, where it does not belong. Make the
-requirement follow what the turn did — a turn that changed files needs a
-verification block, a turn that only read is satisfied by a `finding` — rather
-than porting the rule as written.
+## 8. Still open
 
-**Whether the model emits this schema reliably.** Nine block types with
-per-type required fields is a large strict-JSON demand. kvit-coder does have
+**Whether the model emits this schema reliably.** Nine block types with per-type
+required fields is a large strict-JSON demand. kvit-coder does have
 `argument_normalizer.go` and `toolcall_normalizer.go` for repairing malformed
 model JSON, but those run under the `weak` agent profile and the default is
-`strong`, so they are off. Send the schema at the configured endpoint for a
-handful of representative turns before committing to all nine types.
+`strong`, so they are off. The repair loop covers a model that gets it wrong
+occasionally: a rejection lists every problem by field, and three attempts are
+allowed before the model is told to stop repairing and answer in prose. What is
+not yet known is how often the first attempt is accepted at the configured
+endpoint, which is worth measuring before the vocabulary grows further.
