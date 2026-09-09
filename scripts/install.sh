@@ -6,9 +6,10 @@ set -euo pipefail
 # It builds both binaries and then links them from a directory on the PATH
 # (~/.local/bin by default) back into this checkout:
 #
-#   kc              -> kvit-coder-ui   the interactive front end, short name
+#   kc              -> kvit-coder      the headless agent, short name
+#   kcu             -> kvit-coder-ui   the interactive front end, short name
+#   kvit-coder      -> kvit-coder
 #   kvit-coder-ui   -> kvit-coder-ui
-#   kvit-coder      -> kvit-coder      the headless agent
 #
 # They are symlinks rather than copies, so scripts/build.sh is all that is
 # needed after a change; there is nothing to install again.
@@ -30,14 +31,14 @@ cd "$ROOT"
 BIN_DIR=${KVIT_BIN_DIR:-$HOME/.local/bin}
 build=1
 uninstall=0
-LINKS=(kc kvit-coder-ui kvit-coder)
+LINKS=(kc kcu kvit-coder-ui kvit-coder)
 
 usage() {
     cat <<'USAGE'
 usage: scripts/install.sh [--no-build] [--uninstall] [--bin-dir <dir>]
 
   --no-build        skip scripts/build.sh and link the existing binaries
-  --uninstall       remove kc, kvit-coder-ui and kvit-coder from the bin dir
+  --uninstall       remove kc, kcu, kvit-coder-ui and kvit-coder from the bin dir
   --bin-dir <dir>   where to put the links (default ~/.local/bin, or $KVIT_BIN_DIR)
 USAGE
 }
@@ -91,7 +92,8 @@ link_one() {
 
 link_one kvit-coder "$ROOT/kvit-coder"
 link_one kvit-coder-ui "$ROOT/kvit-coder-ui"
-link_one kc "$ROOT/kvit-coder-ui"
+link_one kc "$ROOT/kvit-coder"
+link_one kcu "$ROOT/kvit-coder-ui"
 
 case ":$PATH:" in
     *":$BIN_DIR:"*) ;;
