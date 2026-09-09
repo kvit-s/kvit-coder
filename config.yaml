@@ -423,3 +423,16 @@ ui:
   markdown: auto  # auto | always | never. auto styles markdown only on a
                   # terminal; piped output and --json stay raw markdown, and
                   # NO_COLOR or TERM=dumb disables styling.
+
+  # The window title kvit-coder-ui keeps up to date, which a tabbed terminal
+  # (VS Code, Windows Terminal, iTerm) also uses as the tab label: an icon
+  # for what the front end is doing, then the session's title. Set an icon
+  # to "" for that state to show the title on its own.
+  #
+  # The terminal has to be willing to take the title. In VS Code that means
+  # "terminal.integrated.tabs.title": "${sequence}" in settings.json; in
+  # tmux, "set -g set-titles on".
+  terminal_title:
+    enabled: true
+    running: "⏳"   # a turn is running
+    waiting: "💬"   # the prompt is waiting for input

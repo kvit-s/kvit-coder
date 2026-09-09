@@ -192,6 +192,17 @@ func (m *Manager) readMetaTitle(name string) string {
 	return meta.Title
 }
 
+// SessionTitle returns the named session's display title, or "" when it has
+// none yet. A session gets its title when its first turn finishes, so a
+// caller that shows it has to ask again rather than reading it once at
+// startup.
+func (m *Manager) SessionTitle(name string) string {
+	if name == "" {
+		return ""
+	}
+	return m.readMetaTitle(name)
+}
+
 // MostRecent returns the name of the session touched last, or "" when there
 // are none. It is what "continue where I left off" resolves to.
 func (m *Manager) MostRecent() (string, error) {

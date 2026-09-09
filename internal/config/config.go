@@ -122,6 +122,48 @@ type UIConfig struct {
 	// terminal; piped output and --json stay raw markdown. Empty and
 	// unknown values are auto.
 	Markdown string `yaml:"markdown"`
+
+	// TerminalTitle controls the window title the interactive front end
+	// keeps up to date while it runs.
+	TerminalTitle TerminalTitleConfig `yaml:"terminal_title"`
+}
+
+// TerminalTitleConfig controls the terminal's window title, which a tabbed
+// terminal such as the one in VS Code also uses as the tab label.
+// kvit-coder-ui sets it to an icon for what it is doing followed by the
+// session's title; the agent on its own never touches it.
+//
+// The pointers are so that "unset" and "set to empty" are different things:
+// an unset icon takes the default, an icon set to "" means that state shows
+// the session title with no icon at all.
+type TerminalTitleConfig struct {
+	// Enabled set to false stops the title being written. Unset means on;
+	// it is only ever written to a terminal, so there is nothing for a
+	// piped run to break.
+	Enabled *bool `yaml:"enabled"`
+	// Running is the icon shown while a turn is running, Waiting the one
+	// shown while the prompt is open. Unset takes
+	// ui.DefaultTitleRunningIcon and ui.DefaultTitleWaitingIcon.
+	Running *string `yaml:"running"`
+	Waiting *string `yaml:"waiting"`
+}
+
+// On reports whether the front end should set the window title.
+func (t TerminalTitleConfig) On() bool { return t.Enabled == nil || *t.Enabled }
+
+// Icons returns the configured icons, falling back to the defaults passed in
+// for whichever of the two the config leaves unset. The defaults come from
+// the caller because internal/ui, which owns them, is a package this one
+// cannot import.
+func (t TerminalTitleConfig) Icons(defRunning, defWaiting string) (string, string) {
+	running, waiting := defRunning, defWaiting
+	if t.Running != nil {
+		running = *t.Running
+	}
+	if t.Waiting != nil {
+		waiting = *t.Waiting
+	}
+	return running, waiting
 }
 
 // AgentConfig configures the agent loop and startup instruction sources.

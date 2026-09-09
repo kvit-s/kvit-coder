@@ -204,6 +204,27 @@ Plan/Checkpoint tools and Tasks tools are mutually exclusive — enable one grou
 | `--yolo` | Read and write anywhere, and run anything that would have asked (passed to each turn) | false |
 | `--structured` | End each turn with a structured report, drawn as a card at the prompt (`--structured=false` for prose) | true |
 
+#### Window title
+
+While it runs, `kvit-coder-ui` keeps the terminal's window title — which a
+tabbed terminal such as VS Code's shows as the tab label — saying what it is
+doing: `⏳ <session title>` while a turn is running, `💬 <session title>` while
+the prompt is waiting for input. The session title is the short summary of the
+first prompt that `--sessions` lists; until the first turn has produced one the
+session's directory name stands in.
+
+The terminal has to be willing to take a title from the program running in it:
+
+- **VS Code** ignores it until `"terminal.integrated.tabs.title": "${sequence}"`
+  is set in `settings.json`.
+- **tmux** needs `set -g set-titles on`.
+- Most other terminals (Windows Terminal, iTerm2, GNOME Terminal, Alacritty,
+  Kitty) do it out of the box.
+
+Both icons are configurable and the whole thing can be turned off; see
+[`ui`](#ui) below. Nothing is written when output is redirected, and
+`KVIT_CODER_NO_TITLE=1` in the environment turns it off without a config edit.
+
 ## Sessions
 
 Conversation history persists across runs via named sessions:
@@ -641,6 +662,20 @@ prompts:
   use_templates: false
   templates_dir: ""        # override embedded templates
   hot_reload: false        # reload on each request (dev mode)
+```
+
+### `ui`
+
+Terminal output styling, and the window title the interactive front end keeps
+up to date (see [Window title](#window-title)):
+
+```yaml
+ui:
+  markdown: auto           # auto | always | never; auto styles only on a terminal
+  terminal_title:
+    enabled: true          # false leaves the terminal's title alone
+    running: "⏳"           # icon while a turn is running ("" for none)
+    waiting: "💬"           # icon while the prompt is open ("" for none)
 ```
 
 ## Benchmarking

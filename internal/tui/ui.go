@@ -69,6 +69,15 @@ type UI struct {
 	// menu — the krok "cleared on non-reasoning" rule).
 	currentModel  int
 	currentEffort string
+	// title writes the terminal's window title, which is also the tab label
+	// in a tabbed terminal: a running or waiting icon, then sessionLabel.
+	title *ui.TerminalTitle
+	// sessionTitle caches the display title read from the session's
+	// meta.json, and titledSession says which session it was read for so a
+	// switch drops it. A session has no title until its first turn ends,
+	// which is why this is re-read rather than taken once at startup.
+	sessionTitle  string
+	titledSession string
 }
 
 // New creates a new UI instance
@@ -110,8 +119,36 @@ func New(opts Options) *UI {
 			u.currentEffort = v
 		}
 	}
+	// The window title says what the front end is doing. It is only ever
+	// written to a terminal, so a piped run and the tests get an inert
+	// setter without asking for one.
+	u.title = ui.NewTerminalTitle(os.Stdout)
+	if !opts.Config.UI.TerminalTitle.On() {
+		u.title.Disable()
+	}
+	u.title.SetIcons(opts.Config.UI.TerminalTitle.Icons(ui.DefaultTitleRunningIcon, ui.DefaultTitleWaitingIcon))
+
 	u.pinRunID()
 	return u
+}
+
+// sessionLabel is what the window title says after the state icon: the
+// session's display title once a turn has produced one, the session's
+// directory name until then, and nothing at all when there is no session.
+func (u *UI) sessionLabel() string {
+	if u.currentSession == "" {
+		return ""
+	}
+	if u.titledSession != u.currentSession {
+		u.titledSession, u.sessionTitle = u.currentSession, ""
+	}
+	if u.sessionTitle == "" && u.sessionMgr != nil {
+		u.sessionTitle = u.sessionMgr.SessionTitle(u.currentSession)
+	}
+	if u.sessionTitle != "" {
+		return u.sessionTitle
+	}
+	return u.currentSession
 }
 
 // pinRunID puts a run ID derived from the current session into the environment,
@@ -136,6 +173,7 @@ func (u *UI) Run() error {
 	}
 	defer func() {
 		fmt.Println()
+		u.title.Clear()
 		restoreTerminal()
 	}()
 
@@ -153,6 +191,12 @@ func (u *UI) Run() error {
 	fmt.Println()
 
 	for {
+		// Nothing is running at the top of the loop: whatever happens
+		// below either leaves it that way or sets the title itself.
+		// Writing the same title twice writes nothing, so this costs
+		// nothing on the common path.
+		u.title.Waiting(u.sessionLabel())
+
 		// The report the last turn ended with, when it is still the last
 		// message. It is drawn as a card above the composer, and while it is
 		// waiting on an answer it holds back the inbox turn below.
@@ -790,6 +834,12 @@ func (u *UI) agentArgs(prompt string, images []string) []string {
 }
 
 func (u *UI) runAgent(prompt string, images []string) {
+	// The turn is what the window title is for: a window that is not on
+	// screen still says whether the agent is working. The session's title
+	// is re-read on the way out because the first turn is what creates it.
+	u.title.Running(u.sessionLabel())
+	defer func() { u.title.Waiting(u.sessionLabel()) }()
+
 	args := u.agentArgs(prompt, images)
 	for i, img := range images {
 		fmt.Printf("\033[38;5;136m[image%d: %s]\033[0m\n", i+1, img)
