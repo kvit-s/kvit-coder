@@ -613,12 +613,12 @@ func (t *SearchReplaceEditTool) handleMultipleMatches(content, search, path stri
 	}
 
 	return map[string]any{
-		"success":      false,
-		"error":        "multiple_matches",
-		"path":         path,
-		"count":        count,
-		"at_lines":     lineNums,
-		"message":      fmt.Sprintf("Search text matches %d locations - add more surrounding context to make it unique", count),
-		"hint":         "Include more lines before/after the text you want to change to create a unique match",
+		"success":  false,
+		"error":    "multiple_matches",
+		"path":     path,
+		"count":    count,
+		"at_lines": lineNums,
+		"message":  fmt.Sprintf("Search text matches %d locations - add more surrounding context to make it unique", count),
+		"hint":     "Include more lines before/after the text you want to change to create a unique match",
 	}, nil
 }

@@ -7,11 +7,11 @@ import (
 
 func TestSequenceMatcherRatio(t *testing.T) {
 	tests := []struct {
-		name     string
-		s1       string
-		s2       string
-		wantMin  float64
-		wantMax  float64
+		name    string
+		s1      string
+		s2      string
+		wantMin float64
+		wantMax float64
 	}{
 		{
 			name:    "identical strings",

@@ -125,6 +125,7 @@ persistent=true survives, red). Use Shell
 for anything that finishes on its own. Read what it has printed with
 Shell.output, wait for it with Observe.wait, stop it with Shell.kill.`
 }
+
 // ShortPromptSection says what Observe.wait returns and why.
 func (t *ObserveWaitTool) ShortPromptSection() string {
 	return `### Observe.wait

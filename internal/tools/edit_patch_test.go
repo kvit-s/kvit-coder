@@ -63,11 +63,11 @@ func TestPatchEditTool_ParsePatch(t *testing.T) {
 	tool := NewPatchEditTool(cfg, NewToolContext())
 
 	tests := []struct {
-		name          string
-		patch         string
-		wantFiles     int
-		wantActions   []PatchAction
-		wantErr       bool
+		name        string
+		patch       string
+		wantFiles   int
+		wantActions []PatchAction
+		wantErr     bool
 	}{
 		{
 			name: "single file update",

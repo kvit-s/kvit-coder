@@ -7,10 +7,10 @@ import (
 
 func TestToolErrorType(t *testing.T) {
 	tests := []struct {
-		name           string
-		err            error
-		wantBacktrack  bool
-		wantMessage    string
+		name          string
+		err           error
+		wantBacktrack bool
+		wantMessage   string
 	}{
 		{
 			name:          "semantic error is backtrackable",

@@ -494,8 +494,8 @@ func TestPlanCompleteStepTool_MarksPlanComplete(t *testing.T) {
 	completeArgs := json.RawMessage(`{}`)
 
 	// Complete all steps
-	_, _ = completeTool.Call(context.Background(), completeArgs) // Step 1
-	_, _ = completeTool.Call(context.Background(), completeArgs) // Step 2
+	_, _ = completeTool.Call(context.Background(), completeArgs)       // Step 1
+	_, _ = completeTool.Call(context.Background(), completeArgs)       // Step 2
 	result, _ := completeTool.Call(context.Background(), completeArgs) // Step 3
 
 	resultMap := result.(map[string]any)

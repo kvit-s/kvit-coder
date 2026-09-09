@@ -7,10 +7,10 @@ import (
 )
 
 const (
-	DefaultMaxLines       = 150        // No truncation threshold
-	DefaultMaxBytes       = 24 * 1024  // 24KB
-	DefaultTruncatedLines = 75         // Lines per side when truncated
-	DefaultTruncatedBytes = 12 * 1024  // 12KB total when truncated
+	DefaultMaxLines       = 150       // No truncation threshold
+	DefaultMaxBytes       = 24 * 1024 // 24KB
+	DefaultTruncatedLines = 75        // Lines per side when truncated
+	DefaultTruncatedBytes = 12 * 1024 // 12KB total when truncated
 )
 
 // TruncationResult contains the truncation outcome

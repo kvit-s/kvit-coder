@@ -227,11 +227,11 @@ func (t *PatchEditTool) Call(ctx context.Context, args json.RawMessage) (any, er
 		result, diff, err := t.applyFilePatch(ctx, fp)
 		if err != nil {
 			return map[string]any{
-				"success":         false,
-				"error":           "patch_failed",
-				"failed_file":     fp.Path,
-				"message":         err.Error(),
-				"applied_so_far":  results,
+				"success":        false,
+				"error":          "patch_failed",
+				"failed_file":    fp.Path,
+				"message":        err.Error(),
+				"applied_so_far": results,
 			}, nil
 		}
 		results = append(results, result)

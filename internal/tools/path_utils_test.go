@@ -15,53 +15,53 @@ func TestNormalizeAndValidatePath(t *testing.T) {
 	workspaceRoot := filepath.Join(cwd, "testworkspace")
 
 	tests := []struct {
-		name          string
-		inputPath     string
-		expectedPath  string
-		expectedOut   bool
-		expectError   bool
+		name         string
+		inputPath    string
+		expectedPath string
+		expectedOut  bool
+		expectError  bool
 	}{
 		{
-			name:          "Relative path within workspace",
-			inputPath:     "foo/bar.txt",
-			expectedPath:  filepath.Join(workspaceRoot, "foo/bar.txt"),
-			expectedOut:   false,
-			expectError:   false,
+			name:         "Relative path within workspace",
+			inputPath:    "foo/bar.txt",
+			expectedPath: filepath.Join(workspaceRoot, "foo/bar.txt"),
+			expectedOut:  false,
+			expectError:  false,
 		},
 		{
-			name:          "Absolute path within workspace",
-			inputPath:     filepath.Join(workspaceRoot, "file.txt"),
-			expectedPath:  filepath.Join(workspaceRoot, "file.txt"),
-			expectedOut:   false,
-			expectError:   false,
+			name:         "Absolute path within workspace",
+			inputPath:    filepath.Join(workspaceRoot, "file.txt"),
+			expectedPath: filepath.Join(workspaceRoot, "file.txt"),
+			expectedOut:  false,
+			expectError:  false,
 		},
 		{
-			name:          "Path with .. escaping workspace",
-			inputPath:     "../../etc/passwd",
-			expectedPath:  filepath.Clean(filepath.Join(workspaceRoot, "../../etc/passwd")),
-			expectedOut:   true,
-			expectError:   false,
+			name:         "Path with .. escaping workspace",
+			inputPath:    "../../etc/passwd",
+			expectedPath: filepath.Clean(filepath.Join(workspaceRoot, "../../etc/passwd")),
+			expectedOut:  true,
+			expectError:  false,
 		},
 		{
-			name:          "Absolute path outside workspace",
-			inputPath:     "/etc/passwd",
-			expectedPath:  "/etc/passwd",
-			expectedOut:   true,
-			expectError:   false,
+			name:         "Absolute path outside workspace",
+			inputPath:    "/etc/passwd",
+			expectedPath: "/etc/passwd",
+			expectedOut:  true,
+			expectError:  false,
 		},
 		{
-			name:          "Path with . should normalize",
-			inputPath:     "./foo/./bar.txt",
-			expectedPath:  filepath.Join(workspaceRoot, "foo/bar.txt"),
-			expectedOut:   false,
-			expectError:   false,
+			name:         "Path with . should normalize",
+			inputPath:    "./foo/./bar.txt",
+			expectedPath: filepath.Join(workspaceRoot, "foo/bar.txt"),
+			expectedOut:  false,
+			expectError:  false,
 		},
 		{
-			name:          "Current directory",
-			inputPath:     ".",
-			expectedPath:  workspaceRoot,
-			expectedOut:   false,
-			expectError:   false,
+			name:         "Current directory",
+			inputPath:    ".",
+			expectedPath: workspaceRoot,
+			expectedOut:  false,
+			expectError:  false,
 		},
 	}
 
