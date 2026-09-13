@@ -256,6 +256,10 @@ func TestRejectedReportIsVisibleToTheModel(t *testing.T) {
 // A headless run prints the report where the prose answer would have gone, so
 // piping the agent still ends with something readable.
 func TestHeadlessRunPrintsTheReport(t *testing.T) {
+	// Hermetic against the UI: finishOnReport prints nothing when this is
+	// set, so an ambient value from running under kvit-coder-ui would fail
+	// the test without it.
+	t.Setenv(session.FromUIVar, "")
 	client := newFakeClient(calls(toolCall("r1", "Report", goodReport())))
 	runner, out := newReportingRunnerOut(t, reportingConfig(config.ReportModeAlways), client)
 
