@@ -383,9 +383,20 @@ the background events arrive together with the answer instead of in place of
 it.
 
 **Only interactive reports hold.** A `completed` report with nothing to answer
-should not make a finished build wait behind a card that only needs reading, and
-bubbletea leaves the last rendered view in the scrollback, so the card stays
-legible after the composer quits.
+should not make a finished build wait behind a card that only needs reading.
+
+**The card does not survive the composer.** The composer's quitting view is
+empty, so its bubbletea frame is cleared on submit and the previous turn's card
+would vanish as soon as the next turn starts, leaving nothing to scroll back
+to. The front end therefore prints a scrollback copy after the user's action,
+before the next turn runs: the report in expanded form (every block's details
+shown) plus what the user did with it — the picked option's number, label and
+effect, and then the prompt echo for a typed or dispatched prompt. An empty
+submit prints nothing, so an idle Enter does not spam the log; a resolve pick
+with no follow-up still prints, since picking is the action. A cancelled
+composer and a wake submit print the same expanded copy with a `[cancelled]` or
+`[wake: ...]` note, and an inbox-only turn that fires before the composer opens
+prints the expanded copy first for the same reason.
 
 **The tradeoff to accept deliberately** is that an unanswered decision parks
 background events in the inbox indefinitely. They are files, so nothing is lost,
@@ -426,7 +437,7 @@ report itself:
 | Finding the most recent report and saying whether it is current | `internal/session/report.go` |
 | Ending the turn on acceptance, and asking for one that is owed | `internal/agent/runner.go`, `runner_iteration.go` |
 | The card, its keys, and the inbox hold | `internal/ui/report_card.go` |
-| Reading the report between turns, `:report`, the boundary hold | `internal/tui/ui.go` |
+| Reading the report between turns, `:report`, the boundary hold, the scrollback transcript | `internal/tui/ui.go`, `internal/tui/transcript.go` |
 | What the model is told about the tool | `internal/prompt/prompts/tools/report.tmpl`, and `ShortPromptSection` for the strong profile |
 
 **The types are in their own package.** The front-end binary does not import

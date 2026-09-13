@@ -378,3 +378,56 @@ func TestWrappedContinuationsHangUnderTheirField(t *testing.T) {
 		}
 	}
 }
+
+// The scrollback copy says what was picked without looking the report up
+// again, so the answer records the digit and the label behind it.
+func TestPickedAnswerKeepsItsNumberAndLabel(t *testing.T) {
+	m := press(withCard(decisionReport()), "1")
+	ans := m.CardAnswerPicked()
+	if ans == nil {
+		t.Fatal("no answer recorded")
+	}
+	if ans.Number != 1 {
+		t.Errorf("number is %d, want 1", ans.Number)
+	}
+	if ans.Label != "Preserve hidden positions" {
+		t.Errorf("label is %q", ans.Label)
+	}
+	if ans.BlockID != "filtered" || ans.OptionID != "preserve" {
+		t.Errorf("answer is %#v", ans)
+	}
+
+	m = press(withCard(decisionReport()), "2")
+	if ans := m.CardAnswerPicked(); ans == nil || ans.Number != 2 || ans.Label != "Let me describe it" {
+		t.Errorf("collect answer is %#v", ans)
+	}
+
+	m = press(withCard(decisionReport()), "3")
+	if ans := m.CardAnswerPicked(); ans == nil || ans.Number != 3 || ans.Label != "Leave it for now" {
+		t.Errorf("resolve answer is %#v", ans)
+	}
+}
+
+func TestAnswerDescribeNamesThePickAndItsEffect(t *testing.T) {
+	m := press(withCard(decisionReport()), "1")
+	got := m.CardAnswerPicked().Describe()
+	for _, want := range []string{"1)", "Preserve hidden positions", "filtered/preserve", "dispatch"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("dispatch describe %q misses %q", got, want)
+		}
+	}
+
+	m = press(withCard(decisionReport()), "2")
+	if got := m.CardAnswerPicked().Describe(); !strings.Contains(got, "collect") {
+		t.Errorf("collect describe %q misses its effect", got)
+	}
+
+	m = press(withCard(decisionReport()), "3")
+	if got := m.CardAnswerPicked().Describe(); !strings.Contains(got, "resolve") {
+		t.Errorf("resolve describe %q misses its effect", got)
+	}
+
+	if got := (*CardAnswer)(nil).Describe(); got != "" {
+		t.Errorf("nil describe is %q, want empty", got)
+	}
+}

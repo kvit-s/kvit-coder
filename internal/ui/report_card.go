@@ -20,6 +20,52 @@ type CardAnswer struct {
 	Effect string
 	// Prompt is the text the next turn runs, for a dispatch. Empty otherwise.
 	Prompt string
+	// Number is the digit the user pressed (1-based, as the card showed it),
+	// and Label is the option's label. Both are recorded so a scrollback copy
+	// of the report can say what was picked without looking the report up
+	// again.
+	Number int
+	Label  string
+}
+
+// Describe returns the scrollback line for what the user picked, e.g.
+// "[picked 1) Preserve hidden positions — filtered/preserve (dispatch, will run as next turn)]".
+// It returns "" when there is nothing to describe.
+func (a *CardAnswer) Describe() string {
+	if a == nil {
+		return ""
+	}
+	label := a.Label
+	if label == "" {
+		label = a.OptionID
+	}
+	where := a.BlockID
+	if a.OptionID != "" {
+		if where != "" {
+			where += "/"
+		}
+		where += a.OptionID
+	}
+	pick := label
+	if a.Number > 0 {
+		pick = fmt.Sprintf("%d) %s", a.Number, label)
+	}
+	if where != "" {
+		pick += " — " + where
+	}
+	switch a.Effect {
+	case report.EffectDispatch:
+		return fmt.Sprintf("[picked %s (dispatch, will run as next turn)]", pick)
+	case report.EffectCollect:
+		return fmt.Sprintf("[picked %s (collect, editing as draft)]", pick)
+	case report.EffectResolve:
+		return fmt.Sprintf("[picked %s (resolve, no turn)]", pick)
+	default:
+		if a.Effect != "" {
+			return fmt.Sprintf("[picked %s (%s)]", pick, a.Effect)
+		}
+		return fmt.Sprintf("[picked %s]", pick)
+	}
 }
 
 // SetReport installs the report the last turn ended with. Passing nil, which is
@@ -108,7 +154,7 @@ func (m *InputModel) pickOption(n int) (bool, tea.Cmd) {
 	}
 	b := &m.card.Blocks[c.Block]
 	o := &b.Options[c.Option]
-	m.cardAnswer = &CardAnswer{BlockID: b.ID, OptionID: o.ID, Effect: o.Effect}
+	m.cardAnswer = &CardAnswer{BlockID: b.ID, OptionID: o.ID, Effect: o.Effect, Number: n, Label: o.Label}
 
 	switch o.Effect {
 	case report.EffectDispatch:

@@ -212,6 +212,10 @@ func (u *UI) Run() error {
 		// something in flight, so the turn waits behind it rather than
 		// starting out from under the card; the composer shows the count.
 		if n := u.checkWake(); n > 0 && !card.HasInteractive() {
+			// The turn below makes the report no longer last, and there is
+			// no composer to answer it first, so leave its expanded copy in
+			// the scrollback before it goes away.
+			printReportTranscript(card, nil)
 			fmt.Printf("\033[38;5;136m[inbox: %d pending — processing]\033[0m\n", n)
 			u.runAgent("", nil)
 			continue
@@ -301,15 +305,43 @@ func (u *UI) readInput(card *report.Report) (string, []string, bool, bool, error
 	// Get the result
 	finalModel := result.(ui.InputModel)
 	if finalModel.Cancelled() || !finalModel.Submitted() {
+		// Exiting leaves the card behind too: its bubbletea frame is cleared
+		// on quit, so print the expanded copy for the scrollback.
+		if card != nil {
+			printReportTranscript(card, finalModel.CardAnswerPicked())
+			fmt.Println("[cancelled]")
+			fmt.Println()
+		}
 		return "", nil, false, true, nil // User cancelled (Ctrl+C)
 	}
 
 	// A wake submit carries no text to echo: the inbox is the prompt.
 	if finalModel.WakeFired() {
+		if card != nil {
+			printReportTranscript(card, finalModel.CardAnswerPicked())
+			fmt.Println("[wake: processing inbox]")
+			fmt.Println()
+		}
 		return "", finalModel.PastedImages(), true, false, nil
 	}
 
 	input := strings.TrimSpace(finalModel.Value())
+	images := finalModel.PastedImages()
+	ans := finalModel.CardAnswerPicked()
+	if card != nil && (input != "" || len(images) > 0 || ans != nil) {
+		// The composer frame that showed this report is cleared on submit,
+		// so leave the expanded report plus what the user did with it in the
+		// scrollback before the next turn runs. The prompt echo below follows
+		// it, so the scrollback reads: report, selection, prompt, next turn.
+		printReportTranscript(card, ans)
+		if strings.TrimSpace(finalModel.Value()) == "" {
+			// No text to echo (a resolve pick with no follow-up, or an
+			// image-only turn): the pick line above already says what
+			// happened, and runAgent lists images when there are any.
+			fmt.Println()
+			return input, images, false, false, nil
+		}
+	}
 
 	// Display the submitted input with gray background
 	colorStart := "\033[97;100m"
@@ -321,7 +353,7 @@ func (u *UI) readInput(card *report.Report) (string, []string, bool, bool, error
 	}
 	fmt.Println()
 
-	return input, finalModel.PastedImages(), false, false, nil
+	return input, images, false, false, nil
 }
 
 // buildPromptText builds the prompt text with session info
