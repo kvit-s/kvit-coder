@@ -81,7 +81,7 @@ func (t *ReportTool) Call(ctx context.Context, args json.RawMessage) (any, error
 	report.Normalize(&rep)
 	rules := report.Rules{MaxBlocks: t.maxBlocks(), Mutated: t.toolCtx.MutatedThisTurn()}
 	if problems := report.Validate(&rep, rules); len(problems) > 0 {
-		return nil, t.reject(problems)
+		return nil, t.reject(problems, report.BuriedProposalHint(&rep))
 	}
 
 	t.toolCtx.AcceptReport(&rep)
@@ -97,10 +97,18 @@ func (t *ReportTool) Call(ctx context.Context, args json.RawMessage) (any, error
 // semantic one: the point is for the problems to reach the conversation so the
 // model can repair from them, and a semantic error is the kind the loop may
 // discard along with the message that produced it.
-func (t *ReportTool) reject(problems []report.Problem) error {
+//
+// When hint is true the rejected report proposed a follow-up in prose while
+// offering no interactive block, so the rejection says so in one line —
+// narrow by design, so failing turns are not punished with extra text.
+func (t *ReportTool) reject(problems []report.Problem, hint ...bool) error {
 	attempt := t.toolCtx.RecordReportRepair()
 	max := t.maxRepairs()
 	msg := report.FormatProblems(problems)
+	if len(hint) > 0 && hint[0] {
+		msg += "\nHint: the report proposes a follow-up in prose; expose each proposal " +
+			"as its own next_step block with status \"needs_action\" instead."
+	}
 	if attempt >= max {
 		msg += fmt.Sprintf("\n\nThat was attempt %d of %d. Stop repairing the report: "+
 			"answer in plain prose instead and end your turn.", attempt, max)
@@ -118,7 +126,8 @@ func (t *ReportTool) reject(problems []report.Problem) error {
 
 // ShortPromptSection is what the strong profile gets: the schema says what the
 // fields are, so this says only what the schema cannot — when to call it, that
-// it ends the turn, and the two rules a model reliably gets wrong.
+// it ends the turn, how the user reads the card, and the rules a model
+// reliably gets wrong.
 func (t *ReportTool) ShortPromptSection() string {
 	return fmt.Sprintf(`### Report
 
@@ -126,8 +135,13 @@ End every turn that %s with one Report call, as the last thing you do: the turn
 ends when the report is accepted, so say everything in the report rather than
 after it. Do not call it twice.
 
-A report is a status, a one-sentence headline, and typed blocks. Two rules the
-schema cannot enforce for you:
+A report is a status, a one-sentence headline, and typed blocks. The user reads
+the headline first, then the what's-next actions, then the bullet summaries,
+and almost never opens details — so the headline carries the material fact on
+its own, summaries stand alone, and nothing the user must act on lives only in
+details.
+
+Rules the schema cannot enforce for you:
 
 - When the turn changed something, "completed" and "completed_with_notes" need
   a verification block saying how you checked it. If you ran nothing, say so
@@ -139,9 +153,17 @@ schema cannot enforce for you:
   options, and says why you recommend the one you recommend. A "dispatch"
   option's instruction is shown to the user and sent verbatim as the next
   prompt if they pick it.
+- When there is an obvious continuation the user will likely ask for next
+  (apply the fix, commit the change, debug the failed test), add a "next_step"
+  block for EACH proposal — there are often several, so emit several
+  "next_step" blocks, one per proposal. Each has one "dispatch" accept option
+  and at least one "collect" or "resolve" alternative. The options inside one
+  block are ways to answer that proposal, not different proposals. Never bury
+  "say the word and I will ..." in details prose — make it the accept option's
+  instruction.
 
 Fewer blocks read better: put related steps in one block's details rather than
-one block each.`, t.modeSentence(), report.MinOptions, report.MaxOptions)
+one block each — but each proposed continuation gets its own next_step block.`, t.modeSentence(), report.MinOptions, report.MaxOptions)
 }
 
 // modeSentence describes, in the model's terms, which turns owe a report.
@@ -169,7 +191,7 @@ func (t *ReportTool) PromptSection() string {
 
 const reportExample = "```json\n" + `{
   "task_status": "needs_action",
-  "headline": "Drag-and-drop ordering works; one filtered-view behaviour needs a decision.",
+  "headline": "Drag-and-drop ordering works; two follow-ups need a keypress.",
   "blocks": [
     {"type": "change", "id": "reorder-impl",
      "summary": "Added drag handles to the row list and persisted the new order.",
@@ -177,10 +199,10 @@ const reportExample = "```json\n" + `{
     {"type": "verification", "id": "reorder-tests",
      "summary": "14/14 relevant tests pass and ordering survives a restart.",
      "status": "passed", "evidence": "go test ./internal/store"},
-    {"type": "decision", "id": "filtered-reordering",
-     "summary": "Choose how reordering behaves while a filter hides some rows.",
+    {"type": "next_step", "id": "filtered-reordering",
+     "summary": "Apply the filtered-view fix preserving hidden positions.",
      "options": [
-       {"id": "preserve", "label": "Preserve hidden positions",
+       {"id": "preserve", "label": "Apply the fix",
         "consequence": "Hidden rows keep their slots.",
         "effect": "dispatch",
         "instruction": "Implement reordering while preserving hidden-row positions."},
@@ -188,6 +210,17 @@ const reportExample = "```json\n" + `{
      ],
      "recommendation": "preserve",
      "recommendation_reason": "It disturbs the least unrelated state.",
+     "response_type": "single"},
+    {"type": "next_step", "id": "commit-reorder",
+     "summary": "Commit the reordering change.",
+     "options": [
+       {"id": "commit", "label": "Commit it",
+        "effect": "dispatch",
+        "instruction": "Commit the reordering change."},
+       {"id": "later", "label": "I will commit myself", "effect": "resolve"}
+     ],
+     "recommendation": "commit",
+     "recommendation_reason": "The change is tested and ready.",
      "response_type": "single"}
   ]
 }` + "\n```"

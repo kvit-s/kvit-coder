@@ -395,6 +395,8 @@ func (r *Runner) reportGateMessage(state *runState) string {
 	return "<system-reminder>\n" +
 		"This turn has not submitted a report. Call Report now with what you just said, " +
 		"in the schema: a task_status, a one-sentence headline, and the typed blocks behind it. " +
+		"If there is an obvious next move (apply the fix, commit the change, debug the failed test), " +
+		"propose each as its own next_step block rather than describing it in prose. " +
 		"The turn ends when the report is accepted, so put everything in the report rather than " +
 		"after it.\n</system-reminder>"
 }

@@ -18,6 +18,7 @@ package report
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // Status is the task_status field: what the turn amounted to.
@@ -234,6 +235,42 @@ func (r *Report) HasInteractive() bool {
 	for i := range r.Blocks {
 		if r.Blocks[i].Interactive() {
 			return true
+		}
+	}
+	return false
+}
+
+// buriedProposalMarks are prose phrases that usually mean the model already
+// has a follow-up in mind but wrote it as text instead of as an interactive
+// block. The list is deliberately narrow: it should fire only when the report
+// half-proposes the action itself, not on every rejection.
+var buriedProposalMarks = []string{
+	"say the word",
+	"say so and i",
+	"just say",
+	"just tell me",
+	"pick one",
+	"how to fix",
+	"want me to",
+	"shall i",
+	"i did not edit",
+	"i have not edited",
+}
+
+// BuriedProposalHint reports whether a rejected report proposes a follow-up
+// in prose while offering no interactive block for it. The caller appends a
+// one-line hint telling the model to expose each proposal as its own
+// next_step block instead.
+func BuriedProposalHint(r *Report) bool {
+	if r == nil || r.HasInteractive() {
+		return false
+	}
+	for i := range r.Blocks {
+		text := strings.ToLower(r.Blocks[i].Summary + "\n" + r.Blocks[i].Details)
+		for _, mark := range buriedProposalMarks {
+			if strings.Contains(text, mark) {
+				return true
+			}
 		}
 	}
 	return false
@@ -461,20 +498,29 @@ func JSONSchema(maxBlocks int) map[string]any {
 			"type": enum("Which kind of item this is. 'change' is work output; 'finding' is something learned; "+
 				"'verification' is how the work was checked; 'warning' is a risk; 'decision' is a choice only the user "+
 				"can make; 'question' is information only the user has; 'blocked' is work that cannot continue; "+
-				"'next_step' is a proposed continuation; 'unclassified' is the last resort.",
+				"'next_step' is a proposed continuation the user accepts or redirects — emit one such block per proposal "+
+				"when there are several (e.g. apply the fix, commit it); 'unclassified' is the last resort.",
 				blockTypeStrings()),
 			"id":      str("Short kebab-case name for this block, unique within the report, such as \"reorder-tests\"."),
-			"summary": str(fmt.Sprintf("The block's fact in one sentence that stands on its own, at most %d characters.", SummaryMax)),
+			"summary": str(fmt.Sprintf("The block's fact in one sentence that stands on its own, at most %d characters. The user may read only this, so it never depends on details.", SummaryMax)),
 
-			"impact":         str("Required on 'finding' (why it matters) and 'warning' (what breaks if ignored). Optional elsewhere: what changed for the user, in one line."),
+			"impact": str("Required on 'finding' (why it matters) and 'warning' (what breaks if ignored). Optional elsewhere: what changed for the user, in one line."),
+
 			"recommendation": str("On 'decision', 'blocked' and 'next_step': the id of the option you recommend, and required there. On 'question': the same, when a safe default exists. On 'finding' and 'warning': free text saying what to do."),
-			"details":        str(fmt.Sprintf("Markdown evidence, logs and file-by-file notes, at most %d bytes. Hidden until the user opens it, so nothing here is needed to understand the summary.", DetailsMax)),
-			"related_files":  map[string]any{"type": "array", "description": "Workspace-relative paths this block is about.", "items": map[string]any{"type": "string"}},
-			"importance":     enum("Required on 'finding': how much it matters.", Levels),
+
+			"details": str(fmt.Sprintf("Markdown evidence, logs and file-by-file notes, at most %d bytes. Hidden until the user opens it, so nothing here is needed to understand the summary — and nothing the user must act on lives only here; propose continuations as next_step blocks instead.", DetailsMax)),
+
+			"related_files": map[string]any{"type": "array", "description": "Workspace-relative paths this block is about.", "items": map[string]any{"type": "string"}},
+
+			"importance": enum("Required on 'finding': how much it matters.", Levels),
+
 			"blocks_current_task": map[string]any{"type": "boolean",
 				"description": "Required on 'finding': whether it stops the current task."},
-			"status":                enum("Required on 'verification': how the check went.", VerifyStatuses),
-			"evidence":              str("On 'verification': the command or check behind the outcome."),
+
+			"status": enum("Required on 'verification': how the check went.", VerifyStatuses),
+
+			"evidence": str("On 'verification': the command or check behind the outcome."),
+
 			"limitation":            str("Required on a 'partial' or 'not_run' verification: what was not checked, and why."),
 			"required_to_verify":    str("On 'verification': what would be needed to check it. Accepted in place of 'limitation'."),
 			"severity":              enum("Required on 'warning': how bad it is.", Levels),
@@ -494,13 +540,14 @@ func JSONSchema(maxBlocks int) map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"task_status": enum("What this turn amounted to. A report that asks the user anything is 'needs_action' or 'blocked'. "+
-				"'completed' and 'completed_with_notes' need a verification block.", statusStrings()),
+				"'completed' and 'completed_with_notes' need a verification block. When there is an obvious continuation, "+
+				"prefer 'needs_action' with next_step blocks over 'completed' with instructions in details.", statusStrings()),
 			"headline": str(fmt.Sprintf("One sentence, at most %d characters, no line break. It is the part that gets read, so put the "+
 				"material fact in it rather than a label for it.", HeadlineMax)),
 			"blocks": map[string]any{
 				"type": "array",
 				"description": fmt.Sprintf("The typed items behind the headline, 0 to %d of them. Fewer is better: several routine steps "+
-					"belong in one block's details, not one block each.", maxBlocks),
+					"belong in one block's details, not one block each — but each proposed continuation gets its own next_step block.", maxBlocks),
 				"items": block,
 			},
 		},

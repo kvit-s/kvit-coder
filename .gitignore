@@ -46,3 +46,4 @@ benchmarks/thinkbench/.uv/
 # by scripts/amalgamate-go.sh. Tracking it would keep a stale second copy of the
 # codebase in every search.
 benchmarks/haystacks/*.txt
+.clauding

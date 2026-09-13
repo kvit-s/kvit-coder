@@ -268,3 +268,57 @@ func TestReportToolIsRegisteredOnlyWhenEnabled(t *testing.T) {
 		t.Error("Report was not registered with reports switched on")
 	}
 }
+
+// The strong-profile prompt has to teach what the schema cannot: how the user
+// reads the card, and that every obvious continuation becomes its own
+// next_step block rather than prose in details.
+func TestShortPromptTeachesNextSteps(t *testing.T) {
+	tool, _ := newReportTool(t)
+	section := tool.ShortPromptSection()
+	for _, want := range []string{
+		"next_step",
+		"one per proposal",
+		"almost never opens details",
+		"needs_action",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("short prompt does not mention %q:\n%s", want, section)
+		}
+	}
+}
+
+// A rejection names a buried prose proposal in one hint line, and only then:
+// failing turns are not punished with extra text.
+func TestRejectionHintsAtBuriedProposal(t *testing.T) {
+	buried := `{
+	  "task_status": "completed",
+	  "headline": "Stale PATH line lists a directory that no longer exists.",
+	  "blocks": [{"type": "finding", "id": "cause",
+	    "summary": "Line 144 runs ls on a missing directory.",
+	    "details": "How to fix (pick one): delete the line. Say the word and I will apply it."}]
+	}`
+	tool, _ := newReportTool(t)
+	_, err := tool.Call(context.Background(), json.RawMessage(buried))
+	if err == nil {
+		t.Fatal("a finding without impact was accepted")
+	}
+	if !strings.Contains(err.Error(), "next_step") {
+		t.Errorf("rejection names no next_step hint:\n%v", err)
+	}
+
+	plain := `{
+	  "task_status": "completed",
+	  "headline": "Stale PATH line lists a directory that no longer exists.",
+	  "blocks": [{"type": "finding", "id": "cause",
+	    "summary": "Line 144 runs ls on a missing directory.",
+	    "details": "Checked the startup files; this is the only reference."}]
+	}`
+	tool, _ = newReportTool(t)
+	_, err = tool.Call(context.Background(), json.RawMessage(plain))
+	if err == nil {
+		t.Fatal("a finding without impact was accepted")
+	}
+	if strings.Contains(err.Error(), "Hint:") {
+		t.Errorf("a report with no proposal drew the hint:\n%v", err)
+	}
+}

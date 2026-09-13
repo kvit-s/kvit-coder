@@ -92,6 +92,14 @@ options, and every option declares an **effect** that says what picking it does:
 `decision` and `next_step` differ in where the default lies: use `next_step`
 when there is an obvious continuation and the accept option should run it, and
 `decision` when there is no default forward motion and the user has to pick.
+There are often several continuations — emit one `next_step` block per
+proposal (e.g. apply the fix, commit it); the options inside one block are
+ways to answer that proposal, not different proposals.
+
+The user reads the card headline first, then the what's-next actions, then the
+bullet summaries, and almost never opens details. So nothing the user must act
+on lives only in `details` — every obvious continuation is a keypressable
+`next_step` option instead.
 
 ### 2.3 An example
 

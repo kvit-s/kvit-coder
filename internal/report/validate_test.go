@@ -377,3 +377,53 @@ func TestCompletedStillNeedsSomething(t *testing.T) {
 		t.Error("a report of nothing but a headline was accepted")
 	}
 }
+
+// BuriedProposalHint fires only when the report proposes a follow-up in prose
+// while offering no interactive block — the Antigravity case, where the fix
+// lived in finding.details and the card offered no keypress.
+func TestBuriedProposalHint(t *testing.T) {
+	prose := &Report{
+		TaskStatus: StatusCompleted,
+		Headline:   "Stale PATH line lists a directory that no longer exists.",
+		Blocks: []Block{{
+			Type: BlockFinding, ID: "cause",
+			Summary: "Line 144 runs ls on a missing directory.",
+			Details: "How to fix (pick one): delete the line, or guard it. " +
+				"Say the word and I will apply either.",
+		}},
+	}
+	if !BuriedProposalHint(prose) {
+		t.Error("a prose proposal with no interactive block drew no hint")
+	}
+
+	withAction := &Report{
+		TaskStatus: StatusNeedsAction,
+		Headline:   "Stale PATH line lists a directory that no longer exists.",
+		Blocks: []Block{
+			{
+				Type: BlockFinding, ID: "cause",
+				Summary: "Line 144 runs ls on a missing directory.",
+				Details: "Say the word and I will apply either fix.",
+			},
+			decisionBlock(),
+		},
+	}
+	// decisionBlock is a decision, so the report already offers a keypress.
+	withAction.Blocks[1].Type = BlockNextStep
+	if BuriedProposalHint(withAction) {
+		t.Error("a report that already offers an action drew the hint")
+	}
+
+	plain := &Report{
+		TaskStatus: StatusCompleted,
+		Headline:   "Renamed the helper.",
+		Blocks: []Block{{
+			Type: BlockFinding, ID: "cause",
+			Summary: "The helper lived in two packages.",
+			Details: "No follow-up remains.",
+		}},
+	}
+	if BuriedProposalHint(plain) {
+		t.Error("a report with no proposal drew the hint")
+	}
+}
