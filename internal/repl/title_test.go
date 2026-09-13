@@ -110,6 +110,31 @@ func TestEnsureSessionTitleSummarizerFailureFallsBack(t *testing.T) {
 	}
 }
 
+// A 5xx from the summarizer is tried once and then given up on. The client's
+// default is ten retries waiting 1s, 2s, 4s, 8s, 16s in between, which held
+// the start of every new session in silence when the summarizer endpoint was
+// a local server answering 502 straight away.
+func TestEnsureSessionTitleRetryableFailureIsTriedOnce(t *testing.T) {
+	var requests int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "no model loaded", http.StatusBadGateway)
+	}))
+	defer srv.Close()
+	sess := titleTestSession(t)
+	cfg := titleTestConfig(config.ModelEntry{
+		ID: "cheap", Name: "Cheap", Model: "cheap-wire",
+		BaseURL: srv.URL, APIBackend: "chat_completions", Summarizer: true,
+	})
+	got := EnsureSessionTitle(context.Background(), cfg, sess, "fix the login bug now please", true, nil)
+	if got != "fix the login bug now" {
+		t.Errorf("title = %q, want fallback first 5 words", got)
+	}
+	if requests != 1 {
+		t.Errorf("summarizer endpoint saw %d requests, want 1", requests)
+	}
+}
+
 // An unusable summarizer answer (empty content) falls back too.
 func TestEnsureSessionTitleEmptyAnswerFallsBack(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

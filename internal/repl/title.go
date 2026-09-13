@@ -15,7 +15,13 @@ import (
 // titleTimeout bounds the summarizer call end to end. A title must never
 // stall a turn: any failure — timeout included — falls back to the prompt's
 // first words.
-const titleTimeout = 30 * time.Second
+//
+// Nothing is printed while the call runs, and it runs before the turn's first
+// model call, so every second of it is a new session sitting silent at what
+// looks like a dead prompt. Eight seconds is long enough for a small model to
+// answer with three words and short enough that giving up and using the
+// prompt's own first words barely registers.
+const titleTimeout = 8 * time.Second
 
 // titleMaxTokens caps the summarizer answer. A 3-6 word title fits in a
 // fraction of it; the cap only trims a model that answers in sentences.
@@ -150,7 +156,14 @@ func summarizerClientFor(cfg *config.Config, entry config.ModelEntry) *llm.Clien
 		llm.WithBackend(backend),
 		llm.WithHeaders(cfg.LLMHeaders()),
 		llm.WithReasoningEffort(summarizerEffort(cfg, entry)),
-		llm.WithTimeout(60*time.Second),
+		llm.WithTimeout(titleTimeout),
+		// One attempt. The default ladder retries a 5xx ten times, waiting
+		// 1s, 2s, 4s, 8s, 16s and so on in between, which is how a local
+		// endpoint answering 502 in three milliseconds — llama-swap with no
+		// model loaded — still held the start of every new session for the
+		// full titleTimeout with nothing on screen. The title is worth one
+		// try; the fallback is the prompt's own first words.
+		llm.WithMaxRetries(0),
 	)
 }
 

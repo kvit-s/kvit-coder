@@ -26,6 +26,12 @@ const (
 // It has to cover a slow reasoning model's whole answer, so it is generous.
 const defaultRequestTimeout = 10 * time.Minute
 
+// defaultMaxRetries is how many times a failed request is tried again before
+// the error is returned. The ladder below doubles the wait each time, so ten
+// retries is several minutes of patience — right for the model call a turn
+// cannot continue without, and wrong for anything optional.
+const defaultMaxRetries = 10
+
 type Client struct {
 	baseURL string
 	apiKey  string
@@ -41,6 +47,26 @@ type Client struct {
 	// request that times out and retries silently can hold a turn for the
 	// timeout times the retry count.
 	onRetry func(attempt, maxAttempts int, delay time.Duration, reason error)
+	// maxRetries is how many further attempts a failed request gets. See
+	// WithMaxRetries.
+	maxRetries int
+}
+
+// WithMaxRetries caps how many times a failed request is tried again, for a
+// caller that would rather fall back than wait. Zero means one attempt and no
+// retry; a negative value leaves the default of defaultMaxRetries.
+//
+// The retry ladder waits 1s, 2s, 4s, 8s, 16s and so on between attempts, and
+// an endpoint that refuses instantly — a 502 from a local server with no model
+// loaded, say — spends all of that waiting. A request whose answer is optional
+// should not: it holds up whatever is waiting on it and there is nothing on
+// screen to say why.
+func WithMaxRetries(n int) Option {
+	return func(c *Client) {
+		if n >= 0 {
+			c.maxRetries = n
+		}
+	}
 }
 
 // WithRetryNotice installs a callback told about each failed attempt, so a
@@ -112,9 +138,10 @@ func NewClient(baseURL, apiKey string, opts ...Option) *Client {
 	disableKeepAlives := strings.HasPrefix(baseURL, "http://")
 
 	c := &Client{
-		baseURL: baseURL,
-		apiKey:  apiKey,
-		backend: BackendChatCompletions,
+		baseURL:    baseURL,
+		apiKey:     apiKey,
+		backend:    BackendChatCompletions,
+		maxRetries: defaultMaxRetries,
 		client: &http.Client{
 			Timeout: defaultRequestTimeout,
 			Transport: &http.Transport{
@@ -228,7 +255,7 @@ func bodyPreview(body []byte) string {
 // partially, which the caller may want to repair before parsing.
 func (c *Client) postJSON(ctx context.Context, path string, body []byte) ([]byte, bool, error) {
 	// Retry configuration
-	const maxRetries = 10
+	maxRetries := c.maxRetries
 	baseDelay := 1 * time.Second
 	maxDelay := 128 * time.Second
 

@@ -349,3 +349,39 @@ func TestChatEffortSendsTemplateKwargs(t *testing.T) {
 		t.Errorf("explicit kwargs gained reasoning_effort: %v", got)
 	}
 }
+
+// A 5xx is retryable, so by default it is tried again and again. A caller
+// that would rather fall back than wait asks for fewer attempts, and zero
+// means the one attempt with no ladder behind it.
+func TestChatMaxRetriesCapsAttempts(t *testing.T) {
+	tests := []struct {
+		name         string
+		maxRetries   int
+		wantRequests int
+	}{
+		{"no retry", 0, 1},
+		{"one retry", 1, 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var requests int
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				http.Error(w, "no model loaded", http.StatusBadGateway)
+			}))
+			defer server.Close()
+
+			client := NewClient(server.URL, "test-key", WithMaxRetries(tt.maxRetries))
+			_, err := client.Chat(context.Background(), ChatRequest{
+				Model:    "m",
+				Messages: []Message{{Role: RoleUser, Content: "hi"}},
+			})
+			if err == nil {
+				t.Fatal("want an error from the 502 endpoint, got nil")
+			}
+			if requests != tt.wantRequests {
+				t.Errorf("server saw %d requests, want %d", requests, tt.wantRequests)
+			}
+		})
+	}
+}
