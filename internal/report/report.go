@@ -388,26 +388,26 @@ func (b *Block) Glyph() string {
 	return "~"
 }
 
-// typeRank orders block types by how much they need attention: what stops the
-// work, then what asks a question, then what warns, then what was learned,
-// then what was checked and what changed.
+// typeRank orders block types for display: what asks the user something
+// (decision, question, blocked, next_step), then warning, change, finding,
+// verification, and unclassified last.
 func typeRank(t BlockType) int {
 	switch t {
-	case BlockBlocked:
-		return 0
 	case BlockDecision:
-		return 1
+		return 0
 	case BlockQuestion:
+		return 1
+	case BlockBlocked:
 		return 2
 	case BlockNextStep:
 		return 3
 	case BlockWarning:
 		return 4
-	case BlockFinding:
-		return 5
-	case BlockVerification:
-		return 6
 	case BlockChange:
+		return 5
+	case BlockFinding:
+		return 6
+	case BlockVerification:
 		return 7
 	}
 	return 8
@@ -424,9 +424,10 @@ func levelRank(level string) int {
 	return len(Levels) + 1
 }
 
-// Order returns the block indices in display order: by attention, not by the
-// order the model happened to send them. Blocks that tie keep the order they
-// were sent in, so a report renders the same way every time.
+// Order returns the block indices in display order: decision, question,
+// blocked, next_step, warning, change, finding, verification, unclassified —
+// regardless of the order the model sent them in. Blocks that tie keep the
+// order they were sent in, so a report renders the same way every time.
 func (r *Report) Order() []int {
 	if r == nil {
 		return nil

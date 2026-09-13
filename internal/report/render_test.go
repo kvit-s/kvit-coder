@@ -13,8 +13,9 @@ func blockIDsInOrder(r *Report) []string {
 	return out
 }
 
-// Blocks are shown by how much they need attention, not by the order the model
-// happened to send them.
+// Blocks are shown in a fixed display order, not by the order the model
+// happened to send them: interactive blocks first, then warning, change,
+// finding, verification, and unclassified last.
 func TestOrderPutsWhatStopsTheWorkFirst(t *testing.T) {
 	r := &Report{
 		TaskStatus: StatusBlocked,
@@ -28,7 +29,35 @@ func TestOrderPutsWhatStopsTheWorkFirst(t *testing.T) {
 		},
 	}
 	got := blockIDsInOrder(r)
-	want := []string{"no-token", "risk", "cause", "tests", "edit"}
+	want := []string{"no-token", "risk", "edit", "cause", "tests"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order is %v, want %v", got, want)
+		}
+	}
+}
+
+// The model may send blocks in any order; the card shows them in the fixed
+// display order: decision, question, blocked, next_step, warning, change,
+// finding, verification, unclassified.
+func TestOrderFollowsFixedDisplayOrder(t *testing.T) {
+	r := &Report{
+		TaskStatus: StatusNeedsAction,
+		Headline:   "Scrambled submission order.",
+		Blocks: []Block{
+			{Type: BlockUnclassified, ID: "note"},
+			{Type: BlockVerification, ID: "tests"},
+			{Type: BlockFinding, ID: "cause"},
+			{Type: BlockChange, ID: "edit"},
+			{Type: BlockWarning, ID: "risk"},
+			{Type: BlockNextStep, ID: "step"},
+			{Type: BlockBlocked, ID: "stuck"},
+			{Type: BlockQuestion, ID: "ask"},
+			{Type: BlockDecision, ID: "pick"},
+		},
+	}
+	got := blockIDsInOrder(r)
+	want := []string{"pick", "ask", "stuck", "step", "risk", "edit", "cause", "tests", "note"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("order is %v, want %v", got, want)
