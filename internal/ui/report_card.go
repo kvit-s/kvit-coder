@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -231,31 +232,27 @@ func (m InputModel) cardWidth() int {
 	}
 	return w - 2
 }
-
-// cardView draws the report above the prompt, or nothing when there is no
-// report to draw. It is the same layout the agent prints headless, painted,
-// with the numbered options brightened because they are the part you act on,
-// and wrapped to the terminal so nothing runs off the right-hand side.
-func (m InputModel) cardView() string {
-	if !m.cardShowing() {
-		return ""
+// paintCardLine styles one wrapped card line the way the card does: block
+// lines in text white, numbered options brightened because they are the part
+// acted on, dispatch instructions muted, everything else dim.
+func paintCardLine(kind report.LineKind, option int, text string) string {
+	switch {
+	case kind == report.LineBlock:
+		return cardText.Render(text)
+	case kind == report.LineOption && option > 0:
+		return cardOption.Render(text)
+	case kind == report.LineInstruction:
+		return cardInstruction.Render(text)
 	}
-	width := m.cardWidth()
+	return cardDim.Render(text)
+}
+
+// renderCardLines lays out a report the way the card does — indented,
+// wrapped, painted — but without the card's key hint, so both the live card
+// and the scrollback copy share one layout.
+func renderCardLines(card *report.Report, opts report.Options, width int) string {
 	var sb strings.Builder
-
-	paint := func(kind report.LineKind, option int, text string) string {
-		switch {
-		case kind == report.LineBlock:
-			return cardText.Render(text)
-		case kind == report.LineOption && option > 0:
-			return cardOption.Render(text)
-		case kind == report.LineInstruction:
-			return cardInstruction.Render(text)
-		}
-		return cardDim.Render(text)
-	}
-
-	for _, line := range report.Lines(m.card, report.Options{Expanded: m.cardExpanded}) {
+	for _, line := range report.Lines(card, opts) {
 		text := line.Text
 		if line.Kind != report.LineHeader {
 			text = "  " + text
@@ -265,16 +262,79 @@ func (m InputModel) cardView() string {
 				// The chip is a word, so it only ever sits on the first
 				// wrapped line of the headline.
 				if chip, rest, found := strings.Cut(out, " · "); found && i == 0 {
-					sb.WriteString(chipStyle(m.card.TaskStatus).Render(chip) + cardText.Render(" · "+rest))
+					sb.WriteString(chipStyle(card.TaskStatus).Render(chip) + cardText.Render(" · "+rest))
 				} else {
 					sb.WriteString(cardText.Render(out))
 				}
 			} else {
-				sb.WriteString(paint(line.Kind, line.Option, out))
+				sb.WriteString(paintCardLine(line.Kind, line.Option, out))
 			}
 			sb.WriteString("\n")
 		}
 	}
+	return sb.String()
+}
+
+// transcriptWidth is the width the scrollback copy wraps to. The live card
+// wraps to the composer's terminal columns; the copy is printed after the
+// composer is gone, so COLUMNS is the closest thing left to that width.
+func transcriptWidth() int {
+	w := 80
+	if s := os.Getenv("COLUMNS"); s != "" {
+		var n int
+		if _, err := fmt.Sscanf(s, "%d", &n); err == nil && n > 0 {
+			w = n
+		}
+	}
+	if w < 40 {
+		w = 40
+	}
+	if w > 250 {
+		w = 250
+	}
+	return w - 2
+}
+
+// Transcript returns the scrollback copy of a report with the same colors as
+// the card: chip and headline, block lines, dim fields, bright options and
+// muted instructions. Details are always expanded, so nothing the card kept
+// folded is lost from the history.
+func Transcript(card *report.Report, ans *CardAnswer) string {
+	return TranscriptWidth(card, ans, transcriptWidth())
+}
+
+// TranscriptWidth is Transcript wrapped to an explicit width, so tests and
+// callers that know the terminal can pin it.
+func TranscriptWidth(card *report.Report, ans *CardAnswer, width int) string {
+	if card == nil {
+		return ""
+	}
+	if width <= 0 {
+		width = transcriptWidth()
+	}
+	var sb strings.Builder
+	sb.WriteString("\n")
+	sb.WriteString(cardDim.Render("── report (previous turn, expanded) ──") + "\n")
+	sb.WriteString(renderCardLines(card, report.Options{ExpandAll: true}, width))
+	sb.WriteString(cardDim.Render("─────────────────────────────────────") + "\n")
+	if ans != nil {
+		if d := ans.Describe(); d != "" {
+			sb.WriteString(cardDim.Render(d) + "\n")
+		}
+	}
+	return sb.String()
+}
+
+// cardView draws the report above the prompt, or nothing when there is no
+// report to draw. It is the same layout the agent prints headless, painted,
+// with the numbered options brightened because they are the part you act on,
+// and wrapped to the terminal so nothing runs off the right-hand side.
+func (m InputModel) cardView() string {
+	if !m.cardShowing() {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString(renderCardLines(m.card, report.Options{Expanded: m.cardExpanded}, m.cardWidth()))
 	sb.WriteString(cardDim.Render(m.cardHint()) + "\n\n")
 	return sb.String()
 }

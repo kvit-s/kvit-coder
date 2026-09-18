@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/kvit-s/kvit-coder/internal/report"
 	"github.com/kvit-s/kvit-coder/internal/ui"
@@ -12,26 +11,17 @@ import (
 // answered: the whole report with every block's details shown, plus what the
 // user picked from it when they picked anything.
 //
+// It paints with the same colors as the live card (see ui.Transcript), so the
+// history reads like the report that was just answered rather than plain
+// text.
+//
 // The composer runs in bubbletea, whose last frame is cleared on submit (the
 // quitting view is empty), so without this the previous turn's card vanishes
 // as soon as the next turn starts and there is nothing to scroll back to. The
 // transcript is printed after the user's action, before the next turn runs, so
 // the scrollback reads: turn output, expanded report, user action, next turn.
 func reportTranscript(card *report.Report, ans *ui.CardAnswer) string {
-	if card == nil {
-		return ""
-	}
-	var sb strings.Builder
-	sb.WriteString("\n")
-	sb.WriteString("── report (previous turn, expanded) ──\n")
-	sb.WriteString(strings.TrimRight(card.PlainText(), "\n"))
-	sb.WriteString("\n─────────────────────────────────────\n")
-	if ans != nil {
-		if d := ans.Describe(); d != "" {
-			sb.WriteString(d + "\n")
-		}
-	}
-	return sb.String()
+	return ui.Transcript(card, ans)
 }
 
 // printReportTranscript prints the scrollback copy, or nothing when there is
