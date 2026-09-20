@@ -216,8 +216,11 @@ func TestReadPDFReportsPagesWithoutText(t *testing.T) {
 		t.Errorf("content does not say the page has no text:\n%s", content)
 	}
 	hint, _ := got["hint"].(string)
-	if !strings.Contains(hint, "scanned") {
-		t.Errorf("hint does not explain why: %q", hint)
+	if !strings.Contains(hint, "ReadImage") {
+		t.Errorf("hint does not point at the tool that can show the page: %q", hint)
+	}
+	if !strings.Contains(hint, `"page": 1`) {
+		t.Errorf("hint does not name the page to look at: %q", hint)
 	}
 }
 
@@ -286,5 +289,125 @@ func TestLooksLikePDF(t *testing.T) {
 	}
 	if _, err := readFileHead(filepath.Join(dir, "missing.pdf"), guardHeadBytes); err == nil {
 		t.Error("reading the head of a missing file did not fail")
+	}
+}
+
+// readImagePDFPage calls ReadImage the way the model does, on a PDF.
+func readImagePDFPage(t *testing.T, dir, path string, page int) *ImageReadResult {
+	t.Helper()
+
+	cfg := newTestConfig()
+	cfg.Workspace.Root = dir
+	cfg.Tools.Read.PDF.CacheDir = filepath.Join(t.TempDir(), "wasm-cache")
+	cfg.Tools.Images.MaxDimension = 512
+
+	args := map[string]any{"path": path}
+	if page != 0 {
+		args["page"] = page
+	}
+	encoded, err := json.Marshal(args)
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	result, err := NewReadImageTool(cfg, NewToolContext()).Call(context.Background(), encoded)
+	if err != nil {
+		t.Fatalf("ReadImage %v: %v", args, err)
+	}
+	got, ok := result.(*ImageReadResult)
+	if !ok {
+		t.Fatalf("ReadImage returned %T, want *ImageReadResult", result)
+	}
+	return got
+}
+
+// A PDF handed to ReadImage comes back as a picture of a page, with the image
+// attached the way any other image read is.
+func TestReadImageDrawsAPDFPage(t *testing.T) {
+	dir := t.TempDir()
+	writeTestPDF(t, dir, "doc.pdf", []string{"Page one", "Page two", "Page three"})
+
+	got := readImagePDFPage(t, dir, "doc.pdf", 0)
+
+	if !got.Success {
+		t.Fatal("ReadImage did not succeed on a PDF")
+	}
+	if got.Page != 1 {
+		t.Errorf("Page = %d, want 1 when no page was asked for", got.Page)
+	}
+	if got.TotalPages != 3 {
+		t.Errorf("TotalPages = %d, want 3", got.TotalPages)
+	}
+	if got.MediaType != "image/png" {
+		t.Errorf("MediaType = %q, want image/png", got.MediaType)
+	}
+	if got.Width <= 0 || got.Height <= 0 {
+		t.Errorf("rendered %dx%d, want a real size", got.Width, got.Height)
+	}
+	if n := len(got.ToolImages()); n != 1 {
+		t.Fatalf("attached %d images, want 1", n)
+	}
+	if _, err := os.Stat(got.ToolImages()[0].Path); err != nil {
+		t.Errorf("the attached image is not on disk: %v", err)
+	}
+	if !strings.Contains(got.Hint, "page") {
+		t.Errorf("Hint does not say how to get another page: %q", got.Hint)
+	}
+}
+
+// The page asked for is the page drawn, and the aspect ratio of the source
+// page survives: the test pages are US Letter, taller than they are wide.
+func TestReadImageDrawsTheRequestedPage(t *testing.T) {
+	dir := t.TempDir()
+	writeTestPDF(t, dir, "doc.pdf", []string{"one", "two", "three", "four"})
+
+	got := readImagePDFPage(t, dir, "doc.pdf", 3)
+
+	if got.Page != 3 {
+		t.Errorf("Page = %d, want 3", got.Page)
+	}
+	if got.Height <= got.Width {
+		t.Errorf("rendered %dx%d, want a portrait page", got.Width, got.Height)
+	}
+	if got.Height != 512 {
+		t.Errorf("long edge is %d, want it rendered to the 512 limit", got.Height)
+	}
+}
+
+// A page past the end says so rather than drawing something arbitrary.
+func TestReadImageRejectsAPageThatIsNotThere(t *testing.T) {
+	dir := t.TempDir()
+	writeTestPDF(t, dir, "doc.pdf", []string{"only one page"})
+
+	cfg := newTestConfig()
+	cfg.Workspace.Root = dir
+	cfg.Tools.Read.PDF.CacheDir = filepath.Join(t.TempDir(), "wasm-cache")
+
+	args, _ := json.Marshal(map[string]any{"path": "doc.pdf", "page": 7})
+	_, err := NewReadImageTool(cfg, NewToolContext()).Call(context.Background(), args)
+	if err == nil {
+		t.Fatal("asking for page 7 of a one-page document did not fail")
+	}
+	if !strings.Contains(err.Error(), "has 1") {
+		t.Errorf("error does not say how many pages there are: %v", err)
+	}
+}
+
+// Reading a PDF as a picture must not satisfy the Read-before-Edit gate, for
+// the same reason reading one as text does not.
+func TestReadImagePDFDoesNotSatisfyReadBeforeEdit(t *testing.T) {
+	dir := t.TempDir()
+	path := writeTestPDF(t, dir, "doc.pdf", []string{"text"})
+
+	cfg := newTestConfig()
+	cfg.Workspace.Root = dir
+	cfg.Tools.Read.PDF.CacheDir = filepath.Join(t.TempDir(), "wasm-cache")
+	toolCtx := NewToolContext()
+
+	args, _ := json.Marshal(map[string]any{"path": "doc.pdf"})
+	if _, err := NewReadImageTool(cfg, toolCtx).Call(context.Background(), args); err != nil {
+		t.Fatalf("ReadImage: %v", err)
+	}
+	if toolCtx.ReadTracker.WasReadRecently(path, toolCtx.ReadTracker.CurrentMessageID(), 5) {
+		t.Error("drawing a PDF page recorded a read, so Edit would accept the file as text")
 	}
 }

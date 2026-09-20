@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"fmt"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -200,6 +201,69 @@ func extractPDFText(ctx context.Context, pool pdfium.Pool, path string, want pdf
 	return pages, totalPages, nil
 }
 
+// renderPDFPage draws one page into a PNG file under destDir and returns its
+// path along with the document's page count.
+//
+// The page is rendered straight to the size the model will see. Rendering at a
+// high resolution and downscaling afterwards would resample twice for nothing,
+// because the long-edge cap exists precisely because detail above it buys no
+// accuracy.
+func renderPDFPage(ctx context.Context, pool pdfium.Pool, srcPath, destDir string, page, maxDim int) (path string, totalPages int, err error) {
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return "", 0, err
+	}
+
+	instance, err := pool.GetInstanceWithContext(ctx)
+	if err != nil {
+		return "", 0, fmt.Errorf("PDF reader busy: %w", err)
+	}
+	defer instance.Close()
+
+	doc, err := instance.FPDF_LoadMemDocument(&requests.FPDF_LoadMemDocument{Data: &data})
+	if err != nil {
+		return "", 0, describePDFLoadError(err)
+	}
+	defer instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document})
+
+	count, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document})
+	if err != nil {
+		return "", 0, fmt.Errorf("read page count: %w", err)
+	}
+	totalPages = count.PageCount
+	if page < 1 || page > totalPages {
+		return "", totalPages, fmt.Errorf("page %d requested but the document has %d", page, totalPages)
+	}
+
+	rendered, err := instance.RenderPageInPixels(&requests.RenderPageInPixels{
+		Page:   requests.Page{ByIndex: &requests.PageByIndex{Document: doc.Document, Index: page - 1}},
+		Width:  maxDim,
+		Height: maxDim,
+	})
+	if err != nil {
+		return "", totalPages, fmt.Errorf("render page %d: %w", page, err)
+	}
+	// Under WebAssembly the pixels live in the instance's memory and are only
+	// valid until this runs, so the encode below has to happen first and this
+	// has to happen on every path out.
+	defer rendered.Cleanup()
+
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return "", totalPages, fmt.Errorf("create image store: %w", err)
+	}
+	out, err := os.CreateTemp(destDir, fmt.Sprintf("pdfpage-%d-*.png", page))
+	if err != nil {
+		return "", totalPages, fmt.Errorf("create page image: %w", err)
+	}
+	defer out.Close()
+
+	if err := png.Encode(out, rendered.Result.RenderedImage); err != nil {
+		os.Remove(out.Name())
+		return "", totalPages, fmt.Errorf("encode page %d: %w", page, err)
+	}
+	return out.Name(), totalPages, nil
+}
+
 // describePDFLoadError turns PDFium's typed failures into something a model can
 // act on, since the difference between a password and a damaged file decides
 // whether there is anything worth trying next.
@@ -306,8 +370,11 @@ func (t *ReadFileTool) formatPDFResult(pages []pdfPage, totalPages int, path str
 
 	switch {
 	case withText == 0:
-		response["hint"] = fmt.Sprintf("No text on %s. The document is probably scanned, so its pages are images and only optical character recognition would read them.",
-			pluralPages(len(pages)))
+		// No extractable text does not mean an empty page. A scan holds an
+		// image of the text, and a label or a form often draws its lettering as
+		// shapes rather than characters. Either way the page can be looked at.
+		response["hint"] = fmt.Sprintf("No text to extract from %s: the page is a picture, or its lettering is drawn as shapes. Look at it instead with ReadImage {\"path\": %q, \"page\": %d}.",
+			pluralPages(len(pages)), path, pages[0].Number)
 	case truncated:
 		response["hint"] = fmt.Sprintf("Output limit reached. Read {\"path\": %q, \"pages\": \"%d-\"} to continue.", path, lastIncluded+1)
 	case lastIncluded < totalPages:

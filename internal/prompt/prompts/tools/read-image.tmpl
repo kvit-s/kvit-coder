@@ -6,5 +6,11 @@ Reads a PNG, JPEG, GIF or WebP so you can see it: a screenshot, a photo of a
 whiteboard, a diagram. The image arrives with the result; the JSON summary
 says which file it was. Large images are downscaled automatically.
 
+**PDF files** are drawn as a picture, one page per call:
+`ReadImage {"path": "scan.pdf", "page": 3}`, page 1 if you do not say.
+Use this when Read found no text in the PDF, and when the layout itself is
+the point: a diagram, a chart, a form. Read gets you the text far more
+cheaply, so reach for this second.
+
 An image read does not count as reading a file for editing: quote paths, not
 pixels, and Read the file before editing it.
