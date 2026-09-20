@@ -255,25 +255,36 @@ func TestLooksLikePDF(t *testing.T) {
 	dir := t.TempDir()
 	real := writeTestPDF(t, dir, "real.pdf", []string{"text"})
 
-	text := filepath.Join(dir, "plain.txt")
-	if err := os.WriteFile(text, []byte("just words\n"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
+	head := func(path string) []byte {
+		t.Helper()
+		got, err := readFileHead(path, guardHeadBytes)
+		if err != nil {
+			t.Fatalf("read head of %s: %v", path, err)
+		}
+		return got
 	}
-	short := filepath.Join(dir, "tiny.txt")
-	if err := os.WriteFile(short, []byte("%PD"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
+	write := func(name, content string) string {
+		t.Helper()
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+		return path
 	}
 
-	if !looksLikePDF(real) {
+	if !looksLikePDF(head(real)) {
 		t.Error("a real PDF was not recognized")
 	}
-	if looksLikePDF(text) {
+	if looksLikePDF(head(write("plain.txt", "just words\n"))) {
 		t.Error("a text file was taken for a PDF")
 	}
-	if looksLikePDF(short) {
+	if looksLikePDF(head(write("tiny.txt", "%PD"))) {
 		t.Error("a file shorter than the header was taken for a PDF")
 	}
-	if looksLikePDF(filepath.Join(dir, "missing.pdf")) {
-		t.Error("a missing file was taken for a PDF")
+	if looksLikePDF(nil) {
+		t.Error("an empty head was taken for a PDF")
+	}
+	if _, err := readFileHead(filepath.Join(dir, "missing.pdf"), guardHeadBytes); err == nil {
+		t.Error("reading the head of a missing file did not fail")
 	}
 }

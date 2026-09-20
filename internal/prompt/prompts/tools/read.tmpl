@@ -21,3 +21,8 @@ you, with a marker before each page. Use `pages` to choose which pages:
 `Read {"path": "spec.pdf", "pages": "2-6"}`. Without it the read starts at
 page 1. `start`, `limit` and `char_mode` do not apply to a PDF, and a PDF
 cannot be edited as text.
+
+**Other non-text files** — images, archives, databases, compiled output — are
+named rather than read, with the tool or command that opens them. That is the
+answer, not a failure to retry. Pass `char_mode: true` if you want the raw
+bytes anyway.

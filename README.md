@@ -154,7 +154,7 @@ The design behind this is written up in [`docs/`](docs/) — start with
 
 | Tool | Description |
 |------|-------------|
-| **read** | Read file contents or list directories. Supports partial reads and character mode for large files. A PDF is detected from its contents and its text is extracted, a page range at a time (`pages: "2-6"`). |
+| **read** | Read file contents or list directories. Supports partial reads and character mode for large files. A PDF is detected from its contents and its text is extracted, a page range at a time (`pages: "2-6"`). Other non-text files (images, archives, databases, compiled output) are named, with the tool or command that opens them, rather than read as bytes. |
 | **ReadImage** | Read an image file (PNG, JPEG, GIF) so the model can see it. Large images are downscaled automatically. |
 | **edit** | Modify files. Three modes: **lines** (line ranges), **searchreplace** (find/replace with optional fuzzy matching), **patch** (unified diffs). Optional preview mode with confirm/cancel. |
 | **restore_file** | Restore a file to its state at session start. |

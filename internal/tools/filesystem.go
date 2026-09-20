@@ -394,7 +394,12 @@ Always use Read before editing a file.
 you, with a marker before each page. Use ` + "`pages`" + ` to choose which pages:
 ` + "`" + `Read {"path": "spec.pdf", "pages": "2-6"}` + "`" + `. Without it the read starts at
 page 1. ` + "`start`" + `, ` + "`limit`" + ` and ` + "`char_mode`" + ` do not apply to a PDF, and a PDF
-cannot be edited as text.`
+cannot be edited as text.
+
+**Other non-text files** — images, archives, databases, compiled output — are
+named rather than read, with the tool or command that opens them. That is the
+answer, not a failure to retry. Pass ` + "`char_mode: true`" + ` if you want the raw
+bytes anyway.`
 }
 
 func (t *ReadFileTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
@@ -456,16 +461,28 @@ func (t *ReadFileTool) Call(ctx context.Context, args json.RawMessage) (any, err
 
 	fileSize := info.Size()
 
+	// What the file starts with decides how it is read. The checks below are on
+	// these bytes rather than on the extension, because the extension lies in
+	// both directions: a file named .pdf is often something else, and a PDF is
+	// occasionally named something else.
+	head, headErr := readFileHead(fullPath, guardHeadBytes)
+
 	// A PDF is a container, not text: reading it line by line returns the
-	// object structure and the compressed streams. The check is on the header
-	// rather than the extension, because a file named .pdf is often something
-	// else and a PDF is occasionally named something else.
+	// object structure and the compressed streams.
 	//
 	// The read is deliberately not recorded: Read-before-Edit exists so the
 	// model quotes back text it has seen, and the text extracted here does not
 	// appear anywhere in the file's bytes.
-	if looksLikePDF(fullPath) {
+	if headErr == nil && looksLikePDF(head) {
 		return t.readPDF(ctx, fullPath, params.Path, params.Pages)
+	}
+
+	// Anything else that is not text is named rather than read. char_mode is
+	// the way out: a caller asking for bytes has said it means to have them.
+	if headErr == nil && !params.CharMode {
+		if kind, notText := classifyNotText(params.Path, head); notText {
+			return notTextResult(params.Path, fileSize, kind), nil
+		}
 	}
 
 	// For character mode on large files, use seek-based reading (no memory limit)
@@ -478,7 +495,20 @@ func (t *ReadFileTool) Call(ctx context.Context, args json.RawMessage) (any, err
 	// Record that this file was read (for read-before-edit enforcement)
 	t.toolCtx.ReadTracker.RecordRead(fullPath, t.toolCtx.ReadTracker.CurrentMessageID())
 
-	return t.readLineMode(fullPath, params.Start, params.Limit, params.Path)
+	result, err := t.readLineMode(fullPath, params.Start, params.Limit, params.Path)
+	if err != nil {
+		return nil, err
+	}
+
+	// A notebook is JSON, so it reads, but paging through the base64 images an
+	// executed one carries costs many round trips for very little code. The
+	// read stands and the cheaper route is offered alongside it.
+	if headErr == nil && isNotebook(params.Path, head) {
+		if m, ok := result.(map[string]any); ok {
+			m["notebook_hint"] = notebookHint(params.Path)
+		}
+	}
+	return result, nil
 }
 
 // readLinesResult contains the result of streaming line read

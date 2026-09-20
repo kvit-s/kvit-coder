@@ -45,24 +45,13 @@ const (
 	pdfPageWait = 10 * time.Second
 )
 
-// looksLikePDF reports whether the file starts with the PDF header.
+// looksLikePDF reports whether the file's opening bytes are the PDF header.
 //
 // The check is on the bytes rather than the extension because the extension
 // lies in both directions: of 50 files ending in .pdf used to test this, five
 // were HTML error pages saved under that name.
-func looksLikePDF(path string) bool {
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer f.Close()
-
-	head := make([]byte, len(pdfMagic))
-	n, err := f.Read(head)
-	if err != nil || n < len(pdfMagic) {
-		return false
-	}
-	return string(head) == pdfMagic
+func looksLikePDF(head []byte) bool {
+	return len(head) >= len(pdfMagic) && string(head[:len(pdfMagic)]) == pdfMagic
 }
 
 // pdfPageRange is the pages one Read call asked for, 1-based and inclusive.
