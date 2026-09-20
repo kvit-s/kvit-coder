@@ -65,7 +65,7 @@ func TestReadNamesFilesItCannotRead(t *testing.T) {
 	}{
 		{"shot.png", []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"), "PNG image", "ReadImage"},
 		{"photo.jpg", []byte("\xff\xd8\xff\xe0\x00\x10JFIF\x00"), "JPEG image", "ReadImage"},
-		{"icon.webp", []byte("RIFF\x24\x00\x00\x00WEBPVP8 "), "WebP image", "ReadImage"},
+		{"icon.webp", []byte("RIFF\x24\x00\x00\x00WEBPVP8 "), "WebP image", "ReadImage {"},
 		{"bundle.zip", zipBytes, "ZIP archive", "unzip -l"},
 		{"report.docx", zipBytes, "Word document (a ZIP container)", "word/document.xml"},
 		{"package.whl", zipBytes, "Python wheel", "unzip -l"},

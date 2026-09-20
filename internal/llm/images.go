@@ -10,7 +10,7 @@ import (
 	"image"
 	_ "image/gif"
 	"image/jpeg"
-	_ "image/png"
+	"image/png"
 	"io"
 	"net/http"
 	"net/url"
@@ -20,6 +20,11 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	// WebP decodes but does not encode, which is the whole shape of the
+	// support below: a WebP is decoded here and written back out as something
+	// the endpoints accept.
+	_ "golang.org/x/image/webp"
 )
 
 // Defaults for image ingestion. A full-resolution screenshot costs thousands
@@ -170,8 +175,7 @@ func readImageFile(path string) ([]byte, error) {
 }
 
 // imageExts are the extensions accepted as image references in the composer
-// and by the ReadImage tool. WebP is listed so it is recognized as an image
-// and refused with a clear error, rather than misread as something else.
+// and by the ReadImage tool.
 var imageExts = map[string]bool{
 	".png": true, ".jpg": true, ".jpeg": true, ".gif": true, ".webp": true,
 }
@@ -275,11 +279,8 @@ func PrepareImage(srcPath, destDir string, maxSizeMB, maxDim int) (ImagePart, er
 	}
 	media := http.DetectContentType(head(data, 512))
 	switch media {
-	case "image/png", "image/jpeg", "image/gif":
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
 	default:
-		if strings.EqualFold(filepath.Ext(clean), ".webp") || media == "image/webp" {
-			return ImagePart{}, fmt.Errorf("%q is WebP, which is not supported yet: convert it to PNG or JPEG first", srcPath)
-		}
 		return ImagePart{}, fmt.Errorf("%q is not an image (%s)", srcPath, media)
 	}
 	img, _, err := image.Decode(bytes.NewReader(data))
@@ -294,10 +295,22 @@ func PrepareImage(srcPath, destDir string, maxSizeMB, maxDim int) (ImagePart, er
 	if ext == ".jpeg" {
 		ext = ".jpg"
 	}
-	if max(w, h) > maxDim {
+	switch {
+	case max(w, h) > maxDim:
 		stored, w, h = downscaleJPEG(img, w, h, maxDim)
 		storedMedia = "image/jpeg"
 		ext = ".jpg"
+	case media == "image/webp":
+		// The endpoints take PNG, JPEG and GIF, so a WebP small enough to skip
+		// the downscale still has to be written back out. PNG rather than JPEG
+		// because a WebP is as often a screenshot as a photograph, and JPEG
+		// artifacts around small text are what make a screenshot unreadable.
+		stored, err = encodePNG(img)
+		if err != nil {
+			return ImagePart{}, fmt.Errorf("convert WebP %q: %w", srcPath, err)
+		}
+		storedMedia = "image/png"
+		ext = ".png"
 	}
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return ImagePart{}, fmt.Errorf("create image store: %w", err)
@@ -351,6 +364,16 @@ func downscaleJPEG(img image.Image, w, h, maxDim int) ([]byte, int, int) {
 	var buf bytes.Buffer
 	_ = jpeg.Encode(&buf, dst, &jpeg.Options{Quality: 85})
 	return buf.Bytes(), nw, nh
+}
+
+// encodePNG writes a decoded image back out as PNG, for a source format the
+// endpoints do not accept.
+func encodePNG(img image.Image) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // UnmarshalJSON accepts content as the string every writer stores, or as the

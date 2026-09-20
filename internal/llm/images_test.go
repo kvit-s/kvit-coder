@@ -1,6 +1,8 @@
 package llm
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"image"
 	"image/color"
@@ -221,5 +223,72 @@ func TestEstimateImageTokens(t *testing.T) {
 	}
 	if EstimateImageTokens(0, 0) <= 0 {
 		t.Error("unknown dims should still estimate something")
+	}
+}
+
+// tinyWebP is a real 8x8 lossless WebP, as a literal because Go can decode
+// WebP but not encode it, so the test cannot generate one.
+const tinyWebP = "UklGRi4AAABXRUJQVlA4TCIAAAAvB8ABAJkyRPQ/NhHR/wBhtlFRzp9zryMYkEGOCaB6oP8A"
+
+func writeTestWebP(t *testing.T, dir string) string {
+	t.Helper()
+	data, err := base64.StdEncoding.DecodeString(tinyWebP)
+	if err != nil {
+		t.Fatalf("decode the embedded WebP: %v", err)
+	}
+	p := filepath.Join(dir, "picture.webp")
+	if err := os.WriteFile(p, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// A WebP is accepted and stored as PNG, because the endpoints take PNG, JPEG
+// and GIF. Before this it was refused outright.
+func TestPrepareImageConvertsWebP(t *testing.T) {
+	dir := t.TempDir()
+	src := writeTestWebP(t, dir)
+
+	part, err := PrepareImage(src, filepath.Join(dir, "store"), 0, 0)
+	if err != nil {
+		t.Fatalf("PrepareImage: %v", err)
+	}
+	if part.MediaType != "image/png" {
+		t.Errorf("MediaType = %q, want image/png", part.MediaType)
+	}
+	if filepath.Ext(part.Path) != ".png" {
+		t.Errorf("stored copy is %q, want a .png", part.Path)
+	}
+	if part.Width != 8 || part.Height != 8 {
+		t.Errorf("stored %dx%d, want 8x8", part.Width, part.Height)
+	}
+	// The stored bytes have to be a PNG, not the WebP renamed.
+	stored, err := os.ReadFile(part.Path)
+	if err != nil {
+		t.Fatalf("read stored copy: %v", err)
+	}
+	if !bytes.HasPrefix(stored, []byte("\x89PNG\r\n\x1a\n")) {
+		t.Errorf("stored copy does not start with the PNG header: %x", stored[:8])
+	}
+	if !bytes.Equal(stored, part.Data) {
+		t.Error("Data does not match the bytes written to disk")
+	}
+}
+
+// A WebP over the size limit goes down the same downscale path as any other
+// image, which already produces JPEG.
+func TestPrepareImageDownscalesWebP(t *testing.T) {
+	dir := t.TempDir()
+	src := writeTestWebP(t, dir)
+
+	part, err := PrepareImage(src, filepath.Join(dir, "store"), 0, 4)
+	if err != nil {
+		t.Fatalf("PrepareImage: %v", err)
+	}
+	if part.MediaType != "image/jpeg" {
+		t.Errorf("MediaType = %q, want image/jpeg after downscaling", part.MediaType)
+	}
+	if part.Width != 4 || part.Height != 4 {
+		t.Errorf("stored %dx%d, want 4x4", part.Width, part.Height)
 	}
 }

@@ -186,11 +186,11 @@ func classifyNotText(path string, head []byte) (fileKind, bool) {
 	}
 
 	// WebP is RIFF with a tag four bytes further in, so it cannot be one
-	// prefix match. It is worth naming because ReadImage refuses it by name.
+	// prefix match like the formats above.
 	if hasMagicAt(head, 0, []byte("RIFF")) && hasMagicAt(head, 8, []byte("WEBP")) {
 		return fileKind{
 			Name:   "WebP image",
-			Advice: convertImageHint(path),
+			Advice: readImageHint(path),
 		}, true
 	}
 

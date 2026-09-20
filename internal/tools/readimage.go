@@ -73,7 +73,7 @@ func (t *ReadImageTool) Name() string {
 }
 
 func (t *ReadImageTool) Description() string {
-	return "Read an image file (PNG, JPEG, GIF) so the model can see it. Returns a summary; the image itself is attached to the result. Large images are downscaled automatically."
+	return "Read an image file (PNG, JPEG, GIF, WebP) so the model can see it. Returns a summary; the image itself is attached to the result. Large images are downscaled automatically."
 }
 
 func (t *ReadImageTool) Check(ctx context.Context, args json.RawMessage) error {
@@ -101,10 +101,9 @@ func (t *ReadImageTool) PromptSection() string {
 
 **Usage:** ` + "`" + `ReadImage {"path": "<image file>"}` + "`" + `
 
-Reads a PNG, JPEG or GIF so you can see it: a screenshot, a photo of a
+Reads a PNG, JPEG, GIF or WebP so you can see it: a screenshot, a photo of a
 whiteboard, a diagram. The image arrives with the result; the JSON summary
-says which file it was. Large images are downscaled automatically. WebP is
-not supported — convert it to PNG or JPEG first.
+says which file it was. Large images are downscaled automatically.
 
 An image read does not count as reading a file for editing: quote paths, not
 pixels, and Read the file before editing it.`
