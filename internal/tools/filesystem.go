@@ -359,6 +359,10 @@ func (t *ReadFileTool) JSONSchema() map[string]any {
 				"type":        "integer",
 				"description": "Optional: Maximum lines/chars to read",
 			},
+			"pages": map[string]any{
+				"type":        "string",
+				"description": "PDF files only: which pages to read, counting from 1. \"3\" for one page, \"2-6\" for a span, \"5-\" from there on. Default: from page 1.",
+			},
 		},
 		"required": []string{"path"},
 	}
@@ -384,7 +388,13 @@ Examples:
 - ` + "`limit`" + ` (optional): Maximum lines to read
 
 Output is truncated at 150 lines or 24KB. For large files, use start/limit to read in chunks.
-Always use Read before editing a file.`
+Always use Read before editing a file.
+
+**PDF files** are detected from their contents and their text is extracted for
+you, with a marker before each page. Use ` + "`pages`" + ` to choose which pages:
+` + "`" + `Read {"path": "spec.pdf", "pages": "2-6"}` + "`" + `. Without it the read starts at
+page 1. ` + "`start`" + `, ` + "`limit`" + ` and ` + "`char_mode`" + ` do not apply to a PDF, and a PDF
+cannot be edited as text.`
 }
 
 func (t *ReadFileTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
@@ -393,6 +403,7 @@ func (t *ReadFileTool) Call(ctx context.Context, args json.RawMessage) (any, err
 		CharMode bool   `json:"char_mode"`
 		Start    *int   `json:"start"`
 		Limit    *int   `json:"limit"`
+		Pages    string `json:"pages"`
 	}
 	if err := json.Unmarshal(args, &params); err != nil {
 		return nil, err
@@ -444,6 +455,18 @@ func (t *ReadFileTool) Call(ctx context.Context, args json.RawMessage) (any, err
 	}
 
 	fileSize := info.Size()
+
+	// A PDF is a container, not text: reading it line by line returns the
+	// object structure and the compressed streams. The check is on the header
+	// rather than the extension, because a file named .pdf is often something
+	// else and a PDF is occasionally named something else.
+	//
+	// The read is deliberately not recorded: Read-before-Edit exists so the
+	// model quotes back text it has seen, and the text extracted here does not
+	// appear anywhere in the file's bytes.
+	if looksLikePDF(fullPath) {
+		return t.readPDF(ctx, fullPath, params.Path, params.Pages)
+	}
 
 	// For character mode on large files, use seek-based reading (no memory limit)
 	if params.CharMode {

@@ -16,3 +16,8 @@ Examples:
 Output is truncated at 150 lines or 24KB. For large files, use start/limit to read in chunks.
 Always use Read before editing a file.
 
+**PDF files** are detected from their contents and their text is extracted for
+you, with a marker before each page. Use `pages` to choose which pages:
+`Read {"path": "spec.pdf", "pages": "2-6"}`. Without it the read starts at
+page 1. `start`, `limit` and `char_mode` do not apply to a PDF, and a PDF
+cannot be edited as text.

@@ -666,11 +666,26 @@ type WebFetchToolConfig struct {
 
 // ReadToolConfig configures the read tool
 type ReadToolConfig struct {
-	Enabled         bool  `yaml:"enabled"`
-	MaxFileSizeKB   int   `yaml:"max_file_size_kb"`
-	MaxReadSizeKB   int   `yaml:"max_read_size_kb"`
-	MaxPartialLines int   `yaml:"max_partial_lines"`
-	ShowLineNumbers *bool `yaml:"show_line_numbers"` // nil = default true, for backward compat
+	Enabled         bool          `yaml:"enabled"`
+	MaxFileSizeKB   int           `yaml:"max_file_size_kb"`
+	MaxReadSizeKB   int           `yaml:"max_read_size_kb"`
+	MaxPartialLines int           `yaml:"max_partial_lines"`
+	ShowLineNumbers *bool         `yaml:"show_line_numbers"` // nil = default true, for backward compat
+	PDF             PDFReadConfig `yaml:"pdf"`
+}
+
+// PDFReadConfig configures what happens when Read is given a PDF. There is no
+// enable flag: a PDF handed to Read has to produce something, and the choice is
+// between its text and its object structure.
+type PDFReadConfig struct {
+	// MaxPages caps how many pages one call extracts. Output size usually binds
+	// first, since a dense page is 4-5KB against a 24KB cap.
+	MaxPages int `yaml:"max_pages"`
+
+	// CacheDir is where the PDF reader keeps its translated code between runs.
+	// Empty means ~/.kvit-coder/wasm-cache. Losing it costs about 1.8 seconds
+	// on the next turn that reads a PDF, and it is rebuilt automatically.
+	CacheDir string `yaml:"cache_dir"`
 }
 
 // ImagesConfig configures image ingestion: the ReadImage tool and the -image
@@ -1070,6 +1085,9 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.Tools.Read.MaxPartialLines == 0 {
 		cfg.Tools.Read.MaxPartialLines = 150
+	}
+	if cfg.Tools.Read.PDF.MaxPages == 0 {
+		cfg.Tools.Read.PDF.MaxPages = 10
 	}
 
 	// Image caps shared by the ReadImage tool and the -image flag. Zero

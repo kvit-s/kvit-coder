@@ -160,6 +160,14 @@ tools:
     max_read_size_kb: 24
     max_partial_lines: 150
     show_line_numbers: true     # set to false for content-based edit modes (searchreplace, patch)
+    pdf:
+      # A PDF handed to Read has its text extracted instead of being read as
+      # bytes. max_pages caps one call; output size usually binds first.
+      max_pages: 10
+      # Where the PDF reader keeps its translated code between runs. Empty
+      # means ~/.kvit-coder/wasm-cache. Deleting it costs about 1.8 seconds on
+      # the next turn that reads a PDF, and it is rebuilt automatically.
+      cache_dir: ""
 
   images:
     enabled: true       # the ReadImage tool; -image works whenever it is passed
