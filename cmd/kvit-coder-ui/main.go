@@ -42,7 +42,7 @@ func main() {
 
 	// Handle --version
 	if *showVersion {
-		fmt.Printf("%s-%s\n", commitDate, commitHash)
+		fmt.Printf("kvit-coder-ui %s (commit %s of %s)\n", version, commitHash, commitDate)
 		return
 	}
 
@@ -184,6 +184,7 @@ func main() {
 
 	// Create and run UI
 	ui := tui.New(tui.Options{
+		Version:          version,
 		AgentPath:        agentBinary,
 		ConfigPath:       resolvedConfig,
 		SessionName:      currentSession,

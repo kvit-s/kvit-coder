@@ -105,7 +105,7 @@ func main() {
 
 	// Handle --version
 	if *showVersion {
-		fmt.Printf("%s-%s\n", commitDate, commitHash)
+		fmt.Printf("kvit-coder %s (commit %s of %s, built %s)\n", version, commitHash, commitDate, buildDate)
 		return
 	}
 
@@ -177,8 +177,9 @@ func main() {
 		}
 	}
 
-	// Get version string for benchmark reports
-	version := fmt.Sprintf("kvit-coder %s (commit %s, built %s)", commitHash, commitDate, buildDate)
+	// Version line for benchmark reports. Named apart from the package-level
+	// version, which ldflags stamps and which this line reports.
+	versionLine := fmt.Sprintf("kvit-coder %s (commit %s, built %s)", version, commitHash, buildDate)
 
 	// Determine exec mode and quiet mode
 	var execMode bool
@@ -409,6 +410,7 @@ func main() {
 
 	// Initialize LLM client
 	llmClient := llm.NewClient(cfg.LLM.BaseURL, cfg.LLM.APIKey,
+		llm.WithAPIKeyEnv(cfg.LLM.APIKeyEnv),
 		llm.WithBackend(cfg.LLM.APIBackend),
 		llm.WithHeaders(cfg.LLMHeaders()),
 		llm.WithReasoningEffort(cfg.LLM.ReasoningEffort),
@@ -762,7 +764,7 @@ func main() {
 			Suffix:      benchmarkSuffix,
 		}
 
-		if err := benchmark.Run(runCtx, flags, runner, cfg, systemPrompt, version, originalWorkspaceRoot); err != nil {
+		if err := benchmark.Run(runCtx, flags, runner, cfg, systemPrompt, versionLine, originalWorkspaceRoot); err != nil {
 			log.Fatalf("Benchmark failed: %v", err)
 		}
 		return
@@ -784,7 +786,7 @@ func main() {
 			Suffix:      haystackSuffix,
 		}
 
-		if err := benchmark.RunHaystack(runCtx, flags, cfg, version, originalWorkspaceRoot); err != nil {
+		if err := benchmark.RunHaystack(runCtx, flags, cfg, versionLine, originalWorkspaceRoot); err != nil {
 			log.Fatalf("Haystack benchmark failed: %v", err)
 		}
 		return
@@ -824,7 +826,7 @@ func main() {
 			Suffix:      thinkbenchSuffix,
 		}
 
-		if err := benchmark.RunThinkbench(runCtx, flags, runner, cfg, systemPrompt, version, originalWorkspaceRoot); err != nil {
+		if err := benchmark.RunThinkbench(runCtx, flags, runner, cfg, systemPrompt, versionLine, originalWorkspaceRoot); err != nil {
 			log.Fatalf("Thinkbench benchmark failed: %v", err)
 		}
 		return
@@ -842,7 +844,7 @@ func main() {
 	// spawns one agent per turn, so repeating this every turn doubles the
 	// header the user sees.
 	if !session.FromUI() {
-		writer.StartupInfo("Agent REPL v0.1")
+		writer.StartupInfo(fmt.Sprintf("kvit-coder %s", version))
 		writer.StartupInfo(fmt.Sprintf("Model: %s @ %s", cfg.ModelDisplay(), cfg.LLM.BaseURL))
 		writer.StartupInfo(fmt.Sprintf("Tools: %s", strings.Join(registry.ListTools(), ", ")))
 		if *logFile != "" {
@@ -852,8 +854,12 @@ func main() {
 		fmt.Println()
 	}
 
-	// Run in exec mode (always, since we require -p or --benchmark)
-	repl.RunExec(runCtx, runner, writer, cfg, systemPrompt, promptText, quietMode, sess, projectInstructions, []string(imagePaths))
+	// Run in exec mode (always, since we require -p or --benchmark). A turn
+	// that ended in an error exits non-zero, so whatever started this process
+	// can tell: the error itself has already been printed.
+	if err := repl.RunExec(runCtx, runner, writer, cfg, systemPrompt, promptText, quietMode, sess, projectInstructions, []string(imagePaths)); err != nil {
+		os.Exit(1)
+	}
 }
 
 // startStdinReader queues each line typed at the terminal for the running

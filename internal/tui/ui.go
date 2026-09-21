@@ -20,6 +20,9 @@ import (
 
 // Options contains configuration for the UI
 type Options struct {
+	// Version is the build stamped into the binary by scripts/build.sh, shown
+	// in the banner so a session says which build produced it.
+	Version     string
 	AgentPath   string
 	ConfigPath  string
 	SessionName string
@@ -47,6 +50,7 @@ type Options struct {
 
 // UI manages the interactive terminal interface
 type UI struct {
+	version        string
 	agentPath      string
 	configPath     string
 	currentSession string
@@ -91,6 +95,7 @@ func New(opts Options) *UI {
 	history, _ := ui.LoadHistory(historyFile)
 
 	u := &UI{
+		version:        opts.Version,
 		agentPath:      opts.AgentPath,
 		configPath:     opts.ConfigPath,
 		currentSession: opts.SessionName,
@@ -181,7 +186,7 @@ func (u *UI) Run() error {
 	}()
 
 	// Show startup info
-	fmt.Println("\033[38;5;136mAgent REPL UI v0.1\033[0m")
+	fmt.Printf("\033[38;5;136mkvit-coder-ui %s\033[0m\n", u.bannerVersion())
 	fmt.Printf("\033[38;5;136mModel: %s @ %s\033[0m\n", u.activeDisplay(), u.activeBaseURL())
 	if u.currentSession != "" {
 		if u.sessionMgr.SessionExists(u.currentSession) {
@@ -945,4 +950,14 @@ func (u *UI) currentReport() *report.Report {
 		return nil
 	}
 	return rep
+}
+
+// bannerVersion is what the banner shows for the build: whatever ldflags
+// stamped in, or "dev" when the binary was built with a plain "go build" and
+// nothing was stamped.
+func (u *UI) bannerVersion() string {
+	if u.version == "" {
+		return "dev"
+	}
+	return u.version
 }
