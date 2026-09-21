@@ -166,7 +166,11 @@ func extractPDFText(ctx context.Context, pool pdfium.Pool, path string, want pdf
 	if err != nil {
 		return nil, 0, describePDFLoadError(err)
 	}
-	defer instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document})
+	// Closing is best effort: the document is read-only and the process is
+	// about to move on either way.
+	defer func() {
+		_, _ = instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document})
+	}()
 
 	count, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document})
 	if err != nil {
@@ -224,7 +228,11 @@ func renderPDFPage(ctx context.Context, pool pdfium.Pool, srcPath, destDir strin
 	if err != nil {
 		return "", 0, describePDFLoadError(err)
 	}
-	defer instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document})
+	// Closing is best effort: the document is read-only and the process is
+	// about to move on either way.
+	defer func() {
+		_, _ = instance.FPDF_CloseDocument(&requests.FPDF_CloseDocument{Document: doc.Document})
+	}()
 
 	count, err := instance.FPDF_GetPageCount(&requests.FPDF_GetPageCount{Document: doc.Document})
 	if err != nil {

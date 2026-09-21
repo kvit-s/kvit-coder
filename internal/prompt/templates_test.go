@@ -412,9 +412,9 @@ func TestPrefixFS_WithLayeredFS(t *testing.T) {
 
 func TestCollectTemplateFilesWithPrefix(t *testing.T) {
 	testFS := fstest.MapFS{
-		"sections/role.tmpl":      &fstest.MapFile{Data: []byte("role")},
-		"tools/read.tmpl":         &fstest.MapFile{Data: []byte("read")},
-		"other.txt":               &fstest.MapFile{Data: []byte("ignored")},
+		"sections/role.tmpl": &fstest.MapFile{Data: []byte("role")},
+		"tools/read.tmpl":    &fstest.MapFile{Data: []byte("read")},
+		"other.txt":          &fstest.MapFile{Data: []byte("ignored")},
 	}
 
 	files, err := collectTemplateFilesWithPrefix(testFS, "prompts")
@@ -507,7 +507,7 @@ func TestOverridePathMismatch_WithoutFix(t *testing.T) {
 
 	// WITHOUT prefixFS wrapper - this is the buggy setup
 	layered := &layeredFS{
-		override: overrideFS,  // NOT wrapped
+		override: overrideFS, // NOT wrapped
 		base:     embeddedFS,
 	}
 

@@ -23,22 +23,8 @@ var (
 	// Gray color for tool calls and other secondary progress lines.
 	grayColor = color.New(color.FgWhite, color.Faint)
 
-	// Dim red for errors: visible, but not a bright alarm on every failure.
-	errorColor = color.New(color.FgRed, color.Faint)
-
-	// Dim brown for warnings, same family as the status line.
-	warnColor = color.New(color.FgYellow, color.Faint)
-
 	// Full white for assistant messages and step text.
 	whiteColor = color.New(color.FgHiWhite)
-
-	// Bright green for steering prompts: the pause prompt is the moment
-	// typing becomes available, so it stands out from gray progress lines.
-	greenColor = color.New(color.FgHiGreen)
-
-	// Colors for plan rendering
-	planCompletedColor = color.New(color.FgWhite, color.Faint, color.CrossedOut)
-	planActiveColor    = color.New(color.FgYellow, color.Faint)
 )
 
 // Step rendering follows the codex pattern: one bullet-led line per model

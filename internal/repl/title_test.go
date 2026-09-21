@@ -199,7 +199,6 @@ func TestSummarizerClientFallsBack(t *testing.T) {
 	}))
 	defer srv.Close()
 	cfg.LLM.BaseURL = srv.URL
-	c = summarizerClientFor(cfg, entry)
 	if _, err := summarizerTitle(context.Background(), cfg, entry, "hello"); err == nil {
 		t.Error("want an error from the 400 endpoint, got nil")
 	} else if !strings.Contains(err.Error(), "400") {

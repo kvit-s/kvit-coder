@@ -9,15 +9,15 @@ import (
 
 // Progress tracks and displays benchmark progress.
 type Progress struct {
-	writer       io.Writer
-	totalRuns    int
-	completedRuns int
-	passedRuns   int
-	startTime    time.Time
+	writer           io.Writer
+	totalRuns        int
+	completedRuns    int
+	passedRuns       int
+	startTime        time.Time
 	currentBenchmark string
-	currentRun   int
+	currentRun       int
 	runsPerBenchmark int
-	durations    []time.Duration // Track recent run durations for ETA
+	durations        []time.Duration // Track recent run durations for ETA
 }
 
 // NewProgress creates a new progress tracker.

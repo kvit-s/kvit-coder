@@ -83,16 +83,6 @@ func (f *fakeClient) callCount() int {
 	return f.next
 }
 
-// lastRequest returns the messages of the most recent Chat call.
-func (f *fakeClient) lastRequest() []llm.Message {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if len(f.requests) == 0 {
-		return nil
-	}
-	return f.requests[len(f.requests)-1].Messages
-}
-
 // --- response builders -------------------------------------------------------
 
 // answer is an assistant turn with no tool calls: the final answer.

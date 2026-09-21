@@ -80,15 +80,15 @@ type ToolCallLog struct {
 
 // BenchmarkConfig holds configuration for benchmark runs.
 type BenchmarkConfig struct {
-	Enabled         bool     `yaml:"enabled"`
-	OutputDir       string   `yaml:"output_dir"`
-	RunsPerTask     int      `yaml:"runs_per_task"`
-	TimeoutPerRun   int      `yaml:"timeout_per_run"` // seconds
-	ReportFormat    string   `yaml:"report_format"`   // "markdown" or "json"
-	Categories      []string `yaml:"categories"`      // Which categories to run
-	BenchmarkIDs    []string `yaml:"benchmark_ids"`   // Specific benchmarks to run
-	WarmupTask      string   `yaml:"warmup_task"`     // Warmup task (default: "Say hello")
-	NoResume        bool     `yaml:"no_resume"`       // Force fresh start
+	Enabled       bool     `yaml:"enabled"`
+	OutputDir     string   `yaml:"output_dir"`
+	RunsPerTask   int      `yaml:"runs_per_task"`
+	TimeoutPerRun int      `yaml:"timeout_per_run"` // seconds
+	ReportFormat  string   `yaml:"report_format"`   // "markdown" or "json"
+	Categories    []string `yaml:"categories"`      // Which categories to run
+	BenchmarkIDs  []string `yaml:"benchmark_ids"`   // Specific benchmarks to run
+	WarmupTask    string   `yaml:"warmup_task"`     // Warmup task (default: "Say hello")
+	NoResume      bool     `yaml:"no_resume"`       // Force fresh start
 }
 
 // DefaultBenchmarkConfig returns default benchmark configuration.

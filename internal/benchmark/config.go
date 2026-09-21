@@ -112,8 +112,8 @@ func IsNeedleRetrieval(b BenchmarkDef) bool {
 
 // HaystackFile represents the structure of haystack.yaml
 type HaystackFile struct {
-	Haystacks  map[string]HaystackDef  `yaml:"haystacks"`
-	Benchmarks []HaystackBenchmarkDef  `yaml:"benchmarks"`
+	Haystacks  map[string]HaystackDef `yaml:"haystacks"`
+	Benchmarks []HaystackBenchmarkDef `yaml:"benchmarks"`
 }
 
 // HaystackBenchmarkDef defines a haystack benchmark (simpler than tool benchmarks)

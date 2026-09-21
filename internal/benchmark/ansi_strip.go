@@ -24,10 +24,10 @@ func NewANSIStripWriter(w io.Writer) io.Writer {
 func (w *ansiStripWriter) Write(p []byte) (n int, err error) {
 	// Strip ANSI codes
 	stripped := w.ansiRegex.ReplaceAll(p, []byte{})
-	
+
 	// Write to underlying writer
 	_, err = w.writer.Write(stripped)
-	
+
 	// Return the original length to satisfy io.Writer contract
 	// (callers expect us to consume all input)
 	return len(p), err

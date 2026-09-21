@@ -10,12 +10,12 @@ import (
 func templateFuncs() template.FuncMap {
 	return template.FuncMap{
 		// String manipulation
-		"join":    strings.Join,
-		"split":   strings.Split,
-		"trim":    strings.TrimSpace,
-		"lower":   strings.ToLower,
-		"upper":   strings.ToUpper,
-		"replace": strings.ReplaceAll,
+		"join":      strings.Join,
+		"split":     strings.Split,
+		"trim":      strings.TrimSpace,
+		"lower":     strings.ToLower,
+		"upper":     strings.ToUpper,
+		"replace":   strings.ReplaceAll,
 		"hasPrefix": strings.HasPrefix,
 		"hasSuffix": strings.HasSuffix,
 		"contains":  strings.Contains,

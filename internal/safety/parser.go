@@ -156,11 +156,10 @@ func parseSegment(segment string) (*ParsedCommand, error) {
 				result.FlagArgs[flag] = value
 			} else {
 				result.Flags[flag] = true
-				// Check if next token is the value (for --flag value syntax)
-				if i+1 < len(tokens) && !strings.HasPrefix(tokens[i+1], "-") {
-					// Some flags take values, but we can't know which ones
-					// So we just mark the flag as present
-				}
+				// A following token may be this flag's value ("--flag value"),
+				// but which flags take one is not knowable from the text, so
+				// the flag is recorded as present and the token is left to be
+				// read as a positional argument.
 			}
 		} else if strings.HasPrefix(token, "-") && len(token) > 1 {
 			// Short flag(s)

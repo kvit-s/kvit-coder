@@ -32,9 +32,9 @@ func runEchoServer() {
 	respond := func(id *int64, result any) {
 		resp := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
 		b, _ := json.Marshal(resp)
-		out.Write(b)
-		out.WriteByte('\n')
-		out.Flush()
+		_, _ = out.Write(b)
+		_ = out.WriteByte('\n')
+		_ = out.Flush()
 	}
 
 	for scanner.Scan() {

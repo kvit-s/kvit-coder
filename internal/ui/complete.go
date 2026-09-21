@@ -427,11 +427,10 @@ func fuzzyScore(pattern, candidate string) (int, bool) {
 	if pattern == "" {
 		return 0, true
 	}
-	p := []rune(strings.ToLower(pattern))
 	c := []rune(strings.ToLower(candidate))
 	score := 0
 	prev := -1
-	for _, pc := range p {
+	for _, pc := range strings.ToLower(pattern) {
 		found := -1
 		for i := prev + 1; i < len(c); i++ {
 			if c[i] == pc {

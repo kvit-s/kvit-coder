@@ -18,10 +18,10 @@ var defaultPatterns = []string{
 	`sk-ant-[a-zA-Z0-9\-]{20,}`,
 
 	// GitHub tokens
-	`ghp_[a-zA-Z0-9]{36}`,  // Personal access token
-	`gho_[a-zA-Z0-9]{36}`,  // OAuth token
-	`ghr_[a-zA-Z0-9]{36}`,  // Refresh token
-	`ghs_[a-zA-Z0-9]{36}`,  // Server-to-server token
+	`ghp_[a-zA-Z0-9]{36}`,          // Personal access token
+	`gho_[a-zA-Z0-9]{36}`,          // OAuth token
+	`ghr_[a-zA-Z0-9]{36}`,          // Refresh token
+	`ghs_[a-zA-Z0-9]{36}`,          // Server-to-server token
 	`github_pat_[a-zA-Z0-9_]{22,}`, // Fine-grained PAT
 
 	// AWS

@@ -232,6 +232,7 @@ func (m InputModel) cardWidth() int {
 	}
 	return w - 2
 }
+
 // paintCardLine styles one wrapped card line the way the card does: block
 // lines in text white, numbered options brightened because they are the part
 // acted on, dispatch instructions muted, everything else dim.

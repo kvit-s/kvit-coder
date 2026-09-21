@@ -45,4 +45,6 @@ jobs:
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          # Pinned: "latest" means a linter release can fail the build with no
+          # commit behind it. Raise this deliberately.
+          version: v1.64.8

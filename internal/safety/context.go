@@ -26,11 +26,11 @@ type AuditConfig struct {
 
 // GitSafetyConfig configures git operation safety
 type GitSafetyConfig struct {
-	BlockPush            bool `yaml:"block_push"`
-	BlockHardReset       bool `yaml:"block_hard_reset"`
-	BlockCheckoutDiscard bool `yaml:"block_checkout_discard"`
-	BlockStashDrop       bool `yaml:"block_stash_drop"`
-	BlockCleanForce      bool `yaml:"block_clean_force"`
+	BlockPush             bool `yaml:"block_push"`
+	BlockHardReset        bool `yaml:"block_hard_reset"`
+	BlockCheckoutDiscard  bool `yaml:"block_checkout_discard"`
+	BlockStashDrop        bool `yaml:"block_stash_drop"`
+	BlockCleanForce       bool `yaml:"block_clean_force"`
 	WarnBranchForceDelete bool `yaml:"warn_branch_force_delete"`
 }
 

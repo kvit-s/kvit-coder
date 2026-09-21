@@ -54,8 +54,8 @@ func TestReadNamesFilesItCannotRead(t *testing.T) {
 
 	var gzipped bytes.Buffer
 	zw := gzip.NewWriter(&gzipped)
-	zw.Write([]byte("some content"))
-	zw.Close()
+	_, _ = zw.Write([]byte("some content"))
+	_ = zw.Close()
 
 	cases := []struct {
 		name     string
