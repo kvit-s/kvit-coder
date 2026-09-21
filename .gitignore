@@ -50,3 +50,6 @@ benchmarks/haystacks/*.txt
 
 # Working notes that are not part of the program
 spec/
+
+# goreleaser snapshot output
+dist/

@@ -13,27 +13,52 @@ than in memory. And it is built to be driven by a small model on your own
 hardware as well as by a hosted one: `agent.profile: weak` turns on the
 machinery for models that mis-format tool calls and miscount line numbers.
 
-One session cost 27 MB of resident memory when it was measured against the other
+It used 27 MB of resident memory when it was measured against the other
 agents on the same machine at the same moment: Claude Code averaged 341 MB
-across eight sessions, Codex 261 MB, krok 221 MB. The method and the
+across eight sessions, Codex 261 MB, grok 221 MB. The method and the
 per-process tables are in [`docs/agents-ram.md`](docs/agents-ram.md).
 
 <!-- A terminal recording belongs here, generated from a committed vhs tape. -->
 
 ## Install
 
-Go 1.25 or newer, and no cgo:
+```bash
+curl -fsSL https://raw.githubusercontent.com/kvit-s/kvit-coder/main/install.sh | sh
+```
+
+That works out which build fits the machine, downloads it from the latest
+release, checks it against the release's checksums, and puts both binaries in
+`~/.local/bin` under four names: `kc` and `kvit-coder` for the headless agent,
+`kcu` and `kvit-coder-ui` for the front end. If there is no configuration yet it
+leaves one at `~/.kvit-coder/config.yaml` to edit. `KVIT_BIN_DIR` puts the
+binaries somewhere else and `KVIT_VERSION` installs a particular release.
+
+With a Go toolchain, and nothing else:
+
+```bash
+go install github.com/kvit-s/kvit-coder/cmd/kvit-coder@latest
+go install github.com/kvit-s/kvit-coder/cmd/kvit-coder-ui@latest
+```
+
+That gives the two long names and no configuration; copy
+[`config.example.yaml`](config.example.yaml) to `~/.kvit-coder/config.yaml`
+yourself.
+
+From a clone, which is what to do when changing the program:
 
 ```bash
 scripts/build.sh          # both binaries into the repository root
 scripts/install.sh        # and link them from ~/.local/bin
 ```
 
-`install.sh` links four names back into the checkout: `kcu` and `kvit-coder-ui`
-for the front end, `kc` and `kvit-coder` for the headless agent. They are
-symlinks, so a later `scripts/build.sh` updates them, and
-`scripts/install.sh --uninstall` removes them. There are no published release
-binaries yet.
+Those links point back into the checkout, so a later `scripts/build.sh` updates
+them and `scripts/install.sh --uninstall` removes them.
+
+**Platforms.** Linux is where this is developed and used daily, including under
+WSL. The macOS builds compile and are published, but nothing has been run on
+them, so treat them as untested. Windows is not supported: the program uses Unix
+process groups, signals and file locking, and does not compile for it. Under
+Windows, run it inside WSL, which is a tested configuration.
 
 ## Configure
 

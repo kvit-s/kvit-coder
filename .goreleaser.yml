@@ -9,7 +9,6 @@ builds:
     goos:
       - linux
       - darwin
-      - windows
     goarch:
       - amd64
       - arm64
@@ -28,7 +27,6 @@ builds:
     goos:
       - linux
       - darwin
-      - windows
     goarch:
       - amd64
       - arm64
@@ -40,15 +38,20 @@ builds:
       - -X main.buildDate={{.Date}}
 
 archives:
-  - format: tar.gz
+  - formats: [tar.gz]
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
       {{- .Os }}_
       {{- .Arch }}
-    format_overrides:
-      - goos: windows
-        format: zip
+    # install.sh copies config.example.yaml to ~/.kvit-coder/config.yaml when
+    # there is no configuration yet, so a release has to carry one: a binary on
+    # its own starts by saying it found no config file and there is nothing to
+    # copy.
+    files:
+      - config.example.yaml
+      - README.md
+      - LICENSE
 
 checksum:
   name_template: "checksums.txt"

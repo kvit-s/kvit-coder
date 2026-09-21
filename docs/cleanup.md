@@ -163,12 +163,23 @@ linter release can turn the build red with no commit; pin an exact version.
 The test suite and `go vet` are clean: 97 test files, 841 test functions, all
 passing.
 
-**A release archive would not run.** `.goreleaser.yml` packages the two binaries
-and nothing else. A user who downloads the tarball and runs it gets
-`no config file found. Looked for ./config.yaml, ~/.kvit-coder/config.yaml,
-<bindir>/config.yaml` and has no file to copy. Either add an example config to
-the archive's `files:` list, or add a flag that writes a default config to
-`~/.kvit-coder/config.yaml`.
+**Installing needed a clone and a Go toolchain.** Fixed on 21 September 2026.
+`install.sh` at the repository root downloads the release build for the
+machine it runs on, checks it against the release's checksums and installs
+`kc`, `kcu` and the two long names into `~/.local/bin`, seeding
+`~/.kvit-coder/config.yaml` when there is none. The release archives now carry
+`config.example.yaml`, without which a downloaded binary started by saying it
+could not find a configuration and left nothing to copy. Windows was dropped
+from `.goreleaser.yml` because the program does not compile for it —
+`syscall.Flock` in `internal/workspace` and `Setsid` in `internal/procs` — so
+the first tag would have failed the release job. goreleaser is pinned to the
+version the config was validated against.
+
+All of it was verified against archives built locally with
+`goreleaser release --snapshot`: the install script was pointed at them over
+HTTP and installed, seeded a configuration, and refused a tampered checksum.
+What it cannot do until a tag exists is find a release, so **the tag has to come
+before anyone reads the README**.
 
 **The shipped configuration is the author's.** The root `config.yaml` has 178
 keys, enables a Playwright server over the Model Context Protocol, sets
