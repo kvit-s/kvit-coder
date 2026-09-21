@@ -1,0 +1,47 @@
+# A short working configuration. Copy it to ~/.kvit-coder/config.yaml and point
+# the llm: block at whichever OpenAI-compatible endpoint you have. Every key is
+# documented in docs/configuration.md, and the repository's own config.yaml is a
+# larger example with several models, MCP servers and a tool group.
+
+llm:
+  # A local llama.cpp, vLLM or Ollama server, or any hosted endpoint that
+  # speaks the same protocol.
+  base_url: "http://localhost:8080/v1"
+  model: "your-model"
+
+  # "chat_completions" for /v1/chat/completions, "responses" for an endpoint
+  # that only serves OpenAI's /responses.
+  api_backend: "chat_completions"
+
+  # The environment variable holding the API key. A local server usually needs
+  # none; a hosted one does, and a refused request names this variable.
+  api_key_env: "OPENAI_API_KEY"
+
+  context: 131072
+  request_timeout: 600     # seconds for one request before it is retried
+
+workspace:
+  root: "."                     # the directory the command starts in
+  path_safety_mode: "ask_once"  # allow | block | warn | ask_once | ask_always
+
+agent:
+  # "weak" turns on the machinery for models that mis-format tool calls and
+  # miscount line numbers. Leave it at "strong" for a capable model.
+  profile: strong
+  max_tool_iterations: 1000
+
+tools:
+  read:
+    enabled: true
+  edit:
+    enabled: true
+    mode: "lines"          # "lines", "searchreplace" or "patch"
+  search:
+    enabled: true
+  shell:
+    enabled: true
+    default_timeout: 120   # seconds a command gets when the call names none
+  batch:
+    enabled: true          # several independent tool calls in one request
+  question:
+    enabled: true          # let the model ask rather than guess

@@ -3,124 +3,87 @@
 A coding agent in Go. It sends a conversation to an OpenAI-compatible model
 endpoint, receives tool calls, runs them against a workspace directory on disk,
 feeds the results back, and repeats until the model answers without asking for a
-tool.
+tool. Two binaries: `kvit-coder` runs one turn and exits, which is what you
+script against, and `kvit-coder-ui` is the interactive terminal front end.
 
-It is built for a capable hosted reasoning model. The default configuration
-drives Muse Spark 1.3 through opencode.ai over OpenAI's Responses API with a
-1M-token context, and any OpenAI-compatible endpoint works, including a local
-one — `agent.profile: weak` turns on the machinery written for models that
-mis-format tool calls and miscount line numbers.
+It is unusual in two ways. The agent process lives for exactly one turn, so
+everything that has to survive — the conversation, checkpoints, background
+processes, files dropped in mid-turn — is on disk in a session directory rather
+than in memory. And it is built to be driven by a small model on your own
+hardware as well as by a hosted one: `agent.profile: weak` turns on the
+machinery for models that mis-format tool calls and miscount line numbers.
 
-Three benchmark harnesses ship with it; see [`benchmarks/`](benchmarks/).
+One session cost 27 MB of resident memory when it was measured against the other
+agents on the same machine at the same moment: Claude Code averaged 341 MB
+across eight sessions, Codex 261 MB, krok 221 MB. The method and the
+per-process tables are in [`docs/agents-ram.md`](docs/agents-ram.md).
 
-## Quick Start
+<!-- A terminal recording belongs here, generated from a committed vhs tape. -->
 
-### Build
+## Install
 
-```bash
-scripts/build.sh
-```
-
-That builds both binaries into the repository root and stamps the current git
-version into them. Add `--release` for a stripped, `-trimpath` build, `--race`
-for the race detector, or name `coder` or `ui` to build just one. The plain Go
-commands it runs are:
+Go 1.25 or newer, and no cgo:
 
 ```bash
-go build -o kvit-coder ./cmd/kvit-coder
-go build -o kvit-coder-ui ./cmd/kvit-coder-ui
+scripts/build.sh          # both binaries into the repository root
+scripts/install.sh        # and link them from ~/.local/bin
 ```
 
-### Install
+`install.sh` links four names back into the checkout: `kcu` and `kvit-coder-ui`
+for the front end, `kc` and `kvit-coder` for the headless agent. They are
+symlinks, so a later `scripts/build.sh` updates them, and
+`scripts/install.sh --uninstall` removes them. There are no published release
+binaries yet.
 
-```bash
-scripts/install.sh
-```
+## Configure
 
-That builds both binaries and links them from `~/.local/bin` (or `$KVIT_BIN_DIR`,
-or `--bin-dir <dir>`) back into the checkout, under four names: `kcu` and
-`kvit-coder-ui` for the interactive front end, `kc` and `kvit-coder` for the
-headless agent. They are symlinks, so a later `scripts/build.sh` is all it takes to update
-them. `scripts/install.sh --uninstall` removes them again.
-
-Once they are on the `$PATH`, `kcu` starts a session in whatever directory it is
-run from, and that directory is the workspace the model reads and writes.
-
-### Configure
-
-The repository's own `config.yaml` is a working example. A minimal one:
+Copy [`config.example.yaml`](config.example.yaml) to
+`~/.kvit-coder/config.yaml` and point the `llm:` block at an endpoint you have —
+a local llama.cpp, vLLM or Ollama server, or any hosted API that speaks the same
+protocol:
 
 ```yaml
 llm:
-  base_url: "https://opencode.ai/zen/go/v1"
-  api_key_env: "OPENCODE_API_KEY"
-  model: "muse-spark-1.3-contributor"
-  api_backend: "responses"    # this endpoint does not serve /chat/completions
-  reasoning_effort: "high"
-  headers:
-    - "x-opencode-session=kvit-coder-${KVIT_RUN_ID}"
-  context: 1048576
-
-workspace:
-  root: "."
-
-agent:
-  profile: strong             # "weak" enables the local-model compensation;
-                             # a models: entry may override this per model
-  max_tool_iterations: 1000
-
-tools:
-  read:
-    enabled: true
-  edit:
-    enabled: true
-    mode: "lines"          # "lines", "searchreplace", or "patch"
-  search:
-    enabled: true
-  shell:
-    enabled: true
-  checkpoint:
-    enabled: true
+  base_url: "http://localhost:8080/v1"
+  model: "your-model"
+  api_backend: "chat_completions"   # or "responses"
+  api_key_env: "OPENAI_API_KEY"     # a local server usually needs no key
+  context: 131072
 ```
 
-Without `-config`, both binaries take the first of these that exists:
-`$KVIT_CODER_CONFIG`, `config.yaml` in the directory the command was run in,
-`~/.kvit-coder/config.yaml`, and `config.yaml` next to the binary itself. The
-last one is what the installed `kcu` normally uses, since the symlink resolves
-into the checkout; a file at `~/.kvit-coder/config.yaml` overrides it everywhere,
-and a `config.yaml` in a project directory overrides it for that project. A
-`config.yaml` belonging to some other program is passed over rather than loaded,
-with a line on stderr saying so — the file has to have an `llm:` or `models:`
-section to count as one of ours.
+Without `-config`, both binaries take the first of `$KVIT_CODER_CONFIG`,
+`./config.yaml`, `~/.kvit-coder/config.yaml`, and `config.yaml` beside the
+binary with symlinks resolved. A file belonging to some other program is passed
+over rather than loaded: it has to have an `llm:` or `models:` section to count
+as one of ours. Every key is documented in
+[`docs/configuration.md`](docs/configuration.md), and this repository's own
+`config.yaml` is a larger example with several models, an MCP server and a tool
+group.
 
-### Run
+## Run
 
 ```bash
-# Interactive, in any directory once scripts/install.sh has run;
-# the directory it starts in is the workspace
+# Interactive. The directory it starts in is the workspace.
 kcu
 
-# The same thing from the checkout, without installing
-./kvit-coder-ui
+# One turn, headless. This is what you script against.
+kvit-coder -p "Find all TODO comments in the codebase"
 
-# Headless mode (single prompt, exits after completion)
-./kvit-coder -p "Find all TODO comments in the codebase"
-
-# Quiet mode (only print final answer)
-./kvit-coder -pq "What does main.go do?"
+# Only the final answer on stdout.
+kvit-coder -pq "What does main.go do?"
 ```
 
-On a terminal the final answer is rendered as styled markdown (headings,
-lists, code, tables) instead of printed verbatim. Piped output and `--json`
-stay raw markdown, as do `NO_COLOR` and `TERM=dumb` runs; `ui.markdown` in
-`config.yaml` (`auto` by default, or `always` / `never`) overrides this.
+A turn that fails exits non-zero and says why. On a terminal the final answer is
+rendered as styled markdown; piped output, `--json`, `NO_COLOR` and `TERM=dumb`
+stay raw. Every flag is in [`docs/cli.md`](docs/cli.md).
 
-## Architecture
+## Why it is built this way
 
 **One process per turn.** `kvit-coder` starts, reads the session from disk, runs
-one instruction, appends what happened, and exits. A driver starts it again for
-the next one. Nothing that must outlive a turn is held in memory, so a wedged
-turn ends when its process does, and the driver holds no agent state.
+one instruction, appends what happened, and exits. A wedged turn ends when its
+process does, the front end holds no agent state, and whatever the turn
+allocated goes back to the operating system rather than accumulating in a
+long-lived heap.
 
 **A session is a directory**, under `~/.kvit-coder/sessions/<name>/`:
 
@@ -133,732 +96,85 @@ turn ends when its process does, and the driver holds no agent state.
 | `inbox/` | Files dropped here reach the model on the next iteration |
 | `tmp/` | Tool output too large to put in a message |
 
-That is what lets a turn run in its own process without losing the checkpoint
-history, the temp files the model was told about, or a steering message typed
-while it was working. A session is also a record you can open months later and
+It is plain files, so a session is also a record you can open months later and
 read.
 
-**Two binaries:**
+**A running turn can be steered.** A line typed at the terminal, a file dropped
+by `kvit-coder steer` from another shell, or an event from a background process
+all land in the same inbox, which the loop drains once per iteration. Pressing
+Enter on an empty line asks the turn to pause at the next safe point, which is
+not the same as cancelling it.
 
-- **`kvit-coder`** — one turn, headless. Needs `-p` (or `-pq`), a session with
-  `-s`, or a benchmark flag. This is what you script against.
-- **`kvit-coder-ui`** — the interactive terminal front end (BubbleTea), with
-  multi-line input, command history and syntax highlighting. It does not link
-  the agent; it spawns `kvit-coder` per turn and keeps the session name stable
-  across them.
+**Shell permissions are decided from the parsed command**, not from patterns
+matched against its text. `git diff && rm -rf /` is two commands and is judged as
+two, a program being invoked is distinguishable from the same word appearing as
+a `grep` pattern, and a blocked command can be granted for one call, one session
+or for good.
 
-The design behind this is written up in [`docs/`](docs/) — start with
-[`docs/redesign.md`](docs/redesign.md).
+**External tools cost nothing until the model asks for them.** A tool group is
+one registered tool standing in for a set the model cannot see until it opens
+the group. Playwright's 24 browser tools cost about 7,400 tokens of schema and
+43 tools in every request when advertised; behind a group the same configuration
+costs about 3,400 tokens and 20 tools, and nothing behind the group is started
+until a call actually needs it.
+
+**A PDF is read in this process.** No subprocess, no Python, no service call:
+PDFium compiled to WebAssembly, executed by wazero, with page ranges and a
+fallback to rendering a page as an image when the page turns out to be a scan.
+
+**Small models are a supported case, not an afterthought.** Three benchmark
+harnesses ship with the program, and each measures something a weak model gets
+wrong: whether it calls tools with the right arguments, whether it still
+retrieves a fact once the context is long, and whether it can finish an
+autonomous coding task scored by a held-out grader.
 
 ## Tools
 
 | Tool | Description |
 |------|-------------|
-| **read** | Read file contents or list directories. Supports partial reads and character mode for large files. A PDF is detected from its contents and its text is extracted, a page range at a time (`pages: "2-6"`). Other non-text files (images, archives, databases, compiled output) are named, with the tool or command that opens them, rather than read as bytes. |
-| **ReadImage** | Read an image file (PNG, JPEG, GIF, WebP), or one page of a PDF drawn as a picture (`page: 3`), so the model can see it. Large images are downscaled automatically. |
-| **edit** | Modify files. Three modes: **lines** (line ranges), **searchreplace** (find/replace with optional fuzzy matching), **patch** (unified diffs). Optional preview mode with confirm/cancel. |
-| **restore_file** | Restore a file to its state at session start. |
-| **search** (grep) | Search file contents with regex patterns and glob filters. Uses ripgrep. |
-| **shell** | Execute shell commands with configurable timeouts, working directory, and command allow/blocklists. |
-| **Web.search** | Search the web through the Brave Search API. Returns titles, URLs and short descriptions. Off by default; needs an API key named by `tools.web.api_key_env`. |
-| **Web.fetch** | Fetch one page and convert it to markdown, dropping navigation and scripts. A long page is written to the session's `tmp/` and comes back as a heading outline with line numbers to `Read`. Static HTML only. Off by default. |
-| **plan.\*** | Multi-step plan management: create, add/remove/reorder steps, mark complete. |
-| **checkpoint.\*** | Turn-based file history: list, restore, diff, undo. Auto-checkpoints after each turn. |
-| **Tasks.\*** | Context compression: wrap exploratory work in tasks so intermediate steps can be collapsed. Includes diff review (accept/decline) and rollback. |
-| **mcp.\*** | Tools from external [Model Context Protocol](https://modelcontextprotocol.io) servers (stdio or HTTP), surfaced to the model as `mcp.<server>.<tool>`. Disabled by default; see [MCP Servers](#mcp-servers). |
-
-Plan/Checkpoint tools and Tasks tools are mutually exclusive — enable one group or the other.
-
-## CLI Flags
-
-### kvit-coder
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `-p <prompt>` | Run with prompt and exit | - |
-| `-pq <prompt>` | Quiet mode: only print final response | - |
-| `-image <path>` | Attach an image file to the prompt (repeatable) | - |
-| `-config <path>` | Config file path | first found (see [Configure](#configure)) |
-| `-model <name>` | Override model | from config |
-| `-base-url <url>` | Override LLM endpoint | from config |
-| `-agent-file <path>` | Append file content to system prompt | - |
-| `-log <path>` | Log file (empty to disable) | `~/.kvit-coder/logs/kvit-coder.log` |
-| `--json` | Structured JSON output to stderr | false |
-| `--structured` | End the turn with a structured report instead of prose ([docs](docs/structured-reports.md)) | false |
-| `-s <name>` | Continue or create named session | - |
-| `-c` | Continue the most recent session | - |
-| `--yolo` | Read and write anywhere, and run anything that would have asked | false |
-| `--sessions` | List sessions | - |
-| `--session-show <name>` | Show session history | - |
-| `--session-delete <name>` | Delete a session | - |
-| `--version` | Show version info | - |
-
-### kvit-coder-ui
-
-| Flag | Description | Default |
-|------|-------------|---------|
-| `-config <path>` | Config file path | first found (see [Configure](#configure)) |
-| `-agent-path <path>` | Path to kvit-coder binary | auto-detected |
-| `-s <name>` | Continue or create named session | - |
-| `-c` | Continue the most recent session | - |
-| `--yolo` | Read and write anywhere, and run anything that would have asked (passed to each turn) | false |
-| `--structured` | End each turn with a structured report, drawn as a card at the prompt (`--structured=false` for prose) | true |
-
-#### Window title
-
-While it runs, `kvit-coder-ui` keeps the terminal's window title — which a
-tabbed terminal such as VS Code's shows as the tab label — saying what is
-happening, so a window that is not on screen still tells you whether it needs
-you:
-
-| Title | State |
-|---|---|
-| `⏳ <session title>` | a turn is running |
-| `💬 <session title>` | the turn has stopped to ask you something and is waiting for the answer: a [`Question`](#questions), a path or MCP confirmation, or the pause prompt |
-| `💤 <session title>` | nothing is running and the composer is open |
-
-The session title is the short summary of the first prompt that `--sessions`
-lists; until the first turn has produced one the session's directory name
-stands in.
-
-The front end sets the title around each turn. The `💬` state is set by the
-agent process itself, because the front end is blocked waiting for the turn to
-finish and cannot see that it has stopped to ask something; the agent hands
-the title back when the answer arrives. A headless `kvit-coder` run never
-touches the title — there is no long-lived process to put it back afterwards.
-
-The terminal has to be willing to take a title from the program running in it.
-Most of them already are — Windows Terminal, iTerm2, GNOME Terminal, Alacritty
-and Kitty need nothing — but two need a setting:
-
-**VS Code** labels each terminal tab with the shell's name and ignores the
-title the program set, until you tell it otherwise. Open the command palette
-(`Ctrl+Shift+P`), run *Preferences: Open User Settings (JSON)*, and add:
-
-```json
-"terminal.integrated.tabs.title": "${sequence}"
-```
-
-`${sequence}` means "the title the running program set". You can combine it
-with the others to keep a fallback for terminals running something that sets no
-title: `${process}` is the shell's name (what the default shows), and
-`${separator}` is a dash that appears only when there is something on both
-sides of it, so `"${sequence}${separator}${process}"` gives you the agent's
-title when there is one and the shell's name when there is not.
-
-When VS Code is connected to a container, an SSH host or WSL, this one belongs
-in the *local* settings file rather than the remote one, because the tab is
-drawn by the window on your own machine. That is what *Open User Settings
-(JSON)* gives you by default; on Windows the file is at
-`%APPDATA%\Code\User\settings.json`, and from inside WSL the same file is
-`/mnt/c/Users/<you>/AppData/Roaming/Code/User/settings.json`.
-
-**tmux** needs `set -g set-titles on` in `~/.tmux.conf` before it passes a
-title through to the terminal around it.
-
-All three icons are configurable and the whole thing can be turned off; see
-[`ui`](#ui) below. Nothing is written when output is redirected, and
-`KVIT_CODER_NO_TITLE=1` in the environment turns it off without a config edit.
-
-## Sessions
-
-Conversation history persists across runs via named sessions:
-
-```bash
-# Start or continue a session
-./kvit-coder -p "set up the project" -s my-feature
-./kvit-coder -p "now add tests" -s my-feature
-
-# Manage sessions
-./kvit-coder --sessions              # list all
-./kvit-coder --session-show my-feature   # view history
-./kvit-coder --session-delete my-feature # delete
-```
-
-Each session is a directory under `~/.kvit-coder/sessions/`:
-
-```
-~/.kvit-coder/sessions/my-feature/
-    history.jsonl   append-only transcript, one timestamped event per line
-    meta.json       when it was created and last used, workspace, model, first prompt
-    checkpoints/    the shadow git repository the checkpoint tools commit into
-    proc/           which process is running a turn
-    inbox/          messages waiting for the running turn
-    tmp/            tool output too large to fit in a message
-```
-
-Everything that outlives a turn lives there, so a checkpoint made in one run
-can be restored in the next and a temp file the model was given the path to is
-still readable later. A session left over from when a session was a single
-`<name>.jsonl` file is converted the first time it is opened; the old file is
-kept as `<name>.jsonl.migrated`.
-
-### Steering a running turn
-
-A message can reach the model between iterations of a turn that is already
-running. Type a line at the terminal while the agent works, or send one from
-another terminal:
-
-```bash
-./kvit-coder steer "actually, check the tests first"
-./kvit-coder steer -s my-feature "use the other library"
-```
-
-Without `-s` it delivers to the one session that has a turn running, and says
-so if there is none or more than one. The message arrives as a user message
-tagged `<user-steering>` at the model's next iteration.
-
-Typing at the same terminal competes with the agent's own output, so a
-half-typed line can be hard to read while the turn streams past it. For a
-clean line, hit `Enter` on an empty line instead: the turn finishes its
-current step, pauses at the next iteration boundary, and prompts for steering
-— type it, hit `Enter` again, and the turn continues. `Enter` on the empty
-prompt resumes with nothing added, and `Enter` while a question is waiting
-still answers the question rather than pausing.
-
-### Batching calls
-
-With `tools.batch.enabled`, several independent calls go in one request:
-
-```
-Batch({"calls": [
-  {"tool": "Read", "args": {"path": "main.go"}},
-  {"tool": "Read", "args": {"path": "config.go"}},
-  {"tool": "Search", "args": {"pattern": "func main"}}
-]})
-```
-
-One request and one round of thinking instead of one each. Calls that only read
-run at the same time, so four reads take about as long as one; calls that
-change the workspace run afterwards, in order. Each call comes back with its own
-result or its own error, so one failure does not lose the others. At most ten
-calls, and no `Batch` inside a `Batch`.
-
-### Command permissions
-
-Whether a shell command may run is decided from its syntax tree, not from
-matching its text. Every simple command in the line is found and judged on its
-own, so `git diff && rm -rf /` is refused for its second command, `ps aux | awk
-'{print $2}'` runs, and a word like `shutdown` in a grep pattern is an argument
-rather than a program.
-
-Refused outright: `sudo`, `su`, `chroot`, package managers, `shutdown`/`reboot`,
-and deleting `/` or your home directory. Deleting anything *under* those
-directories is ordinary cleanup and is allowed. Under `agent.profile: weak`,
-`sed -i` is refused too when the Edit tool is enabled, since a weak model will
-otherwise edit files with it instead of calling Edit; the strong profile allows
-it, and sed is an ordinary shell command there.
-
-`--yolo` answers these questions for you, which is what it is for in a run with
-no terminal: there an unanswered question comes back as a refusal rather than a
-pause, so without it a headless `--yolo` run fails on the first `curl` it needs.
-Two things it does not answer. What is refused outright stays refused, since a
-refusal was never a question. And `dd` and the `mkfs` family keep asking, so
-with no terminal they are still refused — everything else on the list can be
-undone or lived with, whereas an overwritten disk cannot. Each command `--yolo`
-allows is named on the terminal as it happens, so the run records what the flag
-decided rather than only that it was passed. The same switch is
-`tools.shell.allow_without_asking` in the config file.
-
-None of this is a sandbox. A denied command is generally reachable some other
-way — through an interpreter, or by writing a script and running it — and no
-rule here tries to close that off. What the rules catch is a command that would
-do damage without anyone having decided to.
-
-Needing permission — dangerous in general, ordinary in context — are `curl`,
-`wget`, `nc`, `dd` and the `mkfs` family. Under `agent.profile: weak`, `eval`
-and interpreter one-liners such as `python -c` are added to that list; the
-strong profile runs them without asking, since the same code written to a file
-and run is refused by nothing. Whichever way a command is refused, the message
-says in one line what the command would do rather than which list it is on,
-since that is all a person has to decide on and all the model is told when
-nobody is there to ask. At a
-terminal you are asked, with four answers: just this once, for the rest of this
-session, always for this project, or always everywhere. The last three are
-written to permission files under `~/.kvit-coder/permissions/` and the session
-directory — never inside the workspace, where the agent could edit them. With
-no terminal the command is refused and the model is told which pattern to add
-to `tools.shell.allowed_commands`.
-
-`allowed_commands` and `disallowed_commands` still work, now as patterns
-matched against each command in the line rather than as a prefix of the whole
-string. A pattern is a list of words: `curl` is every curl, `python3 -c` is only
-the one-liner form, and a program name ending in `*` covers a family of programs
-that differ only by suffix, so `mkfs.*` is `mkfs.ext4`, `mkfs.xfs` and the rest.
-Setting `allowed_commands` still makes everything else a denial, and a grant can
-never open something that is refused outright.
-
-### Background processes
-
-With `tools.procs.enabled`, a command can outlive the turn's iterations (and, if persistent, the turn itself):
-
-```
-Shell.start({"command": "npm run dev", "name": "dev server"})   → {"id": "bg1"}
-Shell.start({"command": "npm run dev", "persistent": true})   → {"id": "bg1"} (survives the turn, red)
-Shell.start({"command": "npm run dev", "until": "Listening on", "remind_every": 60})
-Observe.wait({"id": "bg1", "until": "Listening on", "report": "match"})
-Shell.output({"id": "bg1", "cursor": 4096})
-Shell.list({}) / Shell.status({"id": "bg1"}) / Shell.kill({"id": "bg1"}) / Shell.tune({"id": "bg1", "remind_every": 30})
-Observe.add({"command": "git status --short", "every": 60})
-```
-
-`Shell` is unchanged: it runs a command to completion and dies with the turn.
-`Shell.start` detaches into its own session so it survives the turn's
-iterations, and its output and exit status are recorded in `<session>/proc/`
-where the next iteration reads them. It is ephemeral by default: stopped when
-the turn ends, so abandoned sessions leak nothing. Pass `persistent: true`
-only for what the next turn still needs, like a dev server — it survives the
-turn, is shown red (`★N!`, blue `★N` is ephemeral), and is listed at turn end
-with how to stop it. Persistent still dies on interrupt (unless
-`tools.procs.kill_on_exit` is false), on `Shell.kill`, and on reboot
-(reported as `gone`): for a service that must outlive those, write a script
-and ask the user to run it. Say when to be told
-up front — `report` (`exit` by default: nothing until it ends), `until` (a
-pattern that reports on match), `remind_every` (a "still running" tick every
-that many seconds) — and the reminders arrive on their own between iterations,
-with no round trip to another tool. `Shell.tune` adjusts the same policy
-(including `persistent`) on a running process without restarting it.
-Reap leftovers any time: `kvit-coder --list-background <session|all>`,
-`kvit-coder --kill-background <session|all>`. Deleting a session stops its
-processes first, so it never orphans them.
-
-`Observe.wait` blocks until the process ends, prints something matching a
-pattern, or `max_wait` passes — one tool call however long it takes, where
-checking with `Shell.output` in a loop costs a full round of thinking each
-time. It also returns early if you type something, so you are not left waiting
-for a process whose result no longer matters.
-
-Between iterations the agent asks the registry what has happened and tells the
-model about anything it asked to hear — an ending, a pattern match, new
-output, or a tick of the clock — so watching costs nothing until there is
-something to say. Ctrl-C stops everything the session started, unless
-`tools.procs.kill_on_exit` is false.
-
-### Questions
-
-With `tools.question.enabled`, the model can ask you something and wait for the
-answer, which comes back as the tool's result:
-
-```
-── retry strategy ──
-Reuse the existing retry wrapper, or write a new one?
-  1) Reuse internal/http.Retry  — same backoff, already tested
-  2) New wrapper in this package  — no shared state
-  [1-2, or type]
-```
-
-A bare number chooses, `1,3` chooses several, and anything else comes back as
-free text — so answering and steering are the same keystrokes and you never
-have to decide which you are doing before you type. A line typed before the
-question appeared is treated as steering rather than silently taken as the
-answer. Ctrl-C dismisses the question and ends the turn; the model is refused
-if it asks the same question again.
-
-With a terminal the call waits as long as it takes. With no terminal it waits
-`tools.question.timeout` seconds for an answer dropped in the session inbox
-(`kvit-coder steer` writes there), then tells the model to proceed on its own
-judgement and say what it assumed. The default of zero falls back at once, so a
-benchmark or scripted run never hangs on a question.
-
-## Agent File
-
-Append custom instructions to the system prompt without modifying config:
-
-```bash
-./kvit-coder -p "refactor auth module" -agent-file AGENT.md
-```
-
-Or in config:
-
-```yaml
-agent:
-  agent_file: AGENT.md
-```
-
-## Project Instructions
-
-Headless runs automatically load `CLAUDE.md` from the directory where `kvit-coder` was launched, then apply the `-p` prompt as the user request. The instructions are sent as user-level context, not appended to the system prompt, matching Claude Code's behavior more closely than `agent_file`.
-
-Customize or disable this in config:
-
-```yaml
-agent:
-  project_instructions:
-    enabled: true
-    path: CLAUDE.md   # relative to the launch directory, or absolute
-```
-
-## MCP Servers
-
-kvit-coder can act as a [Model Context Protocol](https://modelcontextprotocol.io) (MCP) client: it connects to external tool servers, asks each one what tools it offers, and surfaces every tool to the model as if it were built in. This gives the agent access to the existing MCP ecosystem (filesystem, git, GitHub, Postgres, web fetch, Playwright, and more) without a bespoke integration for each.
-
-Discovered tools are namespaced `mcp.<server>.<tool>` (e.g. `mcp.git.git_status`) and flow through the normal agent loop, loop detection, and prompt generation. The feature is **disabled by default** and zero-cost when unused.
-
-```yaml
-mcp:
-  enabled: true
-  startup_timeout: 20        # seconds to connect + list tools, per server
-  call_timeout: 120          # default per-tool-call deadline (overridable per server)
-  confirm: "ask_once"        # block | ask_once | ask_always | trust
-  sanitize_schemas: false    # flatten $ref/oneOf/allOf for strict tool-calling templates
-  servers:
-    - name: "git"            # namespaces tools as mcp.git.<tool>; must be unique
-      enabled: true
-      transport: "stdio"     # stdio (subprocess) | http (streamable HTTP)
-      command: "uvx"
-      args: ["mcp-server-git", "--repository", "."]
-      env: ["KEY=VALUE"]     # appended to inherited env (supports ${VAR})
-    - name: "fetch"
-      enabled: true
-      transport: "http"
-      url: "http://127.0.0.1:9000/mcp"
-      headers: ["Authorization=Bearer ${FETCH_TOKEN}"]   # supports ${VAR}
-      call_timeout: 60       # per-server override
-      confirm: "trust"       # per-server override
-      tools:
-        allow: []            # raw tool-name allowlist (empty = all)
-        deny: ["dangerous_tool"]
-```
-
-| Group key | Description |
-|-----------|-------------|
-| `enabled` | Master toggle for the MCP client |
-| `startup_timeout` | Per-server connect + `tools/list` deadline, seconds (default 20) |
-| `call_timeout` | Default per-call deadline, seconds (default 120) |
-| `confirm` | Default trust policy (see below); default `ask_once` |
-| `sanitize_schemas` | Strip JSON Schema constructs (`$ref`, `oneOf`, `allOf`, …) some grammar-constrained templates reject (default false) |
-
-| Server key | Description |
-|------------|-------------|
-| `name` | Unique server name; namespaces its tools |
-| `enabled` | Opt this server in (default false) |
-| `transport` | `stdio` (default) or `http` |
-| `command` / `args` / `env` | stdio: executable, arguments, extra `KEY=VALUE` env (appended to inherited; `${VAR}` expanded) |
-| `cwd` | stdio: subprocess working directory; empty defaults to the workspace root, a relative path resolves against it. Set this for servers that index their own working directory. |
-| `url` / `headers` | http: endpoint and extra `Key=Value` request headers (`${VAR}` expanded) |
-| `call_timeout` / `confirm` | Optional per-server overrides of the group defaults |
-| `tools.allow` / `tools.deny` | Optional raw tool-name filters (allow first, then deny) |
-
-**Trust model.** MCP tools run in a separate process and bypass workspace path safety entirely — enabling a server grants the model whatever that server can do. The `confirm` policy is the gate:
-
-- `block` — refuse every call (load a server for inspection only)
-- `ask_once` — prompt once per distinct tool name, then remember for the session
-- `ask_always` — prompt before every call
-- `trust` — never prompt
-
-In a headless/benchmark run with no controlling terminal, `ask_*` falls back to `block` rather than hanging — use `confirm: trust` for trusted servers there.
-
-**Behavior notes.** Connections are made concurrently at startup; a server that fails or times out is logged and skipped, never fatal. MCP calls are exempt from the 15s blanket tool timeout and use `call_timeout` instead. Large text results are spilled to a temp file with a truncated preview; binary/image blocks are summarized rather than inlined. A server tool reporting an error is recoverable (the model can retry differently); a transport failure is not.
-
-## Configuration Reference
-
-### `llm`
-
-| Key | Description |
-|-----|-------------|
-| `base_url` | OpenAI-compatible API endpoint |
-| `api_key` / `api_key_env` | API key or env var name |
-| `model` | Model name |
-| `api_backend` | Wire protocol: `chat_completions` (default) or `responses` |
-| `headers` | Extra `Key=Value` request headers (`${VAR}` expanded; `${KVIT_RUN_ID}` = per-conversation ID) |
-| `reasoning_effort` | Thinking budget for a reasoning model (`minimal`, `low`, `medium`, `high`, `xhigh`) |
-| `effort_field` | Which field of a `chat_completions` request the effort travels in: `chat_template_kwargs` (default) or `reasoning_effort`. See below |
-| `temperature` | Sampling temperature |
-| `max_output_tokens` | Max output tokens |
-| `context` | Max context size for display (0 = hide) |
-| `merge_thinking` | Merge the model's thinking into `content` (endpoints spell it `reasoning_content` or `reasoning`; both are read) |
-| `verbose` | Tool output verbosity (0 = off, N = show up to N lines) |
-| `generation_stats` | Ask the endpoint for per-request cost and native token counts (OpenRouter only; default false) |
-| `benchmark_cmd` | External command for benchmarks (`{prompt}` placeholder) |
-
-**Endpoints that only serve `/responses`.** Some hosted models are offered only
-through OpenAI's Responses API and answer `/chat/completions` with an error.
-Setting `api_backend: "responses"` makes kvit-coder speak that protocol
-instead: tool calls and results are translated on the way out and back, and the
-opaque thinking blocks a reasoning model returns are replayed to it on the
-following request so a tool loop keeps its train of thought. `headers` covers
-endpoints that also demand a routing or session header of their own.
-`benchmarks/config-muse-spark.yaml` is a working example.
-
-**Where the effort goes on `/chat/completions`.** The `responses` backend has
-one place for the reasoning effort, `reasoning.effort`, and always uses it.
-Chat completions has two, and they are not interchangeable:
-
-- `chat_template_kwargs` — the effort is passed to the model's chat template as
-  `chat_template_kwargs.reasoning_effort`. This is how a model served by a local
-  llama.cpp or vLLM reads it; Qwen's template does. It is the default.
-- `reasoning_effort` — the top-level field of the same name, which is OpenAI's
-  own spelling and what hosted gateways read. opencode.ai's `/chat/completions`
-  wants this one.
-
-An endpoint sent the spelling it does not read answers normally and thinks for
-as long as it likes, so the wrong value here costs nothing visible: the effort
-picked with `:eN` simply never arrives, and nothing says so. Set `effort_field`
-per model in the `models:` catalog, next to `api_backend`. The same model can be
-served either way by different providers, so it is a property of the endpoint
-rather than of the model.
-
-An endpoint that routes by a session header sends every request carrying the
-same header value to one backend, so two agents sharing a value compete for the
-same prompt cache. `${KVIT_RUN_ID}` in a header expands to an ID derived from
-the session name, which keeps concurrent conversations apart while sending
-every turn of one conversation to the backend that already holds its prompt
-cache. Setting `KVIT_RUN_ID` in the environment pins a value instead.
-
-### `workspace`
-
-| Key | Description |
-|-----|-------------|
-| `root` | Workspace root directory |
-| `lock` | Refuse to start when another agent is working in this directory (default: `false`) |
-| `path_safety_mode` | `allow` (what `--yolo` sets), `block`, `warn`, `ask_once` (default), `ask_always` |
-| `allowed_paths` / `allowed_read_paths` | Paths allowed outside workspace |
-| `denied_paths` | Explicitly denied paths |
-
-### `agent`
-
-| Key | Description |
-|-----|-------------|
-| `profile` | `strong` (default) or `weak` — see below |
-| `max_tool_iterations` | Max tool calls per run |
-| `agent_file` | Path to agent instructions file |
-| `project_instructions.enabled` | Load project instructions before `-p` prompts (default true) |
-| `project_instructions.path` | Project instructions file path; relative paths resolve from the launch directory (default `CLAUDE.md`) |
-
-**Profiles.** The profile also chooses the system prompt. Under `strong` it is
-the environment this session is running in, how the session works (steering,
-background processes, questions, interruption), and each tool's failure modes —
-about 4KB. Under `weak` it keeps the numbered workflow, the worked editing
-example and the long tool documentation, about 7KB. Whether the shorter prompt
-scores better is a measurement: run thinkbench with each.
-
-A lot of the loop exists to catch a model getting confused:
-backtracking away from a bad tool call, ending a turn after three identical
-calls, a confirm handshake before an edit is applied, scraping tool calls out of
-prose, fuzzy matching and indentation repair, asking the model to explain an
-anomaly, retrying an empty answer, and keeping `sed -i`, `eval` and interpreter
-one-liners away from a model that would use them instead of the Edit tool. On a model that does not make those mistakes each
-one is a tax — a retry that discards good work, a handshake that costs two round
-trips per edit, a fuzzy match that silently edits the wrong lines, a refusal to
-run a command the model had good reason to run. `profile: strong`, the default,
-skips all of it; `profile: weak` reproduces the earlier behaviour exactly.
-
-`agent.profile` is the default for every model. A `models:` entry may set its
-own `profile:` (`strong` or `weak`) to override it for that model — a strong
-hosted model and a weak local one can share one config that way. Switching
-models with `:mN` (or `--model` headless) takes the new entry's profile from
-the next turn on; `:h` names each entry's effective profile once any entry
-sets one.
-
-### `tools`
-
-Each tool group has `enabled: true/false` plus tool-specific options:
-
-- **`edit.mode`** — `"lines"`, `"searchreplace"`, or `"patch"`
-- **`edit.preview_mode`** — Stage edits and overwrites for confirmation, which is
-  what registers `Edit.confirm`/`Edit.cancel` and `Write.confirm`/`Write.cancel`.
-  Off under `agent.profile: strong`, where Write overwrites directly and the
-  previous contents are in the turn's checkpoint.
-- **`edit.fuzzy_threshold`** — Fuzzy matching for searchreplace mode (0 = exact only)
-- **`edit.read_before_edit_msgs`** — Require a read within N messages before editing
-- **`shell.allowed_commands`** / **`shell.disallowed_commands`** — Command allow/blocklists
-- **`shell.default_timeout`** / **`shell.max_timeout`** — Seconds a command gets, and the ceiling a call may ask for (default 120 and 600)
-- **`batch.enabled`** — Run several independent tool calls in one request
-- **`procs.enabled`** — Background processes that outlive a turn (`Shell.start`, `Observe.wait`, …)
-- **`procs.kill_on_exit`** — Stop everything the session started when a turn is interrupted (default true)
-- **`question.enabled`** — Let the model ask you a question and wait for the answer
-- **`question.timeout`** — Seconds a run with no terminal waits for an answer (default 0: fall back at once)
-- **`web.api_key_env`** — Name of the environment variable holding the search API key (default `BRAVE_API_KEY`). The key is named rather than written into the file because it is usually shared with other programs
-- **`web.search.max_attempts`** — Tries before giving up on a rate-limit refusal (default 4). The provider allows one request per second shared across everything using the key, and refuses the excess rather than queueing it; a refusal costs no quota, so retrying is cheap next to handing the model a failure
-- **`web.usage_log`** — JSONL record of what was searched and when. Not a counter: the quota is account-wide and only the provider can see what other machines spent, which is why the response's `x-ratelimit-*` headers are read instead
-- **`web.fetch.max_bytes`** / **`web.fetch.timeout`** — Ceiling on HTML read, and seconds for one page (defaults 5 MB and 30)
-- **`checkpoint.max_turns`** — Max checkpoints before rotating (default: 100)
-- **`tasks.collapse`** — Enable context collapsing (stage 2)
-- **`tasks.plan`** — Enable plan-based task tools (stage 3)
-
-### `backtrack`
-
-Automatic retry on failed tool calls (disabled by default):
-
-```yaml
-backtrack:
-  enabled: true
-  max_retries: 5
-  inject_user_message: false
-```
-
-### `safety`
-
-Enterprise safety controls (all disabled by default):
-
-```yaml
-safety:
-  strict_mode: false       # fail-closed on parse errors
-  paranoid_mode: false      # aggressive restrictions
-  audit:
-    enabled: false
-    log_dir: "~/.kvit-coder/safety-logs"
-  git:
-    block_push: false
-    block_hard_reset: false
-  rm:
-    block_workspace_root: false
-  interpreters:
-    block_one_liners: false
-```
-
-### `prompts`
-
-Optional template-based prompt system:
-
-```yaml
-prompts:
-  use_templates: false
-  templates_dir: ""        # override embedded templates
-  hot_reload: false        # reload on each request (dev mode)
-```
-
-### `ui`
-
-Terminal output styling, and the window title the interactive front end keeps
-up to date (see [Window title](#window-title)):
-
-```yaml
-ui:
-  markdown: auto           # auto | always | never; auto styles only on a terminal
-  terminal_title:
-    enabled: true          # false leaves the terminal's title alone
-    running: "⏳"           # icon while a turn is running ("" for none)
-    asking: "💬"            # icon while a prompt waits for your answer
-    waiting: "💤"           # icon while nothing is running and the composer is open
-```
-
-## Benchmarking
-
-Three families run from the same binary. Their inputs live in
-[`benchmarks/`](benchmarks/) and are tracked; their outputs — a timestamped
-report, a full agent transcript, and for thinkbench a results JSON — are written
-there too and are deliberately untracked, so a run leaves the checkout clean and
-its transcripts stay out of `ripgrep`. Copy anything worth keeping somewhere
-outside the repository.
-
-### Run Benchmarks
-
-```bash
-# Run all benchmarks (uses config-mymodel.yaml)
-./kvit-coder --benchmark mymodel
-
-# Custom runs, category filter, specific IDs
-./kvit-coder --benchmark mymodel -n 5
-./kvit-coder --benchmark mymodel --benchmark-category search,edit
-./kvit-coder --benchmark mymodel --benchmark-id S1,S2,R1
-
-# List available benchmarks
-./kvit-coder --benchmark-list
-```
-
-### Benchmark Categories
-
-| Category | Description |
-|----------|-------------|
-| **search** | Code pattern search |
-| **read** | File reading and directory listing |
-| **edit** | File creation and modification |
-| **shell** | Shell command execution |
-| **compound** | Multi-step tasks combining multiple tools |
-
-### External LLM Support
-
-Benchmark an external tool (e.g., Claude Code):
-
-```yaml
-llm:
-  benchmark_cmd: "claude -p {prompt} --allowedTools Edit Bash Read"
-```
-
-### Haystack Benchmarks
-
-Needle retrieval in large context windows (1-5 hop reasoning, no tools required):
-
-The corpus is an amalgamation of this repository's own Go source, regenerated
-rather than tracked — a committed copy would put a stale second copy of the
-codebase into every search. Build it first:
-
-```bash
-scripts/amalgamate-go.sh          # writes benchmarks/haystacks/kvit-coder.go.txt
-
-./kvit-coder --bench-haystack mymodel
-./kvit-coder --bench-haystack mymodel --bench-haystack-id 1H1,2H1
-```
-
-### Thinkbench Benchmarks
-
-[Thinkbench](benchmarks/thinkbench/suite/README.md) (by Thinkwright, Apache-2.0) is a suite of 72 autonomous coding-agent tasks across five types — `implement`, `bug-fix`, `feature-add`, `repair-to-green` (60 graded), and `ambiguous-spec` (12 observed). Each graded task runs the agent in a fresh, hard-sandboxed workspace from a single `brief.txt`; after the agent stops a held-out `grade.py` is dropped in and produces a continuous `passed/total` score.
-
-```bash
-# Run all graded thinkbench tasks (uses config-mymodel.yaml), 3 trials each
-./kvit-coder --bench-thinkbench mymodel
-
-# Specific tasks / types / trial count
-./kvit-coder --bench-thinkbench mymodel --bench-thinkbench-id base62,backoff
-./kvit-coder --bench-thinkbench mymodel --bench-thinkbench-types bug-fix,feature-add
-./kvit-coder --bench-thinkbench mymodel -n 1
-```
-
-Outputs `results.json`, `RESULTS.md`, and a resumable CSV under `benchmarks/thinkbench/results/` (`overall_graded` / `by_type` / `by_task` / `observed` rollups, with both **mean score** and **full-pass rate**).
-
-**Requirements & sandboxing:**
-
-- **`uv`** must be on PATH. A shared environment is auto-provisioned at `benchmarks/thinkbench/.uv` (pinned via `thinkbench.uv_python`) and used as the default `python3`/`pip` for both the agent's `run_command` and the grader.
-- Each run is confined to a per-run workspace for **reads as well as writes**: `path_safety_mode=block` covers the structured file tools, and an OS sandbox (auto-detected **bubblewrap** → **firejail**) confines arbitrary shell. A preflight smoke test proves a read outside the workspace is denied before any task runs. Held-out graders and reference solutions live under `suite/` and are never copied into a workspace pre-grade.
-
-Config block (in `config-<suffix>.yaml`):
-
-```yaml
-thinkbench:
-  suite_dir: "benchmarks/thinkbench/suite"   # optional; auto-discovered
-  timeout_per_run: 600                        # seconds; implement tasks are slow
-  uv_python: "3.11"
-  sandbox: "auto"   # auto | bwrap | firejail | none | require
-  types: ["implement", "bug-fix", "feature-add", "repair-to-green"]
-  trials: 3          # default trials per task; overridden by -n
-  include_observed: false   # also run the 12 ungraded ambiguous-spec tasks (persist-only)
-```
-
-### Adding Custom Benchmarks
-
-Define in `benchmarks/benchmarks.yaml`:
-
-```yaml
-benchmarks:
-  - id: MY1
-    name: "My Custom Benchmark"
-    category: custom
-    goal: "Test something specific"
-    setup:
-      - file: "test.go"
-        content: |
-          package main
-          func myFunc() {}
-    task: "Find the function named myFunc"
-    validation:
-      - type: output_contains
-        expected: "test.go"
-```
-
-Validation types: `file_contains`, `file_equals`, `file_exists`, `file_not_exists`, `file_line_count`, `tool_called`, `tool_called_with`, `output_contains`, `output_not_contains`, `output_matches`, `multi_tool_calls`
+| **Read** | File contents or a directory listing, with partial reads for large files. A PDF is detected from its bytes and its text extracted a page range at a time. Other non-text files — images, archives, databases, compiled output — are named, with the tool or command that opens them, rather than read as bytes. |
+| **ReadImage** | Read an image (PNG, JPEG, GIF) so the model can see it. Large images are downscaled. |
+| **Edit** | Three modes: **lines** (line ranges), **searchreplace** (find and replace, optionally fuzzy), **patch** (unified diffs). Optional preview mode with confirm or cancel. |
+| **Write** | Create a file or overwrite one. |
+| **Search** | Regular-expression search with glob filters, through ripgrep. |
+| **Shell** | Run a command, with timeouts, a working directory, and permission decided from the parsed command line. |
+| **Shell.start / Shell.output / Observe.wait** | Processes that outlive the turn's iterations: a dev server, a long test run, a build. |
+| **Batch** | Several independent tool calls in one request. |
+| **Question** | Ask the person a question rather than guessing, when there is somebody at the terminal. |
+| **Web.search / Web.fetch** | Search through the Brave API, and fetch one page as markdown. Both off by default; the search needs a key. |
+| **Web.browsing** | A real browser through a Playwright MCP server, behind a tool group. |
+| **Plan.\* / Checkpoint.\* / Tasks.\*** | Plan management, turn-based file history in a shadow git repository, and context compression. Plan and Checkpoint are one group and Tasks the other; enable one or the other. |
+| **mcp.\*** | Tools from external [Model Context Protocol](https://modelcontextprotocol.io) servers, over stdio or HTTP. See [`docs/mcp.md`](docs/mcp.md). |
+
+Sessions, steering, batching, command permissions, background processes and the
+question tool are covered in [`docs/sessions.md`](docs/sessions.md).
+
+## Running commands on your machine
+
+This program executes shell commands and edits files, so it is worth knowing
+what constrains it. `workspace.path_safety_mode` decides what happens when a
+path outside the workspace is touched: `allow`, `block`, `warn`, `ask_once` or
+`ask_always`, where the asking modes prompt on `/dev/tty` and remember the
+answer for the run. Shell commands are parsed into a syntax tree and each simple
+command in the line is judged on its own against the built-in rules and the
+allow and deny lists in `tools.shell`. A refused command comes back to the model
+as a tool result saying what it would have done, so the turn can continue with
+something else. `--yolo` turns the asking off for a run.
+
+## Benchmarks
+
+Three families, all driven by the same binary: tool benchmarks for whether the
+model uses tools correctly on small checkable tasks, haystack for retrieval from
+a long context, and thinkbench for autonomous coding tasks scored by a held-out
+grader over 72 vendored tasks. Inputs are tracked and outputs are not. See
+[`benchmarks/README.md`](benchmarks/README.md).
 
 ## Documents
 
-[`docs/`](docs/) holds the design notes. [`docs/review.md`](docs/review.md)
-describes what the program was and what was wrong with it;
-[`docs/redesign.md`](docs/redesign.md) describes what was built instead and is
-the place to start. [`docs/redesign-plan.md`](docs/redesign-plan.md) records how
-that was done stage by stage and what remains open. Two proposals are written up
-but not built: [`docs/redesign-mcp.md`](docs/redesign-mcp.md) on holding MCP
-connections outside the turn, and
-[`docs/bench-refactor.md`](docs/bench-refactor.md) on moving the benchmark
-harness into its own command. [`docs/archive/`](docs/archive/) is superseded
+[`docs/`](docs/) holds the design notes.
+[`docs/redesign.md`](docs/redesign.md) describes what was built and is the place
+to start; [`docs/redesign-plan.md`](docs/redesign-plan.md) records how, stage by
+stage, and what remains open. [`docs/archive/`](docs/archive/) is superseded
 material, kept for the record.
 
 ## License

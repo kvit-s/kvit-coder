@@ -54,7 +54,7 @@ taken: an `index` tool, code execution as a tool, a read-only research subagent,
 a writable memory, and richer display.
 
 Two proposals written after this plan are in [`redesign-mcp.md`](redesign-mcp.md)
-and [`bench-refactor.md`](bench-refactor.md); neither is built.
+and [`bench-refactor.md`](archive/bench-refactor.md); neither is built.
 
 ---
 

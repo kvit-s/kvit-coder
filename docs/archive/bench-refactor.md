@@ -9,7 +9,7 @@ agent binary and reached through its flags. This document argues that they
 should be a second command instead, and says how to get there.
 
 Nothing here is built. It is a proposal in the same sense as
-[`redesign-mcp.md`](redesign-mcp.md): the reasoning and the plan are written
+[`redesign-mcp.md`](../redesign-mcp.md): the reasoning and the plan are written
 down so the work can be picked up later without re-deriving them. The
 [repository cleanup of September 2026](../README.md) deliberately left this
 alone, because it changes how you invoke benchmarks and cleanup should not do

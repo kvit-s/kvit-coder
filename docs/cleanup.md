@@ -78,9 +78,20 @@ tools the model actually calls, counted from saved sessions, and the thinkbench
 harness produces scores; a short results table on the front page is worth more
 to a reader than another paragraph of description.
 
-## The README is a manual where a front page is needed
+## The README
 
-It is 847 lines and 6,125 words in a single file, with no images and no status
+**Rewritten on 21 September 2026**, from 847 lines and 6,125 words to 182 lines
+and 1,472 words, along the lines described below. The reference material moved
+rather than being deleted: `docs/cli.md`, `docs/configuration.md`,
+`docs/sessions.md` and `docs/mcp.md` now hold it, and the benchmarking section
+joined `benchmarks/README.md`. Every relative link in the documentation tree
+resolves. What is still missing from the front page is the terminal recording;
+the place it goes is marked in the file.
+
+The description below is what the rewrite was aiming at, kept because the demo
+is still outstanding and because it says why the shape was chosen.
+
+It was 847 lines and 6,125 words in a single file, with no images and no status
 badges. Reference material takes up close to half of it: the CLI flags section
 is 787 words, Sessions is 1,640, the configuration reference is 1,225 and
 Benchmarking is 577.
@@ -211,12 +222,14 @@ signals that the project is used together with other coding agents.
 
 ## A suggested order
 
-1. Fix the formatting and lint findings, pin the linter version, make a failed
+1. ~~Fix the formatting and lint findings, pin the linter version, make a failed
    headless turn exit non-zero, put the program's name and stamped version in
-   the banner, and name the API key variable in the 401 message. Push, and get
-   one passing CI run on the current code.
+   the banner, and name the API key variable in the 401 message.~~ Done on
+   21 September 2026; `go test`, `go vet`, `golangci-lint` and `gofmt` are all
+   clean. The push has not happened yet.
 2. Rewrite the README around the six properties above, record the demo, move the
-   reference material into `docs/`, and fix the six broken links.
+   reference material into `docs/`, and fix the broken links. Done on
+   21 September 2026 except the demo recording.
 3. Remove `.clauding`, `eval/`, the stale benchmark configs and the stray log
    file; sanitize the personal paths; add `config.example.yaml`, `CONTRIBUTING.md`
    and `SECURITY.md`.
