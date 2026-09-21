@@ -407,10 +407,40 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 			ToolCallID:       raw.ToolCallID,
 			Images:           raw.Images,
 		}
+		m.fillReasoningAlias(data)
 		return nil
 	}
 	*m = Message(p)
+	m.fillReasoningAlias(data)
 	return nil
+}
+
+// fillReasoningAlias takes the model's thinking from the "reasoning" key when
+// the answer used that spelling instead of "reasoning_content". Both are in
+// use: DeepSeek, Qwen and the local servers write reasoning_content, while
+// opencode.ai and OpenRouter write reasoning. Without this the thinking is
+// dropped before merge_thinking ever sees it, so a model that returns it under
+// the second name looks like one that does not think at all. Nothing sends the
+// field back — chatWireMessage has only reasoning_content — so this is a
+// reading convenience, not a wire change.
+func (m *Message) fillReasoningAlias(data []byte) {
+	if m.ReasoningContent != "" {
+		return
+	}
+	var alias struct {
+		Reasoning json.RawMessage `json:"reasoning"`
+	}
+	if err := json.Unmarshal(data, &alias); err != nil || len(alias.Reasoning) == 0 {
+		return
+	}
+	var text string
+	if err := json.Unmarshal(alias.Reasoning, &text); err != nil {
+		// Some endpoints put a structured block here rather than text. There
+		// is nothing useful to show, and guessing at a shape would be worse
+		// than leaving it out.
+		return
+	}
+	m.ReasoningContent = text
 }
 
 // messageTextFromContent pulls the readable text out of a wire content value
@@ -514,6 +544,7 @@ type chatWireRequest struct {
 	ToolChoice         string            `json:"tool_choice,omitempty"`
 	Stream             bool              `json:"stream,omitempty"`
 	ChatTemplateKwargs map[string]any    `json:"chat_template_kwargs,omitempty"`
+	ReasoningEffort    string            `json:"reasoning_effort,omitempty"`
 }
 
 func toChatWireRequest(req ChatRequest) chatWireRequest {
@@ -526,6 +557,7 @@ func toChatWireRequest(req ChatRequest) chatWireRequest {
 		ToolChoice:         req.ToolChoice,
 		Stream:             req.Stream,
 		ChatTemplateKwargs: req.ChatTemplateKwargs,
+		ReasoningEffort:    req.ReasoningEffort,
 	}
 }
 

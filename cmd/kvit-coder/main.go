@@ -412,6 +412,7 @@ func main() {
 		llm.WithBackend(cfg.LLM.APIBackend),
 		llm.WithHeaders(cfg.LLMHeaders()),
 		llm.WithReasoningEffort(cfg.LLM.ReasoningEffort),
+		llm.WithEffortField(cfg.LLM.EffortField),
 		llm.WithReasoningSummary(cfg.ReasoningSummaryOrDefault()),
 		llm.WithTimeout(time.Duration(cfg.LLM.RequestTimeout)*time.Second),
 		llm.WithRetryNotice(func(attempt, maxAttempts int, delay time.Duration, reason error) {

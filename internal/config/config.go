@@ -31,9 +31,19 @@ type Config struct {
 		// session header of their own.
 		Headers []string `yaml:"headers"`
 		// ReasoningEffort asks a reasoning model for more or less thinking.
-		// Only the "responses" backend sends it; values are the provider's
-		// (commonly minimal, low, medium, high).
+		// Values are the provider's (commonly minimal, low, medium, high,
+		// xhigh). The "responses" backend sends it as reasoning.effort; the
+		// chat-completions backend sends it wherever EffortField points.
 		ReasoningEffort string `yaml:"reasoning_effort"`
+		// EffortField names which field of a chat-completions request carries
+		// the effort: "chat_template_kwargs" (the default: a model whose chat
+		// template reads it, which is how the local servers work) or
+		// "reasoning_effort" (OpenAI's own top-level field, which hosted
+		// gateways such as opencode.ai read). An endpoint that wants one
+		// ignores the other without saying so, so a wrong value here means the
+		// effort picked with :eN quietly does nothing. The "responses" backend
+		// ignores this.
+		EffortField string `yaml:"effort_field"`
 		// ReasoningSummary asks a reasoning model for readable text describing
 		// its thinking. Only the "responses" backend sends it; values are the
 		// provider's (auto, concise, detailed), and "off" suppresses it.
@@ -108,6 +118,14 @@ type Config struct {
 	// for entries without their own `profile:`, so ApplyModel switching
 	// between entries never loses the global default.
 	defaultProfile string
+
+	// fileEffortField is the `llm:` block's own effort_field, kept from load
+	// because ApplyModel overwrites LLM.EffortField and runs more than once
+	// per process: first for the default catalog entry, then for the one
+	// -m selected. Without the original to fall back to, an entry that names
+	// no effort_field would inherit the default entry's, and its effort
+	// would be sent in a field its endpoint does not read.
+	fileEffortField string
 
 	// profileRaw snapshots the file's weak-model machinery settings before
 	// any profile is applied, so switching profiles (at load for the
@@ -1123,6 +1141,7 @@ func Load(path string) (*Config, error) {
 	// selected entry on every turn. The file's own settings are snapshotted
 	// first, so switching back to a weak entry restores them.
 	cfg.defaultProfile = strings.ToLower(strings.TrimSpace(cfg.Agent.Profile))
+	cfg.fileEffortField = cfg.LLM.EffortField
 	cfg.snapshotProfileRaw()
 	initialProfile := cfg.defaultProfile
 	if len(cfg.Models) > 0 {

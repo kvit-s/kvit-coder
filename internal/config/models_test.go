@@ -299,12 +299,13 @@ func TestLoadLegacyUnchanged(t *testing.T) {
 // TestLoadValidatesModels: bad catalogs fail at load with the entry number.
 func TestLoadValidatesModels(t *testing.T) {
 	bodies := map[string]string{
-		"bad backend": "llm:\n  model: a\nmodels:\n  - id: x\n    model: a\n    api_backend: carrier-pigeon\n",
-		"bad effort":  "llm:\n  model: a\nmodels:\n  - id: x\n    model: a\n    efforts:\n      - value: turbo\n",
-		"dup id":      "llm:\n  model: a\nmodels:\n  - id: x\n    model: a\n  - id: X\n    model: b\n",
-		"two default": "llm:\n  model: a\nmodels:\n  - id: x\n    model: a\n    efforts:\n      - value: low\n        default: true\n      - value: high\n        default: true\n",
-		"no wire":     "llm:\n  model: a\nmodels:\n  - id: x\n",
-		"bad default": "llm:\n  model: a\ndefault_model: ghost\nmodels:\n  - id: x\n    model: a\n",
+		"bad backend":      "llm:\n  model: a\nmodels:\n  - id: x\n    model: a\n    api_backend: carrier-pigeon\n",
+		"bad effort":       "llm:\n  model: a\nmodels:\n  - id: x\n    model: a\n    efforts:\n      - value: turbo\n",
+		"dup id":           "llm:\n  model: a\nmodels:\n  - id: x\n    model: a\n  - id: X\n    model: b\n",
+		"two default":      "llm:\n  model: a\nmodels:\n  - id: x\n    model: a\n    efforts:\n      - value: low\n        default: true\n      - value: high\n        default: true\n",
+		"no wire":          "llm:\n  model: a\nmodels:\n  - id: x\n",
+		"bad default":      "llm:\n  model: a\ndefault_model: ghost\nmodels:\n  - id: x\n    model: a\n",
+		"bad effort field": "llm:\n  model: a\nmodels:\n  - id: x\n    model: a\n    effort_field: telepathy\n",
 	}
 	for name, body := range bodies {
 		if _, err := Load(writeTempConfig(t, body)); err == nil {
@@ -415,5 +416,78 @@ func TestResolveSelection(t *testing.T) {
 	}
 	if _, _, err = cfg.ResolveSelection("ghost", "", false); err == nil {
 		t.Error("ResolveSelection(ghost): want error, got nil")
+	}
+}
+
+// TestApplyModelEffortField: an entry that names where its endpoint reads the
+// effort from carries that onto cfg.LLM, which is what the client is built
+// from; an entry that names none keeps whatever the `llm:` block set. The two
+// spellings are not interchangeable and neither endpoint complains about the
+// wrong one, so this is the only thing standing between a picked effort and
+// silence.
+func TestApplyModelEffortField(t *testing.T) {
+	cfg, err := Load(writeTempConfig(t, `llm:
+  model: a
+  effort_field: chat_template_kwargs
+models:
+  - id: local
+    model: a
+    api_backend: chat_completions
+  - id: hosted
+    model: b
+    api_backend: chat_completions
+    effort_field: reasoning_effort
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	cfg.ApplyModel(cfg.Models[1], "high")
+	if cfg.LLM.EffortField != "reasoning_effort" {
+		t.Errorf("after switching to the hosted entry, EffortField = %q, want reasoning_effort", cfg.LLM.EffortField)
+	}
+
+	cfg2, err := Load(writeTempConfig(t, `llm:
+  model: a
+  effort_field: chat_template_kwargs
+models:
+  - id: local
+    model: a
+    api_backend: chat_completions
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	cfg2.ApplyModel(cfg2.Models[0], "high")
+	if cfg2.LLM.EffortField != "chat_template_kwargs" {
+		t.Errorf("entry with no effort_field changed it to %q", cfg2.LLM.EffortField)
+	}
+}
+
+// TestApplyModelEffortFieldDoesNotLeak: one process applies the default entry
+// and then the selected one, so an entry that names no effort_field must fall
+// back to the `llm:` block rather than keep the previous entry's. Left to
+// leak, selecting the local model after a hosted default sends its effort in
+// the field the local server does not read, and nothing anywhere says so.
+func TestApplyModelEffortFieldDoesNotLeak(t *testing.T) {
+	cfg, err := Load(writeTempConfig(t, `llm:
+  model: b
+models:
+  - id: hosted
+    model: b
+    api_backend: chat_completions
+    effort_field: reasoning_effort
+  - id: local
+    model: a
+    api_backend: chat_completions
+`))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	cfg.ApplyModel(cfg.Models[0], "high") // the default entry, applied first
+	cfg.ApplyModel(cfg.Models[1], "high") // then the one -m selected
+	if cfg.LLM.EffortField != "" {
+		t.Errorf("EffortField = %q after switching to an entry that names none, want the file's empty default", cfg.LLM.EffortField)
 	}
 }

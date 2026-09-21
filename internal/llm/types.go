@@ -67,6 +67,10 @@ type ChatRequest struct {
 	// vLLM style), e.g. {"enable_thinking": false} to suppress reasoning for a call.
 	// Omitted from the body when nil; ignored by templates that don't use the key.
 	ChatTemplateKwargs map[string]any `json:"chat_template_kwargs,omitempty"`
+	// ReasoningEffort is OpenAI's own top-level effort field, which hosted
+	// gateways read instead of ChatTemplateKwargs. Which of the two a client
+	// fills is WithEffortField; see the EffortField constants.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 }
 
 // ChoiceError represents an error returned in a choice (e.g., upstream provider errors)

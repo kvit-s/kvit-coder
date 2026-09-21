@@ -150,12 +150,17 @@ func summarizerClientFor(cfg *config.Config, entry config.ModelEntry) *llm.Clien
 	if backend == "" {
 		backend = cfg.LLM.APIBackend
 	}
+	effortField := entry.EffortField
+	if effortField == "" {
+		effortField = cfg.LLM.EffortField
+	}
 	return llm.NewClient(
 		baseURL,
 		apiKey,
 		llm.WithBackend(backend),
 		llm.WithHeaders(cfg.LLMHeaders()),
 		llm.WithReasoningEffort(summarizerEffort(cfg, entry)),
+		llm.WithEffortField(effortField),
 		llm.WithTimeout(titleTimeout),
 		// One attempt. The default ladder retries a 5xx ten times, waiting
 		// 1s, 2s, 4s, 8s, 16s and so on in between, which is how a local

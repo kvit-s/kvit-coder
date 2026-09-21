@@ -21,6 +21,29 @@ const (
 	BackendResponses = "responses"
 )
 
+// EffortField names where a chat-completions endpoint reads the reasoning
+// effort from. The two spellings are not interchangeable: an endpoint that
+// wants one ignores the other silently, so the effort a person picked with
+// :eN does nothing and nothing says so.
+const (
+	// EffortFieldChatTemplateKwargs puts the effort in
+	// `chat_template_kwargs.reasoning_effort`, which is how a chat template
+	// running on a local llama.cpp or vLLM server reads it (the Qwen template
+	// does). This is the default, because that is where the setting started.
+	EffortFieldChatTemplateKwargs = "chat_template_kwargs"
+	// EffortFieldReasoningEffort puts it in the top-level `reasoning_effort`
+	// field, which is OpenAI's own spelling and what hosted gateways expect.
+	// opencode.ai's /chat/completions wants this one and drops
+	// chat_template_kwargs on the floor.
+	EffortFieldReasoningEffort = "reasoning_effort"
+)
+
+// ValidEffortField reports whether f names a known effort field (or is empty,
+// which means the chat-template default).
+func ValidEffortField(f string) bool {
+	return f == "" || f == EffortFieldChatTemplateKwargs || f == EffortFieldReasoningEffort
+}
+
 // defaultRequestTimeout bounds one HTTP request end to end. Without it a
 // hung endpoint hangs the agent with no way out short of killing the process.
 // It has to cover a slow reasoning model's whole answer, so it is generous.
@@ -40,6 +63,7 @@ type Client struct {
 	backend          string
 	headers          map[string]string
 	reasoningEffort  string
+	effortField      string
 	reasoningSummary string
 	// onRetry, when set, is told that a request failed and is about to be
 	// tried again. Without it a failing endpoint is indistinguishable from a
@@ -114,11 +138,23 @@ func WithTimeout(d time.Duration) Option {
 
 // WithReasoningEffort sets how much thinking a reasoning model should do.
 // The Responses backend sends it as `reasoning.effort`; the chat-completions
-// backend sends it as `chat_template_kwargs.reasoning_effort` (the Qwen
-// template's key: low|medium|high|xhigh), which servers without that template
-// ignore. Empty means "server default" on both.
+// backend sends it wherever WithEffortField points. Empty means "server
+// default" on both.
 func WithReasoningEffort(effort string) Option {
 	return func(c *Client) { c.reasoningEffort = effort }
+}
+
+// WithEffortField picks which field of a chat-completions request carries the
+// reasoning effort: EffortFieldChatTemplateKwargs (the default, for a model
+// whose chat template reads it) or EffortFieldReasoningEffort (OpenAI's own
+// top-level field, which hosted gateways want). An empty or unknown value
+// leaves the default. The Responses backend ignores this.
+func WithEffortField(field string) Option {
+	return func(c *Client) {
+		if field == EffortFieldReasoningEffort || field == EffortFieldChatTemplateKwargs {
+			c.effortField = field
+		}
+	}
 }
 
 // WithReasoningSummary asks a reasoning model for readable text describing its
@@ -196,16 +232,24 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 		return c.chatViaResponses(ctx, req)
 	}
 
-	// A selected effort rides as the Qwen template's per-request override
-	// (see compose.yaml: "chat_template_kwargs":
-	// {"reasoning_effort": "low"|"medium"|"high"|"xhigh"}). The server's
-	// configured default applies when nothing is sent, so empty sends
-	// nothing. An explicit per-request ChatTemplateKwargs (e.g. the
-	// interrogator's enable_thinking:false) wins over the client's default.
-	if c.reasoningEffort != "" && req.ChatTemplateKwargs == nil {
-		req.ChatTemplateKwargs = map[string]any{
-			"enable_thinking":  true,
-			"reasoning_effort": c.reasoningEffort,
+	// A selected effort rides in whichever field this endpoint reads. The
+	// server's configured default applies when nothing is sent, so an empty
+	// effort sends nothing either way.
+	if c.reasoningEffort != "" {
+		if c.effortField == EffortFieldReasoningEffort {
+			// OpenAI's own top-level field, which is what a hosted gateway
+			// such as opencode.ai reads.
+			req.ReasoningEffort = c.reasoningEffort
+		} else if req.ChatTemplateKwargs == nil {
+			// The Qwen template's per-request override (see compose.yaml:
+			// "chat_template_kwargs": {"reasoning_effort":
+			// "low"|"medium"|"high"|"xhigh"}). An explicit per-request
+			// ChatTemplateKwargs (e.g. the interrogator's
+			// enable_thinking:false) wins over the client's default.
+			req.ChatTemplateKwargs = map[string]any{
+				"enable_thinking":  true,
+				"reasoning_effort": c.reasoningEffort,
+			}
 		}
 	}
 

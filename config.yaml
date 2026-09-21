@@ -6,6 +6,13 @@
 # entry's effort default (xhigh on spark-go keeps the previous
 # llm.reasoning_effort default). An entry without efforts: is a non-reasoning
 # model: it has no :eN menu, and switching to it clears the effort.
+# On a chat_completions entry, effort_field says which field of the request
+# the effort travels in: "chat_template_kwargs" (the default, read by a
+# model's chat template on a local llama.cpp or vLLM server) or
+# "reasoning_effort" (OpenAI's own top-level field, read by hosted gateways
+# such as opencode.ai). An endpoint that wants one ignores the other and says
+# nothing, so the wrong value here means :eN silently changes nothing. The
+# responses backend does not use it.
 # An entry may set profile: weak to keep the local-model compensation
 # machinery (backtracking, edit confirm handshake, fuzzy matching, ...) on
 # that model, or profile: strong to skip it; empty inherits agent.profile
@@ -61,6 +68,11 @@ models:
     model: "qwen3.8-27b-nvfp4-dflash2"
     base_url: "http://192.168.138.186:8090/v1"
     api_backend: "chat_completions"
+    # Where this endpoint reads the effort from. A model whose chat template
+    # reads it (Qwen's does) wants chat_template_kwargs; a hosted gateway
+    # wants the top-level reasoning_effort field. Each ignores the other
+    # without complaining, so getting it wrong means :eN does nothing.
+    effort_field: "chat_template_kwargs"
     context: 262144
     profile: "weak"   # local model: keep the compensation machinery on here
     summarizer: true
@@ -70,6 +82,27 @@ models:
       - value: "high"
       - value: "xhigh"
         default: true
+  - id: "kimi-k3"
+    # Kimi K3 on the same opencode.ai Go subscription as Muse Spark, and the
+    # same 1M-token context. It is served on /chat/completions here and not on
+    # /responses -- asking for /responses gets a 503 "Endpoint is unavailable"
+    # -- which is the opposite of Muse Spark on this endpoint.
+    name: "Kimi K3"
+    model: "kimi-k3"
+    base_url: "https://opencode.ai/zen/go/v1"
+    api_backend: "chat_completions"
+    api_key_env: "OPENCODE_API_KEY"
+    # This gateway reads the effort from the top-level reasoning_effort field
+    # and ignores chat_template_kwargs, which is what a local server reads.
+    effort_field: "reasoning_effort"
+    context: 1048576
+    efforts:
+      - value: "minimal"
+      - value: "low"
+      - value: "medium"
+      - value: "high"
+        default: true
+      - value: "xhigh"
 
 # Default model: Muse Spark 1.3 on the opencode.ai Go subscription, the same
 # model and endpoint the `krok` CLI uses (see ~/.krok/config.toml). Export

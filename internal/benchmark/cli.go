@@ -339,7 +339,8 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 	llmClient := llm.NewClient(cfg.LLM.BaseURL, cfg.LLM.APIKey,
 		llm.WithBackend(cfg.LLM.APIBackend),
 		llm.WithHeaders(cfg.LLMHeaders()),
-		llm.WithReasoningEffort(cfg.LLM.ReasoningEffort))
+		llm.WithReasoningEffort(cfg.LLM.ReasoningEffort),
+		llm.WithEffortField(cfg.LLM.EffortField))
 
 	// Simple system prompt - no agent behavior, just Q&A
 	systemPrompt := "You are a helpful assistant. Answer questions about the provided source code concisely and accurately."

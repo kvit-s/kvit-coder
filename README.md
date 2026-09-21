@@ -561,11 +561,12 @@ In a headless/benchmark run with no controlling terminal, `ask_*` falls back to 
 | `model` | Model name |
 | `api_backend` | Wire protocol: `chat_completions` (default) or `responses` |
 | `headers` | Extra `Key=Value` request headers (`${VAR}` expanded; `${KVIT_RUN_ID}` = per-conversation ID) |
-| `reasoning_effort` | Thinking budget for a reasoning model (`responses` backend only) |
+| `reasoning_effort` | Thinking budget for a reasoning model (`minimal`, `low`, `medium`, `high`, `xhigh`) |
+| `effort_field` | Which field of a `chat_completions` request the effort travels in: `chat_template_kwargs` (default) or `reasoning_effort`. See below |
 | `temperature` | Sampling temperature |
 | `max_output_tokens` | Max output tokens |
 | `context` | Max context size for display (0 = hide) |
-| `merge_thinking` | Merge `reasoning_content` into `content` |
+| `merge_thinking` | Merge the model's thinking into `content` (endpoints spell it `reasoning_content` or `reasoning`; both are read) |
 | `verbose` | Tool output verbosity (0 = off, N = show up to N lines) |
 | `generation_stats` | Ask the endpoint for per-request cost and native token counts (OpenRouter only; default false) |
 | `benchmark_cmd` | External command for benchmarks (`{prompt}` placeholder) |
@@ -578,6 +579,24 @@ opaque thinking blocks a reasoning model returns are replayed to it on the
 following request so a tool loop keeps its train of thought. `headers` covers
 endpoints that also demand a routing or session header of their own.
 `benchmarks/config-muse-spark.yaml` is a working example.
+
+**Where the effort goes on `/chat/completions`.** The `responses` backend has
+one place for the reasoning effort, `reasoning.effort`, and always uses it.
+Chat completions has two, and they are not interchangeable:
+
+- `chat_template_kwargs` — the effort is passed to the model's chat template as
+  `chat_template_kwargs.reasoning_effort`. This is how a model served by a local
+  llama.cpp or vLLM reads it; Qwen's template does. It is the default.
+- `reasoning_effort` — the top-level field of the same name, which is OpenAI's
+  own spelling and what hosted gateways read. opencode.ai's `/chat/completions`
+  wants this one.
+
+An endpoint sent the spelling it does not read answers normally and thinks for
+as long as it likes, so the wrong value here costs nothing visible: the effort
+picked with `:eN` simply never arrives, and nothing says so. Set `effort_field`
+per model in the `models:` catalog, next to `api_backend`. The same model can be
+served either way by different providers, so it is a property of the endpoint
+rather than of the model.
 
 An endpoint that routes by a session header sends every request carrying the
 same header value to one backend, so two agents sharing a value compete for the

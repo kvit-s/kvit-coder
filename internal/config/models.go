@@ -73,6 +73,16 @@ type ModelEntry struct {
 	Context    int            `yaml:"context"`
 	Efforts    []EffortOption `yaml:"efforts"`
 
+	// EffortField names which field of a chat-completions request carries
+	// the reasoning effort for this endpoint: "chat_template_kwargs" (the
+	// default, for a model whose chat template reads it) or
+	// "reasoning_effort" (OpenAI's own top-level field, which hosted
+	// gateways read). Empty keeps the `llm:` block's setting. An endpoint
+	// that wants one spelling ignores the other silently, so a wrong value
+	// means the effort picked with :eN does nothing at all. The "responses"
+	// backend ignores this.
+	EffortField string `yaml:"effort_field"`
+
 	// Profile overrides agent.profile for this entry: "strong" (the default)
 	// or "weak". Empty inherits the global agent.profile. A weak entry keeps
 	// the compensation machinery (backtracking, the duplicate-call kill
@@ -369,6 +379,15 @@ func (c *Config) ApplyModel(entry ModelEntry, effort string) {
 		c.LLM.APIBackend = entry.APIBackend
 	}
 
+	// Always assigned, never left alone: ApplyModel runs twice in a process
+	// (the default entry, then the selected one), so an entry that names no
+	// effort_field has to fall back to the file's rather than keep whatever
+	// the previous entry set.
+	c.LLM.EffortField = entry.EffortField
+	if c.LLM.EffortField == "" {
+		c.LLM.EffortField = c.fileEffortField
+	}
+
 	if entry.Context != 0 {
 		c.LLM.Context = entry.Context
 	}
@@ -469,6 +488,12 @@ func (c *Config) validateModels(configPath string) error {
 		if !ValidBackend(e.APIBackend) {
 			return fmt.Errorf("%s (%s): unknown api_backend %q; use %q or %q",
 				where, e.ID, e.APIBackend, llm.BackendChatCompletions, llm.BackendResponses)
+		}
+
+		if !llm.ValidEffortField(e.EffortField) {
+			return fmt.Errorf("%s (%s): unknown effort_field %q; use %q or %q",
+				where, e.ID, e.EffortField,
+				llm.EffortFieldChatTemplateKwargs, llm.EffortFieldReasoningEffort)
 		}
 
 		if e.Profile != "" {

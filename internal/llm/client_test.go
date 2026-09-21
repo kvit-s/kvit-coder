@@ -1,6 +1,7 @@
 package llm
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -383,5 +384,108 @@ func TestChatMaxRetriesCapsAttempts(t *testing.T) {
 				t.Errorf("server saw %d requests, want %d", requests, tt.wantRequests)
 			}
 		})
+	}
+}
+
+// TestChatEffortFieldReasoningEffort: an endpoint configured for OpenAI's own
+// spelling gets the effort in the top-level reasoning_effort field and no
+// chat_template_kwargs at all. opencode.ai's /chat/completions reads only the
+// former: sent the latter it answers normally and thinks for as long as it
+// likes, so a wrong field here looks exactly like a working one.
+func TestChatEffortFieldReasoningEffort(t *testing.T) {
+	bodyOf := func(t *testing.T, client *Client, req ChatRequest) map[string]any {
+		t.Helper()
+		var got map[string]any
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+				t.Errorf("decode request: %v", err)
+			}
+			resp := ChatResponse{ID: "c", Model: "m",
+				Choices: []Choice{{Index: 0, Message: Message{Role: RoleAssistant, Content: "hi"}, FinishReason: "stop"}}}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(resp)
+		}))
+		defer server.Close()
+		client.baseURL = server.URL
+		if _, err := client.Chat(context.Background(), req); err != nil {
+			t.Fatalf("Chat: %v", err)
+		}
+		return got
+	}
+	base := ChatRequest{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}}
+
+	got := bodyOf(t, NewClient("http://x/v1", "",
+		WithReasoningEffort("medium"), WithEffortField(EffortFieldReasoningEffort)), base)
+	if got["reasoning_effort"] != "medium" {
+		t.Errorf("reasoning_effort = %v, want medium", got["reasoning_effort"])
+	}
+	if _, ok := got["chat_template_kwargs"]; ok {
+		t.Errorf("request also sent chat_template_kwargs: %v", got["chat_template_kwargs"])
+	}
+
+	// The default is still the chat template's key, so no existing endpoint
+	// changes shape.
+	got = bodyOf(t, NewClient("http://x/v1", "", WithReasoningEffort("medium")), base)
+	if _, ok := got["reasoning_effort"]; ok {
+		t.Errorf("default sent a top-level reasoning_effort: %v", got["reasoning_effort"])
+	}
+	if got["chat_template_kwargs"] == nil {
+		t.Errorf("default dropped chat_template_kwargs: %v", got)
+	}
+
+	// An unknown field name leaves the default rather than sending nothing.
+	got = bodyOf(t, NewClient("http://x/v1", "",
+		WithReasoningEffort("high"), WithEffortField("somewhere_else")), base)
+	if got["chat_template_kwargs"] == nil {
+		t.Errorf("unknown effort_field dropped the effort entirely: %v", got)
+	}
+
+	// Empty effort sends neither field, whichever one is selected.
+	got = bodyOf(t, NewClient("http://x/v1", "", WithEffortField(EffortFieldReasoningEffort)), base)
+	if _, ok := got["reasoning_effort"]; ok {
+		t.Errorf("empty effort sent reasoning_effort: %v", got["reasoning_effort"])
+	}
+}
+
+// A model's thinking arrives under two different names: reasoning_content
+// from DeepSeek, Qwen and the local servers, and reasoning from opencode.ai
+// and OpenRouter. Both have to land in ReasoningContent, or merge_thinking
+// has nothing to merge and the model looks like one that never thinks.
+func TestMessageAcceptsReasoningAlias(t *testing.T) {
+	var msg Message
+	if err := json.Unmarshal([]byte(`{"role":"assistant","content":"done","reasoning":"first I checked"}`), &msg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if msg.ReasoningContent != "first I checked" {
+		t.Errorf("ReasoningContent = %q, want the reasoning field's text", msg.ReasoningContent)
+	}
+
+	// reasoning_content wins when both are present: it is the field this
+	// program writes itself.
+	msg = Message{}
+	if err := json.Unmarshal([]byte(`{"role":"assistant","reasoning_content":"kept","reasoning":"ignored"}`), &msg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if msg.ReasoningContent != "kept" {
+		t.Errorf("ReasoningContent = %q, want kept", msg.ReasoningContent)
+	}
+
+	// A structured reasoning block is not text; it is left out rather than
+	// rendered as JSON into the transcript.
+	msg = Message{}
+	if err := json.Unmarshal([]byte(`{"role":"assistant","content":"x","reasoning":{"text":"a"}}`), &msg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if msg.ReasoningContent != "" {
+		t.Errorf("ReasoningContent = %q, want empty for a non-text reasoning field", msg.ReasoningContent)
+	}
+
+	// Nothing sends it back: the wire message has only reasoning_content.
+	out, err := json.Marshal(toChatWireMessage(Message{Role: RoleAssistant, Content: "x", ReasoningContent: "t"}))
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if bytes.Contains(out, []byte(`"reasoning"`)) {
+		t.Errorf("wire message carries a reasoning field: %s", out)
 	}
 }
