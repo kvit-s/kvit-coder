@@ -1,5 +1,5 @@
 llm:
-  base_url: "http://192.168.138.186:8090/v1"  # Your OpenAI-compatible endpoint
+  base_url: "http://localhost:8090/v1"  # Your OpenAI-compatible endpoint
   model: "qwen3.8-27b-nvfp4-dflash2"
   context: 200000
   # Cap on one response. Without it no `max_tokens` is sent and the model may

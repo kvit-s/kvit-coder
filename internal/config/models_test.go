@@ -43,7 +43,7 @@ func TestModelListSynthesizesLegacy(t *testing.T) {
 func TestModelListSynthesizesChatCompletions(t *testing.T) {
 	cfg := &Config{}
 	cfg.LLM.Model = "ministral-3-14b"
-	cfg.LLM.BaseURL = "http://192.168.8.20:8080/v1"
+	cfg.LLM.BaseURL = "http://localhost:8080/v1"
 	if menu := cfg.EffortOptions(cfg.ModelList()[0]); len(menu) != 0 {
 		t.Errorf("chat_completions entry menu = %v, want empty", menu)
 	}
@@ -60,7 +60,7 @@ func multiModelConfig() *Config {
 			BaseURL: "https://opencode.ai/zen/v1", APIBackend: "responses",
 			Efforts: []EffortOption{{Value: "low"}, {Value: "high", Default: true}}},
 		{ID: "qwen-local", Name: "Qwen3.8-27B (local)", Model: "qwen3.8-27b-nvfp4-dflash2",
-			BaseURL: "http://192.168.138.186:8090/v1", APIBackend: "chat_completions"},
+			BaseURL: "http://localhost:8090/v1", APIBackend: "chat_completions"},
 	}
 	return cfg
 }

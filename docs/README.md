@@ -1,30 +1,17 @@
-# Documents
+# Documentation
 
-Design notes and reviews for kvit-coder. The program itself is described in the
-repository root's `README.md`; these are the documents behind its current shape.
+Reference for using kvit-coder. The root [`README.md`](../README.md) describes
+what the program is and how to install it; these pages are the detail behind it.
 
-## Current
-
-| File | What it is |
+| File | What it covers |
 |---|---|
-| [`archive/review.md`](archive/review.md) | Architecture review of the program as it stood at commit `fe77715`, September 2026, and the case for the redesign. Section 2 describes the whole system and is the fastest way in. |
-| [`redesign.md`](redesign.md) | What to build instead: one process per turn, a session directory, a steering inbox, background processes, a question tool, syntax-tree command permissions, batched calls, model profiles. Sixteen sections plus an appendix of ideas not taken. |
-| [`redesign-plan.md`](redesign-plan.md) | How `redesign.md` was implemented, stage by stage. All eleven stages are committed; the header records what is left. |
-| [`redesign-mcp.md`](redesign-mcp.md) | A proposal, not yet built. One process per turn tears down MCP server connections every turn, which costs more than the reconnect time for servers holding per-connection state. Proposes a separate long-running program that holds them. |
-| [`web-tools.md`](web-tools.md) | Web search, page retrieval and browser control as three separate capabilities: a native `Web.search` and `Web.fetch` in the agent, a browser driven through an MCP server, and what that server adds to the daemon in `redesign-mcp.md`. `Web.search`, `Web.fetch` and a Playwright MCP browser server are built; the daemon is deferred on a measurement the document records. Also records the measured state of the Brave API key, and what a browser costs in memory. |
-| [`archive/bench-refactor.md`](archive/bench-refactor.md) | A proposal, not yet built. Moving the benchmark harness out of the agent binary into its own command. |
-| [`structured-reports.md`](structured-reports.md) | Ending a turn with a validated JSON report instead of free prose, built September 2026: the fixed schema and its nine block types, the tool that refuses arguments not fitting it, the gate that will not let a turn end without one, and the card the front end draws between turns with keys that answer it. |
-| [`tools-stats.md`](tools-stats.md) | Which tools the model actually calls, measured from the saved sessions, with the script that regenerates the numbers. A snapshot to decide from later, not a recommendation. |
-| [`agents-ram.md`](agents-ram.md) | Measured memory cost of one session of each coding agent on this machine, September 2026. Reference for how many can run at once, not about kvit-coder's design. |
-| [`archive/images.md`](archive/images.md) | Reading an image from a file and pasting one in the composer, built September 2026: message attachments, both wire protocols, session storage, then the TUI producers. |
-| [`cli.md`](cli.md) | Every command-line flag both binaries take. Reference, moved out of the root `README.md`. |
-| [`configuration.md`](configuration.md) | Every key in `config.yaml`, grouped by section. Reference, moved out of the root `README.md`. |
-| [`sessions.md`](sessions.md) | Working with sessions from the command line, steering a running turn, batched calls, how a shell command is judged before it runs, background processes and the question tool. |
-| [`mcp.md`](mcp.md) | Model Context Protocol servers, per-project instructions, and the agent file. |
-| [`cleanup.md`](cleanup.md) | What the public GitHub repository shows a visitor as of September 2026, and what to change before the project is promoted: the eight-month gap between the pushed code and this one, the failing build, the README's shape, the files that should not be tracked, and the defects a new user meets first. A proposal, not a record of work done. |
+| [`cli.md`](cli.md) | Every command-line flag both binaries take. |
+| [`configuration.md`](configuration.md) | Every key in `config.yaml`, grouped by the section it sits in. |
+| [`sessions.md`](sessions.md) | Sessions on disk, steering a running turn, batched calls, how a shell command is judged before it runs, background processes, and the tool the model uses to ask a question. |
+| [`mcp.md`](mcp.md) | Tools from Model Context Protocol servers, per-project instructions, and the agent file. |
+| [`agents-ram.md`](agents-ram.md) | Measured memory cost of one session of each coding agent on one machine, September 2026, with the method. |
 
-## Archive
-
-[`archive/`](archive/) holds plans and reviews for work that is finished or
-abandoned. They describe states the program has left, so read them as history
-rather than as guidance. `archive/README.md` says what each one was.
+The design notes that explain why the program is shaped the way it is are not in
+this repository. They were working documents — proposals, reviews and stage
+plans, some of them describing things that were never built — and reading them
+as current guidance sends you the wrong way.

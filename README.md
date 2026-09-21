@@ -81,9 +81,9 @@ Without `-config`, both binaries take the first of `$KVIT_CODER_CONFIG`,
 binary with symlinks resolved. A file belonging to some other program is passed
 over rather than loaded: it has to have an `llm:` or `models:` section to count
 as one of ours. Every key is documented in
-[`docs/configuration.md`](docs/configuration.md), and this repository's own
-`config.yaml` is a larger example with several models, an MCP server and a tool
-group.
+[`docs/configuration.md`](docs/configuration.md), including the parts
+`config.example.yaml` leaves out: several models to switch between, Model
+Context Protocol servers, tool groups, checkpoints and the safety rules.
 
 ## Run
 
@@ -196,11 +196,10 @@ grader over 72 vendored tasks. Inputs are tracked and outputs are not. See
 
 ## Documents
 
-[`docs/`](docs/) holds the design notes.
-[`docs/redesign.md`](docs/redesign.md) describes what was built and is the place
-to start; [`docs/redesign-plan.md`](docs/redesign-plan.md) records how, stage by
-stage, and what remains open. [`docs/archive/`](docs/archive/) is superseded
-material, kept for the record.
+[`docs/`](docs/) holds the reference: every
+[command-line flag](docs/cli.md), every [configuration key](docs/configuration.md),
+[sessions and steering](docs/sessions.md), [external tools](docs/mcp.md), and the
+[memory measurements](docs/agents-ram.md) quoted above.
 
 ## License
 

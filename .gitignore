@@ -18,7 +18,10 @@ vendor/
 # Logs
 *.log
 
-# Local configs
+# Local configs. The repository ships config.example.yaml; config.yaml is
+# whatever the person running it happens to use, and used to be tracked with one
+# machine's LAN addresses in it.
+/config.yaml
 config-local.yaml
 
 # Workspace lock file

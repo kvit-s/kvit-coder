@@ -151,17 +151,18 @@ from any workspace the model can read, or thinkbench scores nothing.
 
 ## Documents
 
-`docs/README.md` indexes them. The four that describe the program as it is:
-`docs/review.md` (what the code was and what was wrong with it),
-`docs/redesign.md` (what was built instead), `docs/redesign-plan.md` (stage by
-stage, all done, with what is still open), and the root `README.md` (usage).
+`docs/` holds the reference published with the program: `cli.md` (every flag),
+`configuration.md` (every config key), `sessions.md` (sessions, steering,
+command permissions, background processes), `mcp.md` (Model Context Protocol
+servers, project instructions, the agent file) and `agents-ram.md` (measured
+memory cost per agent session).
 
-`docs/redesign-mcp.md` and `docs/bench-refactor.md` are proposals that nobody has
-implemented yet.
-
-`docs/archive/` is superseded material. `docs/archive/tool-improvements.md` in
-particular describes weak-model edit machinery as though it were the main path;
-it is not, and reading it as current guidance will send you the wrong way.
+The design history is in `spec/notes/`, which is not tracked: the redesign
+document and its stage plan, proposals that were never built, reviews of other
+agents, and `archive/` for superseded material. Read anything there as a record
+of what somebody intended at the time, not as a description of the program.
+`spec/notes/archive/tool-improvements.md` in particular describes weak-model
+edit machinery as though it were the main path; it is not.
 
 ## Conventions
 

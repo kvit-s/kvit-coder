@@ -2,9 +2,9 @@
 # the llm: block at whichever OpenAI-compatible endpoint you have.
 #
 # Every key is documented at
-# https://github.com/kvit-s/kvit-coder/blob/main/docs/configuration.md, and the
-# repository's own config.yaml is a larger example with several models, an MCP
-# server and a tool group.
+# https://github.com/kvit-s/kvit-coder/blob/main/docs/configuration.md, which
+# also covers what this file leaves out: several models to switch between, Model
+# Context Protocol servers, tool groups, checkpoints and the safety rules.
 
 llm:
   # A local llama.cpp, vLLM or Ollama server, or any hosted endpoint that

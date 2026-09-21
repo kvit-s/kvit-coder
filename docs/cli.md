@@ -19,7 +19,7 @@ are for; this file is the reference.
 | `-agent-file <path>` | Append file content to system prompt | - |
 | `-log <path>` | Log file (empty to disable) | `~/.kvit-coder/logs/kvit-coder.log` |
 | `--json` | Structured JSON output to stderr | false |
-| `--structured` | End the turn with a structured report instead of prose ([docs](structured-reports.md)) | false |
+| `--structured` | End the turn with a structured report instead of prose (a validated JSON report; see `Report` in the tool list) | false |
 | `-s <name>` | Continue or create named session | - |
 | `-c` | Continue the most recent session | - |
 | `--yolo` | Read and write anywhere, and run anything that would have asked | false |

@@ -23,9 +23,10 @@ three families take an optional suffix that selects one: `--benchmark muse-spark
 reads `config-muse-spark.yaml`. The suffix also names the run's workspace, so two
 benchmark runs with different suffixes can proceed at the same time.
 
-Most of these configs point at local endpoints from earlier work on small models.
-`config-muse-spark.yaml` is the one that matches the current default in the
-repository root's `config.yaml`.
+Two are kept here as starting points: `config-muse-spark.yaml` for a hosted
+endpoint over OpenAI's Responses API, and `config-qwen3.8-27.yaml` for a model
+served locally over `/chat/completions`. Copy either one and change the `llm:`
+block to benchmark something else.
 
 ## Running
 
