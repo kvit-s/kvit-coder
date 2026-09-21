@@ -58,7 +58,10 @@ const defaultMaxRetries = 10
 type Client struct {
 	baseURL string
 	apiKey  string
-	client  *http.Client
+	// apiKeyEnv is the name of the environment variable the key was read
+	// from, kept only so a rejected request can say which one to set.
+	apiKeyEnv string
+	client    *http.Client
 
 	backend          string
 	headers          map[string]string
@@ -101,6 +104,14 @@ func WithRetryNotice(fn func(attempt, maxAttempts int, delay time.Duration, reas
 
 // Option adjusts a Client at construction time.
 type Option func(*Client)
+
+// WithAPIKeyEnv records which environment variable the key came from, so a
+// 401 can name it. An endpoint that needs no key leaves this empty.
+func WithAPIKeyEnv(name string) Option {
+	return func(c *Client) {
+		c.apiKeyEnv = name
+	}
+}
 
 // WithBackend selects the wire protocol. An empty or unknown value leaves the
 // client on chat completions.
@@ -391,7 +402,7 @@ func (c *Client) postJSON(ctx context.Context, path string, body []byte) ([]byte
 
 		// Check status code - retry on retryable errors
 		if resp.StatusCode != http.StatusOK {
-			lastErr = fmt.Errorf("API error %d: %s", resp.StatusCode, respBody)
+			lastErr = c.statusError(resp.StatusCode, respBody)
 			// Don't retry on permanent 500 errors (validation, template errors)
 			if resp.StatusCode == 500 && isPermanent500Error(respBody) {
 				return nil, false, lastErr
@@ -409,7 +420,28 @@ func (c *Client) postJSON(ctx context.Context, path string, body []byte) ([]byte
 	if lastErr != nil {
 		return nil, false, fmt.Errorf("after %d retries: %w", maxRetries, lastErr)
 	}
-	return nil, false, fmt.Errorf("after %d retries: API error %d: %s", maxRetries, lastStatusCode, lastRespBody)
+	return nil, false, fmt.Errorf("after %d retries: %w", maxRetries, c.statusError(lastStatusCode, lastRespBody))
+}
+
+// statusError describes a request the endpoint refused. For 401 and 403 it
+// adds what to do about it: the provider's own message says the key is missing
+// or wrong in its words, not in terms of this program's configuration, so a
+// first run against a fresh checkout ends in a message that does not say which
+// variable was expected.
+func (c *Client) statusError(status int, body []byte) error {
+	err := fmt.Errorf("API error %d: %s", status, body)
+	if status != http.StatusUnauthorized && status != http.StatusForbidden {
+		return err
+	}
+	switch {
+	case c.apiKey == "" && c.apiKeyEnv != "":
+		return fmt.Errorf("%w (no API key was sent: $%s is not set)", err, c.apiKeyEnv)
+	case c.apiKey == "":
+		return fmt.Errorf("%w (no API key was sent: name the variable holding it in llm.api_key_env)", err)
+	case c.apiKeyEnv != "":
+		return fmt.Errorf("%w (the key in $%s was refused)", err, c.apiKeyEnv)
+	}
+	return err
 }
 
 // GetGenerationStats queries the generation statistics for a given generation ID
@@ -448,7 +480,7 @@ func (c *Client) GetGenerationStats(ctx context.Context, generationID string) (*
 
 	// Check status code
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API error %d: %s", resp.StatusCode, respBody)
+		return nil, c.statusError(resp.StatusCode, respBody)
 	}
 
 	// Parse response

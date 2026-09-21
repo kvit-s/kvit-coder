@@ -337,6 +337,7 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 
 	// Create LLM client
 	llmClient := llm.NewClient(cfg.LLM.BaseURL, cfg.LLM.APIKey,
+		llm.WithAPIKeyEnv(cfg.LLM.APIKeyEnv),
 		llm.WithBackend(cfg.LLM.APIBackend),
 		llm.WithHeaders(cfg.LLMHeaders()),
 		llm.WithReasoningEffort(cfg.LLM.ReasoningEffort),
