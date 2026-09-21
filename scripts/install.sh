@@ -20,10 +20,12 @@ set -euo pipefail
 #   scripts/install.sh --uninstall        remove the links this script made
 #
 # The directory the command runs in becomes the workspace, because
-# workspace.root in config.yaml is ".". The config file itself is found next to
-# the binary the symlink points at, so this checkout's config.yaml stays the one
-# in use; put a file at ~/.kvit-coder/config.yaml to override it everywhere, or
-# a config.yaml in a project directory to override it there.
+# workspace.root is ".". The configuration is found at the first of
+# $KVIT_CODER_CONFIG, ./config.yaml, ~/.kvit-coder/config.yaml, and config.yaml
+# beside the binary with symlinks resolved -- so a config.yaml left in this
+# checkout is picked up everywhere the symlinks are used, which is convenient
+# while working on the program and surprising otherwise. A fresh checkout has
+# none: copy config.example.yaml to ~/.kvit-coder/config.yaml.
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"

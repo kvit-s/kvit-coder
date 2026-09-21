@@ -299,19 +299,19 @@ func TestLLMHeadersRunIDFromEnv(t *testing.T) {
 
 // TestPathWithinRejectsPrefixSiblings pins the containment rule: a directory
 // whose name merely starts with an allowed or denied directory's name is not
-// inside it. The old check was a plain string prefix, so /home/sk/kvit-coder-notes
-// counted as inside /home/sk/kvit-coder and inherited its permissions.
+// inside it. The old check was a plain string prefix, so /home/user/project-notes
+// counted as inside /home/user/project and inherited its permissions.
 func TestPathWithinRejectsPrefixSiblings(t *testing.T) {
 	cases := []struct {
 		parent, child string
 		want          bool
 	}{
-		{"/home/sk/kvit-coder", "/home/sk/kvit-coder", true},
-		{"/home/sk/kvit-coder", "/home/sk/kvit-coder/internal/tools", true},
-		{"/home/sk/kvit-coder", "/home/sk/kvit-coder-notes", false},
-		{"/home/sk/kvit-coder", "/home/sk/kvit-coder-notes/secrets.txt", false},
-		{"/home/sk/kvit-coder", "/home/sk", false},
-		{"/home/sk/kvit-coder", "/home/sk/kvit-coder/../other", false},
+		{"/home/user/project", "/home/user/project", true},
+		{"/home/user/project", "/home/user/project/internal/tools", true},
+		{"/home/user/project", "/home/user/project-notes", false},
+		{"/home/user/project", "/home/user/project-notes/secrets.txt", false},
+		{"/home/user/project", "/home/user", false},
+		{"/home/user/project", "/home/user/project/../other", false},
 		{"/etc", "/etc/passwd", true},
 	}
 	for _, c := range cases {
@@ -325,13 +325,13 @@ func TestPathWithinRejectsPrefixSiblings(t *testing.T) {
 // API a tool actually calls.
 func TestCheckPathPermissionPrefixSibling(t *testing.T) {
 	cfg := &Config{}
-	cfg.Workspace.Root = "/home/sk/kvit-coder"
+	cfg.Workspace.Root = "/home/user/project"
 	cfg.Workspace.PathSafetyMode = "block"
 
-	if res, _ := cfg.CheckPathPermission("/home/sk/kvit-coder/main.go", AccessWrite); res != PermissionGranted {
+	if res, _ := cfg.CheckPathPermission("/home/user/project/main.go", AccessWrite); res != PermissionGranted {
 		t.Errorf("a file inside the workspace was not granted: %v", res)
 	}
-	if res, _ := cfg.CheckPathPermission("/home/sk/kvit-coder-notes/main.go", AccessWrite); res != PermissionDenied {
+	if res, _ := cfg.CheckPathPermission("/home/user/project-notes/main.go", AccessWrite); res != PermissionDenied {
 		t.Errorf("a sibling directory sharing the workspace's name prefix was treated as %v, want denied", res)
 	}
 }

@@ -1,5 +1,4 @@
-# Muse Spark 1.3 on the opencode.ai Go subscription -- the same model and
-# endpoint the `krok` CLI uses (see ~/.krok/config.toml, model "muse-spark-go").
+# Muse Spark 1.3 on the opencode.ai Go subscription.
 #
 # Three things are specific to this endpoint:
 #   * It serves Muse Spark only through OpenAI's Responses API. Asking for the
@@ -9,8 +8,8 @@
 #     unique to this kvit-coder process, so two runs started at the same time
 #     do not land on one backend and compete for the same prompt cache. Set
 #     KVIT_RUN_ID in the environment to pin a value across runs instead.
-#   * The key is the same OPENCODE_API_KEY krok reads from ~/.config/grok/env,
-#     so export it (or source that file) before starting kvit-coder.
+#   * OPENCODE_API_KEY has to be exported before the run; api_key_env below
+#     names it, and a request without it comes back 401.
 llm:
   base_url: "https://opencode.ai/zen/go/v1"
   api_key_env: "OPENCODE_API_KEY"

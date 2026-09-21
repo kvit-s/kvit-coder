@@ -85,8 +85,9 @@ Budget 700 MB for an active session, and note that a Codex session is two proces
 
 ## krok
 
-Three processes, all the same Rust binary at `/home/sk/krok/krok`, a symlink to
-`target/release/xai-grok-pager`.
+krok is another coding agent written by the same author, in Rust, and is not
+published; it is here because it was running at the time and is a useful third
+point of comparison. Three processes, all the same binary.
 
 | PID | RSS | PSS | Swap | Age | State |
 |---|---|---|---|---|---|
@@ -96,9 +97,8 @@ Three processes, all the same Rust binary at `/home/sk/krok/krok`, a symlink to
 
 krok has the widest spread of the four, from 35 MB idle to 435 MB while working a task,
 so a single average is less useful here than the range. The high reading came from a process
-started three minutes before the snapshot against a prompt file under
-`kvit-stow/data/iterations/office-v1/`, which shows the ceiling is set by task size rather
-than by session age. All three processes hold 60–64 threads regardless of how much memory
+started three minutes before the snapshot against a large prompt file, which shows the
+ceiling is set by task size rather than by session age. All three processes hold 60–64 threads regardless of how much memory
 they use.
 
 Budget 250 MB for a typical process and 450 MB for one working a large prompt.

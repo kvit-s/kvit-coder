@@ -1,6 +1,3 @@
-# Sibling worktrees (prevent watching other features)
-../.clauding/worktrees/*
-
 # Benchmark run outputs and runtime directories
 benchmarks/.kvit-coder-benchmark/
 benchmarks/thinkbench/runs/
