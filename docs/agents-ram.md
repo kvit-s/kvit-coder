@@ -6,12 +6,12 @@ with 32 GB of RAM and 16 GB of swap.
 ## Why this measurement exists
 
 Several coding agents run side by side on this one machine — Claude Code, OpenAI's Codex
-CLI, krok, and kvit-coder — alongside a local vLLM inference server and a VS Code remote
+CLI, grok, and kvit-coder — alongside a local vLLM inference server and a VS Code remote
 server. Running many sessions at once is only safe if you know what one session costs, so
 this file records the per-agent cost rather than a single aggregate number.
 
 Everything below is one snapshot of the processes that happened to be running at that
-moment: eight Claude Code sessions, two Codex sessions, three krok processes, and one
+moment: eight Claude Code sessions, two Codex sessions, three grok processes, and one
 kvit-coder user interface with its agent child.
 
 ## Summary: cost of one agent
@@ -20,7 +20,7 @@ kvit-coder user interface with its agent child.
 |---|---|---|---|---|---|
 | Claude Code | 341 MB avg (195–428) | 301 MB avg | 44 MB avg | 1 | Node/V8 |
 | Codex | 261 MB avg (240–281) | 261 MB avg | 456 MB avg | 2 (native + Node wrapper) | Rust, musl static |
-| krok | 221 MB avg (35–435) | 192 MB avg | 16 MB avg | 1 | Rust |
+| grok | 221 MB avg (35–435) | 192 MB avg | 16 MB avg | 1 | Rust |
 | kvit-coder | 27 MB (pair) | 24 MB | 0 | 2 (interface + agent) | Go 1.25.4 |
 
 The three columns measure different things and the gap between them matters here.
@@ -32,7 +32,7 @@ counts against the machine only when the process becomes active again and faults
 
 For capacity planning, the number that matters is resident plus swap, since an idle session
 that wakes up reclaims what was evicted. On that basis: **Claude Code 384 MB, Codex 717 MB,
-krok 237 MB, kvit-coder 27 MB per session.**
+grok 237 MB, kvit-coder 27 MB per session.**
 
 ## Claude Code
 
@@ -83,9 +83,9 @@ are effectively no shared library pages to discount.
 
 Budget 700 MB for an active session, and note that a Codex session is two processes, not one.
 
-## krok
+## grok
 
-krok is another coding agent written by the same author, in Rust, and is not
+grok is another coding agent written by the same author, in Rust, and is not
 published; it is here because it was running at the time and is a useful third
 point of comparison. Three processes, all the same binary.
 
@@ -95,7 +95,7 @@ point of comparison. Three processes, all the same binary.
 | 947594 | 192 MB | 150 MB | 0 | 8 min | active |
 | 1774865 | 35 MB | 32 MB | 48 MB | 26.2 h | idle, mostly evicted |
 
-krok has the widest spread of the four, from 35 MB idle to 435 MB while working a task,
+grok has the widest spread of the four, from 35 MB idle to 435 MB while working a task,
 so a single average is less useful here than the range. The high reading came from a process
 started three minutes before the snapshot against a large prompt file, which shows the
 ceiling is set by task size rather than by session age. All three processes hold 60–64 threads regardless of how much memory
@@ -115,7 +115,7 @@ One user interface process with one agent child, both Go binaries built from
 | **pair** | | **26.8 MB** | **23.8 MB** | **0** | | |
 
 The complete pair costs about 27 MB, roughly a fifteenth of a Claude Code session and an
-eighth of a krok process. Nothing has been evicted to swap, so unlike the Codex figures
+eighth of a grok process. Nothing has been evicted to swap, so unlike the Codex figures
 these need no correction. Both processes hold 14 threads, matching the Go runtime's default
 of one per available core.
 
@@ -153,7 +153,7 @@ alone holds 3.6 GB.
 change the conclusion for Codex. Read `/proc/<pid>/smaps_rollup` instead:
 
 ```bash
-for pid in $(ps -eo pid,comm | awk '$2 ~ /^(claude|codex|krok|kvit-coder|kvit-coder-ui)$/ {print $1}'); do
+for pid in $(ps -eo pid,comm | awk '$2 ~ /^(claude|codex|grok|kvit-coder|kvit-coder-ui)$/ {print $1}'); do
   awk -v p="$pid" -v c="$(cat /proc/$pid/comm)" '
     /^Rss:/{r=$2} /^Pss:/{s=$2} /^Swap:/{w=$2}
     END{printf "%.1f\t%-14s %7s  rss=%.1fMB pss=%.1fMB swap=%.1fMB\n", r/1024, c, p, r/1024, s/1024, w/1024}

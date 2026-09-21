@@ -17,7 +17,7 @@ import (
 // legacy single-model `llm:` block, so old configs behave exactly as before.
 
 // CanonicalEfforts are the reasoning-effort values the Responses backend
-// passes through verbatim (cf. krok's ReasoningEffort enum). The config's
+// passes through verbatim (cf. grok's ReasoningEffort enum). The config's
 // per-model menu is the authority on what is *selectable*; this set is only
 // what is *spellable*.
 var CanonicalEfforts = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}

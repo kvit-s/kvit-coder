@@ -70,7 +70,7 @@ type UI struct {
 	models []config.ModelEntry
 	// currentModel is the index into models; currentEffort overrides that
 	// entry's default ("" = entry default, which is "" for a model with no
-	// menu — the krok "cleared on non-reasoning" rule).
+	// menu — the grok "cleared on non-reasoning" rule).
 	currentModel  int
 	currentEffort string
 	// title writes the terminal's window title, which is also the tab label
@@ -296,7 +296,7 @@ func (u *UI) readInput(card *report.Report) (string, []string, bool, bool, error
 		inputModel.SetCompletionBaseDir(u.cfg.Workspace.Root)
 	}
 	// Alt+V would type √ on macOS, so the paste key is offered everywhere
-	// except darwin — same exclusion krok uses for its Alt+V escape hatch.
+	// except darwin — same exclusion grok uses for its Alt+V escape hatch.
 	if runtime.GOOS != "darwin" {
 		inputModel.SetImagePasteHandler(StageClipboardImage)
 	}
