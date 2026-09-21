@@ -25,7 +25,11 @@ import (
 // loop backtracks over messages that are already written, the discard is
 // recorded as its own line, which keeps the file append-only and leaves the
 // abandoned attempt visible.
-func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *config.Config, systemPrompt string, promptText string, quietMode bool, sess *session.Session, projectInstructions *ProjectInstructions, imagePaths []string) {
+// RunExec returns the error that ended the turn, or nil when the turn
+// finished. The caller turns that into the process's exit status: a turn whose
+// model call failed used to exit 0, which left a wrapper or a CI job unable to
+// tell a failed turn from a successful one.
+func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *config.Config, systemPrompt string, promptText string, quietMode bool, sess *session.Session, projectInstructions *ProjectInstructions, imagePaths []string) error {
 	messages := []llm.Message{
 		{Role: llm.RoleSystem, Content: systemPrompt},
 	}
@@ -167,7 +171,7 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 	if err != nil {
 		writer.Error(fmt.Sprintf("agent error: %v", err))
 		reportPersistent(writer, sess, turnPersistent, quietMode)
-		return
+		return err
 	}
 
 	// The loop has already written its messages; what is left is why it stopped.
@@ -231,6 +235,9 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 	if len(turnKilled) > 0 {
 		writer.Debug(fmt.Sprintf("Stopped %d ephemeral background process(es) at turn end: %s", len(turnKilled), strings.Join(turnKilled, ", ")))
 	}
+	// A turn the loop could not finish has already said why on screen. It is
+	// returned rather than reprinted, so the caller can exit non-zero.
+	return result.Failure
 }
 
 // isWakeTurn reports whether this turn carries no user prompt: the pending

@@ -97,6 +97,11 @@ type RunResult struct {
 	// The run produced no final answer, and without this the caller could not
 	// tell that apart from a model that simply finished.
 	BudgetExhausted bool
+	// Failure is what ended the turn without an answer: a model call that
+	// could not be retried into working, or a response with nothing usable in
+	// it. It has already been reported to the user by the time Run returns;
+	// it is here so the caller can set the process's exit status from it.
+	Failure error
 }
 
 // NewRunner creates a new agent runner
@@ -163,6 +168,9 @@ type runState struct {
 	totalToolTime               time.Duration
 	totalToolCalls              int
 	totalTokens                 int
+	// failure is what ended this turn without an answer, recorded where it
+	// happened so the loop can report it once the loop is over.
+	failure error
 	// persistedUpTo is how much of messages has already reached the session.
 	// Everything after it is what the current iteration has produced.
 	persistedUpTo int
@@ -315,7 +323,8 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 		llmResult, err := r.callLLM(iterCtx, state)
 		if err != nil {
 			iterCancel()
-			budgetExhausted = false
+			// This path returns before result.BudgetExhausted is set from the
+			// local, so it stays false: a failed call is not a used-up budget.
 			result.FinalMessages = state.messages
 			return result, err
 		}
@@ -325,6 +334,7 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 			budgetExhausted = false
 			result.Cancelled = llmResult.cancelled
 			result.TimedOut = llmResult.timedOut
+			result.Failure = state.failure
 			result.FinalMessages = state.messages
 			break
 		}
@@ -343,6 +353,7 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 				continue
 			}
 			budgetExhausted = false
+			result.Failure = state.failure
 			result.FinalMessages = state.messages
 			break
 		}

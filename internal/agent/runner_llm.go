@@ -194,6 +194,7 @@ func (r *Runner) handleLLMError(ctx context.Context, err error, state *runState,
 
 	r.writer.Error(fmt.Sprintf("llm call failed: %s", ui.SingleLine(err.Error(), 160)))
 	r.logger.Error("LLM call failed", err)
+	state.failure = err
 
 	state.agentStats.TotalAgentTime = time.Since(state.requestStartTime)
 	state.agentStats.TotalLLMTime = state.totalLLMTime
@@ -209,6 +210,7 @@ func (r *Runner) processLLMResponse(ctx context.Context, resp *llm.ChatResponse,
 	// Extract assistant message
 	if len(resp.Choices) == 0 {
 		r.writer.Error("no response from model")
+		state.failure = errors.New("no response from model")
 		state.agentStats.TotalAgentTime = time.Since(state.requestStartTime)
 		state.agentStats.TotalLLMTime = state.totalLLMTime
 		state.agentStats.TotalToolTime = state.totalToolTime
@@ -219,6 +221,9 @@ func (r *Runner) processLLMResponse(ctx context.Context, resp *llm.ChatResponse,
 	if resp.Choices[0].Error != nil {
 		retryResult := r.handleProviderError(ctx, resp, state)
 		if retryResult == nil {
+			if state.failure == nil {
+				state.failure = fmt.Errorf("provider error: %s", resp.Choices[0].Error.Message)
+			}
 			return nil, false
 		}
 		resp = retryResult
