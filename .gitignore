@@ -47,3 +47,6 @@ benchmarks/thinkbench/.uv/
 # codebase in every search.
 benchmarks/haystacks/*.txt
 .clauding
+
+# Working notes that are not part of the program
+spec/

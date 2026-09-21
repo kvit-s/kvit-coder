@@ -18,6 +18,7 @@ repository root's `README.md`; these are the documents behind its current shape.
 | [`agents-ram.md`](agents-ram.md) | Measured memory cost of one session of each coding agent on this machine, September 2026. Reference for how many can run at once, not about kvit-coder's design. |
 | [`images.md`](images.md) | Reading an image from a file and pasting one in the composer, built September 2026: message attachments, both wire protocols, session storage, then the TUI producers. |
 | [`oh-my-pi.md`](oh-my-pi.md) | Review of oh-my-pi's tool surface (September 2026, v18.1.15) against kvit-coder's: what to borrow (bash routing, snapshot-tag edits, LSP diagnostics after write, conflict workflow), what to defer, what to skip. A review, not a build plan. |
+| [`cleanup.md`](cleanup.md) | What the public GitHub repository shows a visitor as of September 2026, and what to change before the project is promoted: the eight-month gap between the pushed code and this one, the failing build, the README's shape, the files that should not be tracked, and the defects a new user meets first. A proposal, not a record of work done. |
 
 ## Archive
 
