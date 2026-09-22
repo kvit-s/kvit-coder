@@ -1,5 +1,8 @@
 # kvit-coder
 
+[![Test](https://github.com/kvit-s/kvit-coder/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/kvit-s/kvit-coder/actions/workflows/test.yml)
+[![Release](https://img.shields.io/github/v/release/kvit-s/kvit-coder?sort=semver)](https://github.com/kvit-s/kvit-coder/releases/latest)
+
 A coding agent in Go. Two binaries: `kvit-coder` runs one turn and exits, which is what you
 script against, and `kvit-coder-ui` is the interactive terminal front end.
 A turn is one run of that loop against a single instruction.
