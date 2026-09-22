@@ -48,3 +48,6 @@ jobs:
           # Pinned: "latest" means a linter release can fail the build with no
           # commit behind it. Raise this deliberately.
           version: v1.64.8
+          # The prebuilt v1.64.8 binary was compiled with Go 1.24 and refuses
+          # a module that targets Go 1.25; building it with the job's Go works.
+          install-mode: goinstall
