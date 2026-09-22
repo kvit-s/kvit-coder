@@ -57,6 +57,19 @@ func doneReport() *report.Report {
 	}
 }
 
+// notRunReport is the docs-only turn: a change plus a check that ran nothing.
+func notRunReport() *report.Report {
+	return &report.Report{
+		TaskStatus: report.StatusCompleted,
+		Headline:   "Added docs/screen.png to README.md.",
+		Blocks: []report.Block{
+			{Type: report.BlockChange, ID: "add-screenshot", Summary: "Added docs/screen.png to README.md."},
+			{Type: report.BlockVerification, ID: "no-check", Summary: "No build or test run for a docs-only image link.",
+				Status: report.VerifyNotRun, Limitation: "Markdown render not previewed."},
+		},
+	}
+}
+
 func withCard(rep *report.Report) InputModel {
 	m := NewInputModel(">", nil)
 	m.SetReport(rep)
@@ -429,5 +442,59 @@ func TestAnswerDescribeNamesThePickAndItsEffect(t *testing.T) {
 
 	if got := (*CardAnswer)(nil).Describe(); got != "" {
 		t.Errorf("nil describe is %q, want empty", got)
+	}
+}
+
+// The live card collapses a not_run check to a footnote instead of spending a
+// block on saying nothing ran.
+func TestCardCollapsesNotRunVerification(t *testing.T) {
+	view := withCard(notRunReport()).View()
+	if strings.Contains(view, "Verification [no-check]") {
+		t.Errorf("the card showed the collapsed block:\n%s", view)
+	}
+	if !strings.Contains(view, "1 check not run (hidden)") {
+		t.Errorf("the footnote is missing:\n%s", view)
+	}
+	if !strings.Contains(view, "Change [add-screenshot]") {
+		t.Errorf("the change block went missing with the verification:\n%s", view)
+	}
+}
+
+// A check that ran still shows in full on the card.
+func TestCardKeepsPassedVerification(t *testing.T) {
+	view := withCard(doneReport()).View()
+	if !strings.Contains(view, "Verification [tests]") {
+		t.Errorf("a passed verification was collapsed:\n%s", view)
+	}
+	if strings.Contains(view, "not run (hidden)") {
+		t.Errorf("the footnote appeared with nothing hidden:\n%s", view)
+	}
+}
+
+// 0 reveals the collapsed check, and 0 again hides it.
+func TestZeroRevealsCollapsedNotRun(t *testing.T) {
+	m := withCard(notRunReport())
+	if !strings.Contains(m.View(), "0 details") {
+		t.Fatalf("the footer does not offer 0:\n%s", m.View())
+	}
+	m = press(m, "0")
+	if got := m.View(); !strings.Contains(got, "Verification [no-check]") {
+		t.Errorf("0 did not reveal the collapsed check:\n%s", got)
+	}
+	m = press(m, "0")
+	if got := m.View(); strings.Contains(got, "Verification [no-check]") {
+		t.Errorf("0 did not hide the check again:\n%s", got)
+	}
+}
+
+// The scrollback transcript keeps everything: it is the full record, the card
+// is the quiet one.
+func TestTranscriptKeepsNotRunInFull(t *testing.T) {
+	got := Transcript(notRunReport(), nil)
+	if !strings.Contains(got, "Verification [no-check]") {
+		t.Errorf("the transcript collapsed the block:\n%s", got)
+	}
+	if strings.Contains(got, "not run (hidden)") {
+		t.Errorf("the footnote leaked into the transcript:\n%s", got)
 	}
 }

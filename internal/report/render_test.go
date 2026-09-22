@@ -230,3 +230,108 @@ func TestNilReportRendersNothing(t *testing.T) {
 		t.Error("a nil report claimed to ask something")
 	}
 }
+
+// notRunReport is the docs-only turn from the card-noise complaint: a change
+// plus a verification that ran nothing.
+func notRunReport() *Report {
+	return &Report{
+		TaskStatus: StatusCompleted,
+		Headline:   "Added docs/screen.png to README.md.",
+		Blocks: []Block{
+			{Type: BlockChange, ID: "add-screenshot", Summary: "Added docs/screen.png to README.md."},
+			{Type: BlockVerification, ID: "no-check", Summary: "No build or test run for a docs-only image link.",
+				Status: VerifyNotRun, Limitation: "Markdown render not previewed."},
+		},
+	}
+}
+
+// Without the flag nothing collapses: the old layout is untouched.
+func TestNotRunShowsInFullByDefault(t *testing.T) {
+	text := Render(notRunReport(), Options{})
+	if !strings.Contains(text, "Verification [no-check]") {
+		t.Errorf("the not_run block went missing without HideNotRun:\n%s", text)
+	}
+	if strings.Contains(text, "not run (hidden)") {
+		t.Errorf("the footnote appeared without HideNotRun:\n%s", text)
+	}
+}
+
+// With the flag the block collapses to one dim footnote.
+func TestHideNotRunCollapsesToFootnote(t *testing.T) {
+	text := Render(notRunReport(), Options{HideNotRun: true})
+	if strings.Contains(text, "Verification [no-check]") {
+		t.Errorf("the not_run block was shown despite HideNotRun:\n%s", text)
+	}
+	if !strings.Contains(text, "1 check not run (hidden)") {
+		t.Errorf("the footnote is missing:\n%s", text)
+	}
+	if !strings.Contains(text, "Change [add-screenshot]") {
+		t.Errorf("the change block went missing with the verification:\n%s", text)
+	}
+}
+
+// Two collapsed checks share one footnote line.
+func TestHideNotRunCountsEveryCheck(t *testing.T) {
+	r := notRunReport()
+	r.Blocks = append(r.Blocks, Block{Type: BlockVerification, ID: "no-check-2",
+		Summary: "No second check either.", Status: VerifyNotRun, Limitation: "Nothing ran."})
+	text := Render(r, Options{HideNotRun: true})
+	if !strings.Contains(text, "2 checks not run (hidden)") {
+		t.Errorf("the footnote did not count both checks:\n%s", text)
+	}
+}
+
+// A check that actually ran is never collapsed.
+func TestHideNotRunLeavesPassedAlone(t *testing.T) {
+	text := Render(completedReport(), Options{HideNotRun: true})
+	if !strings.Contains(text, "Verification [unit-tests]") {
+		t.Errorf("a passed verification was collapsed:\n%s", text)
+	}
+	if strings.Contains(text, "not run (hidden)") {
+		t.Errorf("the footnote appeared with nothing hidden:\n%s", text)
+	}
+}
+
+// The transcript and headless output expand everything, so they never collapse.
+func TestHideNotRunExpandAllShowsFull(t *testing.T) {
+	r := notRunReport()
+	text := Render(r, Options{HideNotRun: true, ExpandAll: true})
+	if !strings.Contains(text, "Verification [no-check]") {
+		t.Errorf("ExpandAll still collapsed the block:\n%s", text)
+	}
+	if strings.Contains(text, "not run (hidden)") {
+		t.Errorf("the footnote appeared with everything expanded:\n%s", text)
+	}
+	if got := r.HiddenNotRunCount(Options{HideNotRun: true, ExpandAll: true}); got != 0 {
+		t.Errorf("HiddenNotRunCount with ExpandAll is %d, want 0", got)
+	}
+}
+
+// One expanded block shows in full while its siblings stay collapsed.
+func TestHideNotRunExpandedBlockShowsFull(t *testing.T) {
+	r := notRunReport()
+	opts := Options{HideNotRun: true, Expanded: map[string]bool{"no-check": true}}
+	text := Render(r, opts)
+	if !strings.Contains(text, "Verification [no-check]") {
+		t.Errorf("the expanded block stayed hidden:\n%s", text)
+	}
+	if strings.Contains(text, "not run (hidden)") {
+		t.Errorf("the footnote stayed after the block was expanded:\n%s", text)
+	}
+	if got := r.HiddenNotRunCount(opts); got != 0 {
+		t.Errorf("HiddenNotRunCount with the block expanded is %d, want 0", got)
+	}
+}
+
+func TestHiddenNotRunCount(t *testing.T) {
+	r := notRunReport()
+	if got := r.HiddenNotRunCount(Options{HideNotRun: true}); got != 1 {
+		t.Errorf("HiddenNotRunCount is %d, want 1", got)
+	}
+	if got := r.HiddenNotRunCount(Options{}); got != 0 {
+		t.Errorf("HiddenNotRunCount without the flag is %d, want 0", got)
+	}
+	if got := completedReport().HiddenNotRunCount(Options{HideNotRun: true}); got != 0 {
+		t.Errorf("HiddenNotRunCount on a passed check is %d, want 0", got)
+	}
+}

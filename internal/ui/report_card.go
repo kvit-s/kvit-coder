@@ -95,14 +95,39 @@ func (m *InputModel) cardHolds() bool {
 	return m.cardShowing() && m.card.HasInteractive()
 }
 
+// cardOpts is what the live card draws with: not_run verifications collapse
+// to a one-line footnote, but an expanded block (or everything expanded)
+// still shows in full. The transcript and headless output expand everything
+// and never collapse.
+func (m *InputModel) cardOpts() report.Options {
+	return report.Options{Expanded: m.cardExpanded, HideNotRun: true}
+}
+
+// hiddenNotRun is how many not_run verifications the card is collapsing.
+func (m *InputModel) hiddenNotRun() int {
+	if m.card == nil {
+		return 0
+	}
+	return m.card.HiddenNotRunCount(m.cardOpts())
+}
+
 // anyDetails reports whether any block has details, which decides whether the
-// footer offers the key that shows them.
+// footer offers the key that shows them. Collapsed not_run checks count too:
+// with nothing else to expand, 0 is still the key that reveals them — and
+// while one stands revealed, 0 is the key that hides it again.
 func (m *InputModel) anyDetails() bool {
 	if m.card == nil {
 		return false
 	}
+	if m.hiddenNotRun() > 0 {
+		return true
+	}
 	for i := range m.card.Blocks {
-		if m.card.Blocks[i].Details != "" {
+		b := &m.card.Blocks[i]
+		if b.Details != "" {
+			return true
+		}
+		if b.IsNotRunVerification() && m.cardExpanded[b.ID] {
 			return true
 		}
 	}
@@ -182,16 +207,19 @@ func (m *InputModel) pickOption(n int) (bool, tea.Cmd) {
 }
 
 // toggleAllDetails opens every block's details, or closes them all when any is
-// already open.
+// already open. Collapsed not_run checks ride along: 0 reveals them, and 0
+// again hides them with the details.
 func (m *InputModel) toggleAllDetails() {
 	open := false
 	for i := range m.card.Blocks {
-		if b := &m.card.Blocks[i]; b.Details != "" && m.cardExpanded[b.ID] {
-			open = true
+		if b := &m.card.Blocks[i]; m.cardExpanded[b.ID] {
+			if b.Details != "" || b.IsNotRunVerification() {
+				open = true
+			}
 		}
 	}
 	for i := range m.card.Blocks {
-		if b := &m.card.Blocks[i]; b.Details != "" {
+		if b := &m.card.Blocks[i]; b.Details != "" || b.IsNotRunVerification() {
 			m.cardExpanded[b.ID] = !open
 		}
 	}
@@ -330,12 +358,14 @@ func TranscriptWidth(card *report.Report, ans *CardAnswer, width int) string {
 // report to draw. It is the same layout the agent prints headless, painted,
 // with the numbered options brightened because they are the part you act on,
 // and wrapped to the terminal so nothing runs off the right-hand side.
+// not_run verifications collapse to a footnote here; the transcript keeps
+// them in full.
 func (m InputModel) cardView() string {
 	if !m.cardShowing() {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString(renderCardLines(m.card, report.Options{Expanded: m.cardExpanded}, m.cardWidth()))
+	sb.WriteString(renderCardLines(m.card, m.cardOpts(), m.cardWidth()))
 	sb.WriteString(cardDim.Render(m.cardHint()) + "\n\n")
 	return sb.String()
 }

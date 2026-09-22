@@ -45,6 +45,35 @@ type Options struct {
 	// ExpandAll shows every block's details, which is what a headless run and
 	// the full viewer do.
 	ExpandAll bool
+	// HideNotRun collapses verification blocks that ran nothing into a
+	// one-line footnote, which is what the live card does: the check stays
+	// mandatory, but a docs-only edit no longer spends two lines saying so.
+	// ExpandAll or an entry in Expanded still shows the block in full, and
+	// the scrollback transcript (which expands everything) is unaffected.
+	HideNotRun bool
+}
+
+// IsNotRunVerification reports whether this block is a verification that ran
+// nothing. Those are the rows the live card collapses: required by the
+// validator, noise on the card.
+func (b *Block) IsNotRunVerification() bool {
+	return b != nil && b.Type == BlockVerification && b.Status == VerifyNotRun
+}
+
+// HiddenNotRunCount is how many not_run verifications opts would collapse.
+// The card uses it for its footnote and for offering the expand key even
+// when there are no details to show.
+func (r *Report) HiddenNotRunCount(opts Options) int {
+	if r == nil || !opts.HideNotRun || opts.ExpandAll {
+		return 0
+	}
+	n := 0
+	for i := range r.Blocks {
+		if b := &r.Blocks[i]; b.IsNotRunVerification() && !opts.Expanded[b.ID] {
+			n++
+		}
+	}
+	return n
 }
 
 const indent = "  "
@@ -69,6 +98,13 @@ func Lines(r *Report, opts Options) []Line {
 
 	for _, i := range r.Order() {
 		b := &r.Blocks[i]
+		// A not_run check the card collapses: skip its lines unless the
+		// block was expanded (or everything was). The footnote below keeps
+		// the signal; the transcript and headless output expand everything
+		// and never collapse.
+		if opts.HideNotRun && !opts.ExpandAll && !opts.Expanded[b.ID] && b.IsNotRunVerification() {
+			continue
+		}
 		add := func(kind LineKind, option int, format string, args ...any) {
 			out = append(out, Line{
 				Kind: kind, Block: i, BlockID: b.ID, Option: option,
@@ -91,25 +127,31 @@ func Lines(r *Report, opts Options) []Line {
 				if n > 0 {
 					marker = fmt.Sprintf("%d)", n)
 				}
+
 				line := fmt.Sprintf("%s%s %s", indent, marker, o.Label)
 				if o.ID == b.Recommendation {
 					line += " (recommended)"
 				}
+
 				if o.Description != "" {
 					line += " — " + o.Description
 				}
+
 				add(LineOption, n, "%s", line)
 				if o.Consequence != "" {
 					add(LineOption, n, "%s%s%s", indent, indent+indent, o.Consequence)
 				}
+
 				// The instruction is shown in full: it is what picking the
 				// option will send, and agreeing to something unseen is not a
 				// choice.
+
 				if o.Effect == EffectDispatch && o.Instruction != "" {
 					for _, l := range strings.Split(o.Instruction, "\n") {
 						add(LineInstruction, n, "%s%s→ %s", indent, indent, l)
 					}
 				}
+
 			}
 		}
 
@@ -118,6 +160,20 @@ func Lines(r *Report, opts Options) []Line {
 				add(LineDetails, 0, "%s%s%s", indent, indent, l)
 			}
 		}
+	}
+
+	// One dim line stands in for every collapsed check, so the card stays
+	// honest about what it hid without spending a block per check.
+	if n := r.HiddenNotRunCount(opts); n > 0 {
+		checks := "check"
+		if n > 1 {
+			checks = "checks"
+		}
+		out = append(out, Line{
+			Kind:  LineField,
+			Block: -1,
+			Text:  fmt.Sprintf("%s○ %d %s not run (hidden)", indent, n, checks),
+		})
 	}
 	return out
 }

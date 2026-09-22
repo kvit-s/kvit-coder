@@ -28,6 +28,26 @@ gofmt -l .                # should print nothing
 golangci-lint run ./...   # should print nothing; CI pins the version
 ```
 
+With a Go toolchain and no clone:
+
+```bash
+go install github.com/kvit-s/kvit-coder/cmd/kvit-coder@latest
+go install github.com/kvit-s/kvit-coder/cmd/kvit-coder-ui@latest
+```
+
+That gives the two long names and no configuration; copy `config.example.yaml`
+to `~/.kvit-coder/config.yaml` yourself.
+
+From a clone, which is what to do when changing the program:
+
+```bash
+scripts/build.sh          # both binaries into the repository root
+scripts/install.sh        # and link them from ~/.local/bin
+```
+
+Those links point back into the checkout, so a later `scripts/build.sh` updates
+them and `scripts/install.sh --uninstall` removes them.
+
 There is no `config.yaml` in the repository: copy `config.example.yaml` to
 `~/.kvit-coder/config.yaml` and point it at an endpoint you have.
 `scripts/install.sh` links the binaries you build into `~/.local/bin`, so a

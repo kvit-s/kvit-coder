@@ -131,6 +131,33 @@ Each tool group has `enabled: true/false` plus tool-specific options:
 - **`tasks.collapse`** — Enable context collapsing (stage 2)
 - **`tasks.plan`** — Enable plan-based task tools (stage 3)
 
+### Web search and page fetch
+
+`Web.search` queries the Brave Search API and returns titles, URLs and short
+descriptions. `Web.fetch` reads one page as markdown and needs no key. Both
+are off unless enabled; enabling them lets the agent reach the network:
+
+```yaml
+tools:
+  web:
+    api_key_env: "BRAVE_API_KEY"   # environment variable holding the key
+    search:
+      enabled: true
+    fetch:
+      enabled: true
+```
+
+Then set the key before starting the agent:
+
+```bash
+export BRAVE_API_KEY="your-key"
+```
+
+To get a key, sign up on the Brave Search API page
+(https://brave.com/search/api/), choose a plan (there is a free tier), and
+copy the API key from the dashboard. The key stays in the environment rather
+than in the file because it is usually shared with other programs.
+
 ## `backtrack`
 
 Automatic retry on failed tool calls (disabled by default):

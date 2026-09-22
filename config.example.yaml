@@ -48,3 +48,12 @@ tools:
     enabled: true          # several independent tool calls in one request
   question:
     enabled: true          # let the model ask rather than guess
+  # Web search and page fetching, both off unless enabled. Web.search queries
+  # the Brave Search API and needs an API key; Web.fetch reads one page as
+  # markdown and needs no key.
+  #web:
+  #  api_key_env: "BRAVE_API_KEY"  # environment variable holding the key
+  #  search:
+  #    enabled: true
+  #  fetch:
+  #    enabled: true
