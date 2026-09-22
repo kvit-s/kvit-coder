@@ -18,7 +18,7 @@ agents on the same machine at the same moment: Claude Code averaged 341 MB
 across eight sessions, Codex 261 MB, grok 221 MB. The method and the
 per-process tables are in [`docs/agents-ram.md`](docs/agents-ram.md).
 
-<!-- A terminal recording belongs here, generated from a committed vhs tape. -->
+![kvit-coder-ui running a session](docs/screen.png)
 
 ## Install
 
