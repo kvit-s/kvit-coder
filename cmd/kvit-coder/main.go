@@ -13,22 +13,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/kvit-s/kvit-coder/internal/agent"
 	"github.com/kvit-s/kvit-coder/internal/benchmark"
-	"github.com/kvit-s/kvit-coder/internal/checkpoint"
 	"github.com/kvit-s/kvit-coder/internal/config"
-	ctxtools "github.com/kvit-s/kvit-coder/internal/context"
 	"github.com/kvit-s/kvit-coder/internal/inbox"
-	"github.com/kvit-s/kvit-coder/internal/llm"
-	"github.com/kvit-s/kvit-coder/internal/mcp"
 	"github.com/kvit-s/kvit-coder/internal/permissions"
 	"github.com/kvit-s/kvit-coder/internal/procs"
-	"github.com/kvit-s/kvit-coder/internal/prompt"
 	"github.com/kvit-s/kvit-coder/internal/repl"
 	"github.com/kvit-s/kvit-coder/internal/session"
-	"github.com/kvit-s/kvit-coder/internal/tools"
 	"github.com/kvit-s/kvit-coder/internal/ui"
-	"github.com/kvit-s/kvit-coder/internal/workspace"
 )
 
 // Version info set by ldflags at build time
@@ -215,13 +207,6 @@ func main() {
 		writer.SetHeadless(true)
 	}
 
-	// Initialize logger
-	logger, err := agent.NewLogger(config.ExpandHome(*logFile), false)
-	if err != nil {
-		log.Fatalf("Failed to initialize logger: %v", err)
-	}
-	defer logger.Close()
-
 	// Determine config path - if benchmark mode has a suffix, use config-{suffix}.yaml
 	// Use "." for no suffix (plain benchmark mode)
 	benchmarkEnabled := *benchmarkMode != ""
@@ -254,118 +239,23 @@ func main() {
 		configName = fmt.Sprintf("config-%s.yaml", thinkbenchSuffix)
 	}
 
-	// With no -config, look for the file in the usual places rather than only
-	// in the directory the agent was started from, so it runs from anywhere.
-	actualConfigPath, note, err := config.ResolveNamed(*configPath, configName)
-	if note != "" {
-		fmt.Fprintln(os.Stderr, note)
-	}
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
-
-	// Load config
-	cfg, err := config.Load(actualConfigPath)
-	if err != nil {
-		log.Fatalf("Failed to load config: %v", err)
-	}
-
-	// Set verbose level from config
-	writer.SetVerbose(cfg.LLM.Verbose)
-
-	// Style the final answer as markdown on a terminal (auto by default;
-	// piped output and --json stay raw markdown).
-	writer.SetMarkdownMode(cfg.UI.Markdown)
-
-	// Handle --benchmark-list early
+	// Handle --benchmark-list early: it needs only the config.
 	if *benchmarkList {
+		actualConfigPath, note, err := config.ResolveNamed(*configPath, configName)
+		if note != "" {
+			fmt.Fprintln(os.Stderr, note)
+		}
+		if err != nil {
+			log.Fatalf("%v", err)
+		}
+		cfg, err := config.Load(actualConfigPath)
+		if err != nil {
+			log.Fatalf("Failed to load config: %v", err)
+		}
 		if err := benchmark.ListBenchmarks(cfg); err != nil {
 			log.Fatalf("Failed to list benchmarks: %v", err)
 		}
 		return
-	}
-
-	// Apply flag overrides: the model catalog first (so --model resolves the
-	// full entry, not just the name), then the explicit wire fields, which
-	// win over the entry so a skewed UI/agent config pair still sends the
-	// right endpoint. -m/-e are shorthand for --model/--effort.
-	modelRef := *model
-	if modelRef == "" {
-		modelRef = *modelShort
-	}
-	if !effort.set && effortShort.set {
-		effort = effortShort
-	}
-	resolveModelSelection(cfg, modelRef, effort, *apiBackend, *baseURL)
-	if *agentFile != "" {
-		cfg.Agent.AgentFile = *agentFile
-	}
-	// --yolo drops the workspace boundary for the whole run: every file tool
-	// and every shell command may read and write anywhere, with no prompt and
-	// no warning. It also answers yes to the commands that would otherwise
-	// stop and ask, which is what the flag is for in a run with no terminal —
-	// there an unanswered question is a refusal rather than a pause, so
-	// without this a headless --yolo run fails on the first curl it needs.
-	// What is refused outright stays refused, and so do dd and mkfs, where a
-	// wrong answer cannot be taken back.
-	//
-	// It is set here, before the benchmark overrides below, so a benchmark run
-	// keeps its sandbox whatever the flag says.
-	if *yolo {
-		cfg.Workspace.PathSafetyMode = "allow"
-		cfg.Tools.Shell.AllowWithoutAsking = true
-		writer.Warn("--yolo: full filesystem access, no prompts (dd/mkfs still ask)")
-	}
-
-	// --structured is the only switch for the Report tool, so a scripted run
-	// gets the prose ending it was written against unless it asks for
-	// otherwise, and a caller that wants machine-readable output opts in per
-	// invocation rather than through a config file it may not control.
-	// kvit-coder-ui passes it for every turn it spawns, which is what makes
-	// reports the default there and off here. The config file still supplies
-	// the mode and the limits (tools.report).
-	cfg.Tools.Report.Enabled = *structured
-
-	// Override workspace for benchmark mode - set BEFORE tools are initialized
-	// Store original workspace root for finding benchmarks.yaml
-	originalWorkspaceRoot := cfg.Workspace.Root
-	if benchmarkEnabled {
-		baseDir := filepath.Join(cfg.Workspace.Root, ".kvit-coder-benchmark")
-		// Use workspace-{suffix} when --benchmark {suffix} is specified to allow parallel runs
-		// e.g., --benchmark claude uses workspace-claude, --benchmark gemini uses workspace-gemini
-		if *benchmarkMode != "" {
-			cfg.Workspace.Root = filepath.Join(baseDir, "workspace-"+*benchmarkMode)
-		} else {
-			cfg.Workspace.Root = filepath.Join(baseDir, "workspace")
-		}
-		cfg.Workspace.PathSafetyMode = "block"
-		cfg.Workspace.AllowOutsideWorkspace = false
-
-		// Create workspace directory (needed before checkpoint manager initializes)
-		if err := os.MkdirAll(cfg.Workspace.Root, 0755); err != nil {
-			log.Fatalf("Failed to create benchmark workspace: %v", err)
-		}
-	}
-
-	// Override workspace for thinkbench mode - hard sandbox, set BEFORE tools init.
-	// The run workspace lives under benchmarks/thinkbench/runs/ (gitignored), kept
-	// physically separate from the suite (held-out graders/references).
-	if thinkbenchEnabled {
-		// Anchor the run workspace to the suite location (not cwd) so the harness
-		// runs identically from the repo root or from benchmarks/.
-		_, tbRoot := benchmark.ResolveThinkbench(originalWorkspaceRoot, *thinkbenchSuite, cfg.Thinkbench.SuiteDir)
-		wsName := "workspace"
-		if thinkbenchSuffix != "" {
-			wsName = "workspace-" + thinkbenchSuffix
-		}
-		cfg.Workspace.Root = filepath.Join(tbRoot, "runs", wsName)
-		cfg.Workspace.PathSafetyMode = "block"
-		cfg.Workspace.AllowOutsideWorkspace = false
-		cfg.Workspace.AllowedPaths = nil
-		cfg.Workspace.AllowedReadPaths = nil
-		if err := os.MkdirAll(cfg.Workspace.Root, 0755); err != nil {
-			log.Fatalf("Failed to create thinkbench workspace: %v", err)
-		}
 	}
 
 	// Require -p or a benchmark mode before anything is created on disk.
@@ -373,6 +263,7 @@ func main() {
 	if !execMode && !benchmarkEnabled && !thinkbenchEnabled && *benchHaystack == "" {
 		fmt.Fprintln(os.Stderr, "Usage: kvit-coder -p \"prompt\" [options]")
 		fmt.Fprintln(os.Stderr, "       kvit-coder --benchmark [options]")
+		fmt.Fprintln(os.Stderr, "       kvit-coder acp [options]")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "kvit-coder is a headless agent. Use kvit-coder-ui for interactive mode.")
 		fmt.Fprintln(os.Stderr, "")
@@ -381,372 +272,51 @@ func main() {
 		os.Exit(1)
 	}
 
-	// An interrupt cancels the run rather than killing the process, so the turn
-	// gets to write down what it did before exiting. A second one within two
-	// seconds means the caller wants out now.
-	runCtx, cancelRun := context.WithCancel(context.Background())
-	defer cancelRun()
-	// interruptCtx fires only on a real SIGINT/SIGTERM, never on normal turn
-	// end: runCtx is cancelled by the deferred cancelRun above on every exit,
-	// so a background killer watching runCtx would SIGTERM even the persistent
-	// processes on the way out, racing the process's own exit. Do NOT defer
-	// signalInterrupt here: cancelling interruptCtx on normal exit would fire
-	// the killer below on every turn. The context is dropped at process exit.
-	interruptCtx, signalInterrupt := context.WithCancel(context.Background())
-	installInterruptHandler(cancelRun, signalInterrupt)
-
-	// One agent at a time per working directory, when workspace.lock asks for
-	// it. It is off by default: the lock is held for the whole of a turn, so a
-	// turn that stops to ask a permission question blocks every other agent in
-	// the directory until it is answered, and the second agent dies rather than
-	// waits. Running two agents on one checkout is a normal thing to want.
-	if cfg.Workspace.Lock {
-		workspaceLock, err := workspace.AcquireLock(cfg.Workspace.Root)
-		if err != nil {
-			log.Fatalf("Failed to acquire workspace lock: %v", err)
-		}
-		defer workspaceLock.Release()
+	// -m/-e are shorthand for --model/--effort.
+	modelRef := *model
+	if modelRef == "" {
+		modelRef = *modelShort
+	}
+	if !effort.set && effortShort.set {
+		effort = effortShort
 	}
 
-	// Initialize LLM client
-	llmClient := llm.NewClient(cfg.LLM.BaseURL, cfg.LLM.APIKey,
-		llm.WithAPIKeyEnv(cfg.LLM.APIKeyEnv),
-		llm.WithBackend(cfg.LLM.APIBackend),
-		llm.WithHeaders(cfg.LLMHeaders()),
-		llm.WithReasoningEffort(cfg.LLM.ReasoningEffort),
-		llm.WithEffortField(cfg.LLM.EffortField),
-		llm.WithReasoningSummary(cfg.ReasoningSummaryOrDefault()),
-		llm.WithTimeout(time.Duration(cfg.LLM.RequestTimeout)*time.Second),
-		llm.WithRetryNotice(func(attempt, maxAttempts int, delay time.Duration, reason error) {
-			// Say it out loud. A failed request that is quietly retried looks
-			// exactly like a slow one from the progress indicator, and the
-			// turn can sit there for the timeout times the retry count.
-			writer.Warn(fmt.Sprintf("model request failed (%d/%d), retrying in %s", attempt, maxAttempts, delay.Round(time.Second)))
-		}))
-
-	// Resolve the session before anything that keeps state, because everything
-	// that outlives a turn now lives in the session directory: the checkpoint
-	// repository, spilled tool output, and (from here on) the steering inbox
-	// and background-process records.
-	//
-	// A benchmark run has no session to continue, so it gets an ephemeral one
-	// in a fresh temp directory, removed on exit. That is the lifetime the
-	// checkpoint repository had before, and it keeps one code path.
-	var sess *session.Session
-	var sessionMgr *session.Manager
-	if benchmarkEnabled || thinkbenchEnabled || *benchHaystack != "" {
-		runDir, err := os.MkdirTemp("", "kvit-coder-run-")
-		if err != nil {
-			log.Fatalf("Failed to create run directory: %v", err)
-		}
-		defer os.RemoveAll(runDir)
-		if sess, err = session.OpenDir(runDir); err != nil {
-			log.Fatalf("Failed to create run session: %v", err)
-		}
-	} else {
-		sessionMgr, err = session.NewManager()
-		if err != nil {
-			log.Fatalf("Failed to create session manager: %v", err)
-		}
-		name := *sessionName
-		if name == "" && *continueLast {
-			recent, err := sessionMgr.MostRecent()
-			if err != nil {
-				log.Fatalf("Failed to find the most recent session: %v", err)
-			}
-			if recent == "" {
-				writer.Warn("no previous session to continue; starting a new one")
-			}
-			name = recent
-		}
-		if name == "" {
-			name = sessionMgr.GenerateSessionName()
-		}
-		// Pin the run ID to the session, unless the caller already chose one.
-		// Endpoints that route by a session header then send every turn of
-		// this conversation to the backend that already holds its prompt cache.
-		if os.Getenv(session.RunIDVar) == "" {
-			os.Setenv(session.RunIDVar, session.RunIDFor(name))
-		}
-		if sess, err = sessionMgr.Open(name); err != nil {
-			log.Fatalf("Failed to open session %q: %v", name, err)
-		}
-		sessionUnlock, err := sess.AcquireLock()
-		if err != nil {
-			log.Fatalf("%v", err)
-		}
-		defer sessionUnlock()
-	}
-
-	// The session directory sits outside the workspace and the model is handed
-	// paths into it: spilled tool output in tmp/, its own history, its inbox.
-	// Only tmp/ used to be allowed, and only on the read list, which no shell
-	// command qualifies for because a shell command can write. So the model
-	// asked permission every time it looked at its own output with cat. The
-	// whole session directory now goes on allowed_paths, read and write: it is
-	// the agent's own scratch space, and the workspace root -- the source code
-	// being edited -- is already fully writable without asking.
-	//
-	// A benchmark run keeps the narrower grant. Its workspace is a sandbox with
-	// path_safety_mode=block and both allow lists cleared, and only reading the
-	// spilled output has to survive that.
-	if thinkbenchEnabled {
-		cfg.Workspace.AllowedReadPaths = append(cfg.Workspace.AllowedReadPaths, sess.TmpDir())
-	} else {
-		cfg.Workspace.AllowedPaths = append(cfg.Workspace.AllowedPaths, sess.Dir())
-	}
-
-	// Say which process is running this session's turn, so "kvit-coder steer"
-	// with no -s can find it.
-	endTurn, err := sess.MarkTurnStart()
-	if err != nil {
-		writer.Debug(fmt.Sprintf("Failed to record turn pid: %v", err))
-	}
-	defer endTurn()
-
-	// Processes that outlive the turn are recorded in the session, so a dev
-	// server started in one turn is still serving in the next.
-	procRegistry, err := procs.New(sess.ProcDir())
-	if err != nil {
-		log.Fatalf("Failed to open the process registry: %v", err)
-	}
-	if cfg.Tools.Procs.Enabled && cfg.Tools.Procs.ShouldKillOnExit() {
-		// Deferred, so it runs synchronously on the way out — after RunExec
-		// returns — and the save inside KillAll lands before the process
-		// exits. A fire-and-forget goroutine loses that race: it SIGTERMs and
-		// the turn exits out from under the save, leaving gone/-1 behind.
-		defer killBackgroundOnInterrupt(interruptCtx, procRegistry, sess, writer)()
-	}
-
-	// The inbox is where anything arriving mid-turn waits. The loop drains it
-	// once per iteration.
-	steering := inbox.New(sess.InboxDir())
-	steering.Log = func(msg string) { writer.Warn(msg) }
-	// Progress dots redraw the line they are on, so they must not run while
-	// anyone owns the terminal: a question waiting for an answer, the pause
-	// prompt, or the window between an empty Enter and that prompt, where
-	// type-ahead would otherwise be painted over one dot at a time.
-	writer.SetPromptWatcher(pauseAwareWatcher(steering))
-	interactive := startStdinReader(steering, writer)
-
-	// Initialize temp file manager for shell command outputs. Its files are not
-	// removed at exit: the model may have been given a path to read next turn.
-	tempFileMgr := tools.NewTempFileManager(sess.TmpDir())
-
-	// Initialize MCP (Model Context Protocol) client manager. A no-op when
-	// cfg.MCP.Enabled is false or no servers are configured. Servers that fail
-	// to connect are logged and skipped, never fatal.
-	mcpMgr := mcp.NewManager(cfg.MCP, cfg.Workspace.Root, writer, tempFileMgr)
-	// Remember "ask_once" answers in the session rather than in memory. The
-	// process lives for one turn, so an in-memory map turns ask_once into
-	// ask-once-per-instruction -- painless while nothing is configured, and
-	// unbearable the moment a browser server is, since every click of every
-	// turn would prompt again.
-	if sess != nil {
-		approvals, err := mcp.OpenApprovals(filepath.Join(sess.Dir(), "mcp-approvals.json"))
-		if err != nil {
-			writer.Warn(fmt.Sprintf("mcp: approvals will not be remembered past this turn: %v", err))
-		} else {
-			mcpMgr.SetApprovals(approvals)
-		}
-	}
-	// A server that belongs to a tool group is not dialed here. Its tools are
-	// invisible until the model opens the group, so dialing it at startup would
-	// pay the spawn on every turn -- half a second to two seconds for a browser
-	// server -- to make something available that nothing can call yet.
-	if deferred := cfg.DeferredMCPServers(); len(deferred) > 0 {
-		mcpMgr.Defer(deferred)
-	}
-	if err := mcpMgr.Connect(context.Background()); err != nil {
-		writer.Warn(fmt.Sprintf("mcp: some servers failed to connect: %v", err))
-	}
-	defer mcpMgr.Close()
-	if summary := mcpMgr.Summary(); summary != "" {
-		writer.Debug("MCP: " + summary)
-	}
-
-	// Initialize plan manager
-	planManager := tools.NewPlanManager()
-
-	// Initialize checkpoint manager. Its shadow git repository lives in the
-	// session, so a checkpoint made in one turn is still there in the next.
-	checkpointMgr, err := checkpoint.NewManager(
-		sess.CheckpointsDir(),
-		cfg.Workspace.Root,
-		cfg.Tools.Checkpoint.ExcludedPatterns,
-		cfg.Tools.Checkpoint.MaxFileSizeKB,
-	)
-	if err != nil {
-		log.Fatalf("Failed to create checkpoint manager: %v", err)
-	}
-
-	// Initialize checkpoint infrastructure
-	if err := checkpointMgr.Initialize(); err != nil {
-		writer.Warn(fmt.Sprintf("no checkpoints: %v", err))
-		checkpointMgr.SetEnabled(false)
-	} else {
-		writer.Debug("Checkpoint infrastructure initialized")
-	}
-
-	// Initialize Tasks tools manager (if enabled)
-	var contextMgr *ctxtools.Manager
-	var contextMiddleware *ctxtools.Middleware
-	if cfg.Tools.Tasks.Enabled {
-		var err error
-		contextMgr, err = ctxtools.NewManager(filepath.Join(sess.Dir(), "tasks"), checkpointMgr)
-		if err != nil {
-			writer.Warn(fmt.Sprintf("no tasks: %v", err))
-		} else {
-			if err := contextMgr.Initialize(); err != nil {
-				writer.Warn(fmt.Sprintf("no tasks: %v", err))
-				contextMgr = nil
-			} else {
-				writer.Debug("Tasks tools initialized")
-
-				// Initialize middleware for turn number injection
-				contextMiddleware = ctxtools.NewMiddleware(contextMgr, ctxtools.RuntimeNoticeConfig{
-					TaskWarnTurns:       cfg.Tools.Tasks.TaskWarnTurns,
-					TaskCriticalTurns:   cfg.Tools.Tasks.TaskCriticalTurns,
-					ContextCapacityWarn: cfg.Tools.Tasks.ContextCapacityWarn,
-					MaxNestedDepth:      cfg.Tools.Tasks.MaxNestedDepth,
-					NotifyFileChanges:   cfg.Tools.Tasks.NotifyFileChanges,
-				})
-			}
-		}
-	}
-
-	// Create shared tool context for this session
-	toolCtx := tools.NewToolContext()
-	// Question reads its answer from the same inbox the loop drains, so there
-	// is one input path rather than two contending for stdin.
-	toolCtx.SetInbox(steering)
-	// Permission grants: what has been allowed for this session, this project
-	// and this machine. All three files live under the user's home, never in
-	// the workspace, because a permission file the agent can edit is not one.
-	toolCtx.SetGrantor(openGrants(sess, cfg.Workspace.Root, writer))
-	// A tool that waits for a person must agree with whether one is there.
-	toolCtx.SetInteractive(interactive)
-	// Normalized image copies live in the session, so the next turn finds them.
-	toolCtx.SetSessionTmp(sess.TmpDir())
-
-	// With a line reader running it is the only thing reading the terminal, so
-	// every prompt in the process claims its answer from the inbox rather than
-	// opening the terminal again. Two readers on one terminal is a race for
-	// each keystroke, and the loser waits forever — which is what made a path
-	// confirmation hang while the line you typed was queued as steering.
-	if interactive {
-		ask := func(prompt string) (string, bool) {
-			// runCtx, not the tool's context: waiting for a person is not the
-			// tool being slow, and only an interrupt should end the wait. The
-			// time is recorded so the loop can subtract it from the tool's
-			// own clock.
-			started := time.Now()
-			answer, outcome := steering.Ask(runCtx, os.Stderr, prompt, 0)
-			toolCtx.AddPromptWait(time.Since(started))
-			return answer, outcome == inbox.AskAnswered
-		}
-		config.SetLinePrompter(ask)
-		mcp.SetLinePrompter(ask)
-
-		// Under the front end, a prompt waiting for an answer takes the
-		// window title over. Only under the front end: a headless run has
-		// no long-lived process to put the title back afterwards, so it
-		// leaves the title alone. See installAskTitle.
-		if session.FromUI() {
-			// The same label the front end shows: the session's display
-			// title once it has one, its directory name until then.
-			label := sess.Meta().Title
-			if label == "" {
-				label = sess.Name()
-			}
-			installAskTitle(steering, cfg, os.Stdout, label)
-		}
-	}
-
-	// Setup tool registry using the new setup function
-	// Tool groups: a set of tools the model cannot see until it asks for them.
-	// Each is registered as one tool that returns the group's instructions and
-	// a reference to every member when called with no arguments, and runs a
-	// member when called with one. Members backed by an MCP server are resolved
-	// through the manager, which describes them from its cached tool list and
-	// dials only when something is actually run.
-	var toolGroups []*tools.GroupTool
-	for i, g := range cfg.EnabledToolGroups() {
-		g := g
-		// A server switched off in mcp.servers, or MCP switched off entirely,
-		// leaves nothing for the group to hold. Registering it anyway would
-		// offer the model a tool that can only fail.
-		var servers []string
-		for _, name := range g.MCPServers {
-			if mcpMgr.ServerUsable(name) {
-				servers = append(servers, name)
-			} else {
-				writer.Debug(fmt.Sprintf("tool group %s: server %q is unavailable", g.Name, name))
-			}
-		}
-		if len(servers) == 0 && len(g.Tools) == 0 {
-			writer.Debug(fmt.Sprintf("tool group %s has no available members, skipping", g.Name))
-			continue
-		}
-
-		var source tools.GroupMemberSource
-		if len(servers) > 0 {
-			source = func(ctx context.Context) ([]tools.Tool, error) {
-				return mcpMgr.ToolsForServers(ctx, servers)
-			}
-		}
-		// Ordered after the built-in tools of whichever category they sit in.
-		toolGroups = append(toolGroups, tools.NewGroupTool(
-			g.Name, g.Description, g.Instructions, g.GetCategory(), 900+i, source))
-	}
-
-	registry := tools.SetupRegistry(tools.SetupConfig{
-		Cfg:           cfg,
-		CheckpointMgr: checkpointMgr,
-		ContextMgr:    contextMgr,
-		Logger:        writer, // Writer implements DebugLogger
-		TempFileMgr:   tempFileMgr,
-		PlanManager:   planManager,
-		ToolCtx:       toolCtx,
-		MCPTools:      mcpMgr.Tools(),
-		ToolGroups:    toolGroups,
-		ProcRegistry:  procRegistry,
-	})
-
-	// Generate system prompt using the prompt generator
-	promptGen, err := prompt.NewGenerator(registry, cfg)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
-	}
-	systemPrompt, err := promptGen.GenerateSystemPrompt()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error generating system prompt: %v\n", err)
-		os.Exit(1)
-	}
-	if cfg.Agent.AgentFile != "" {
-		agentContent, err := os.ReadFile(cfg.Agent.AgentFile)
-		if err != nil {
-			log.Fatalf("Failed to read agent file %q: %v", cfg.Agent.AgentFile, err)
-		}
-		systemPrompt += "\n\n" + string(agentContent)
-	}
-
-	// Create agent runner
-	runner := agent.NewRunner(agent.RunnerOptions{
-		Cfg:               cfg,
-		LLMClient:         llmClient,
-		Registry:          registry,
+	// Everything the turn needs, set up the way every turn is (turn.go).
+	turn, err := prepareTurn(turnOptions{
 		Writer:            writer,
-		Logger:            logger,
-		CheckpointMgr:     checkpointMgr,
-		ContextMgr:        contextMgr,
-		ContextMiddleware: contextMiddleware,
-		PlanManager:       planManager,
-		ToolCtx:           toolCtx,
-		Inbox:             steering,
-		Procs:             procRegistry,
+		LogFile:           *logFile,
+		ConfigPath:        *configPath,
+		ConfigName:        configName,
+		ModelRef:          modelRef,
+		Effort:            effort,
+		APIBackend:        *apiBackend,
+		BaseURL:           *baseURL,
+		AgentFile:         *agentFile,
+		Yolo:              *yolo,
+		Structured:        *structured,
+		BenchmarkMode:     *benchmarkMode,
+		HaystackEnabled:   *benchHaystack != "",
+		ThinkbenchEnabled: thinkbenchEnabled,
+		ThinkbenchSuffix:  thinkbenchSuffix,
+		ThinkbenchSuite:   *thinkbenchSuite,
+		SessionName:       *sessionName,
+		ContinueLast:      *continueLast,
+		ReadTerminal:      true,
+		Interrupts:        true,
 	})
+	if err != nil {
+		if promptErr, ok := err.(promptSetupError); ok {
+			fmt.Fprintln(os.Stderr, promptErr.line)
+			os.Exit(1)
+		}
+		log.Fatalf("%v", err)
+	}
+	defer turn.Close()
+	cfg := turn.cfg
+	runner := turn.runner
+	systemPrompt := turn.systemPrompt
+	runCtx := turn.runCtx
+	originalWorkspaceRoot := turn.originalWorkspaceRoot
 
 	// Run benchmark mode if requested
 	if benchmarkEnabled {
@@ -846,7 +416,7 @@ func main() {
 	if !session.FromUI() {
 		writer.StartupInfo(fmt.Sprintf("kvit-coder %s", version))
 		writer.StartupInfo(fmt.Sprintf("Model: %s @ %s", cfg.ModelDisplay(), cfg.LLM.BaseURL))
-		writer.StartupInfo(fmt.Sprintf("Tools: %s", strings.Join(registry.ListTools(), ", ")))
+		writer.StartupInfo(fmt.Sprintf("Tools: %s", strings.Join(turn.registry.ListTools(), ", ")))
 		if *logFile != "" {
 			writer.StartupInfo(fmt.Sprintf("Logs: %s", *logFile))
 		}
@@ -856,8 +426,10 @@ func main() {
 
 	// Run in exec mode (always, since we require -p or --benchmark). A turn
 	// that ended in an error exits non-zero, so whatever started this process
-	// can tell: the error itself has already been printed.
-	if err := repl.RunExec(runCtx, runner, writer, cfg, systemPrompt, promptText, quietMode, sess, projectInstructions, []string(imagePaths)); err != nil {
+	// can tell: the error itself has already been printed. Exiting runs no
+	// deferred call, so the turn is closed first, as returning would.
+	if err := repl.RunExec(runCtx, runner, writer, cfg, systemPrompt, promptText, quietMode, turn.sess, projectInstructions, []string(imagePaths)); err != nil {
+		turn.Close()
 		os.Exit(1)
 	}
 }
