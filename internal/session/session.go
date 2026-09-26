@@ -112,10 +112,13 @@ type Meta struct {
 	// words when no summarizer is configured or its call fails. Set once
 	// at the start of a session (see internal/repl/title.go) and left
 	// alone afterwards; Name stays the YYYY-MM-DD-random6 directory label.
-	Title       string `json:"title,omitempty"`
-	Summary     string `json:"summary,omitempty"`
-	Parent      string `json:"parent,omitempty"`
-	SucceededBy string `json:"succeeded_by,omitempty"`
+	Title string `json:"title,omitempty"`
+	// Cost is what the session's turns have cost so far, summed, as the
+	// endpoint reports it (llm.generation_stats); zero when it reports none.
+	Cost        float64 `json:"cost,omitempty"`
+	Summary     string  `json:"summary,omitempty"`
+	Parent      string  `json:"parent,omitempty"`
+	SucceededBy string  `json:"succeeded_by,omitempty"`
 }
 
 // Session is one open session directory.

@@ -172,6 +172,10 @@ func (r *Runner) executeSingleTool(
 		checkArgs = json.RawMessage(tc.Function.Arguments)
 	}
 
+	if r.toolStart != nil {
+		r.toolStart(internalName, tc)
+	}
+
 	// Run safety checks
 	if err := tool.Check(ctx, checkArgs); err != nil {
 		checkErr := tools.WrapAsSemantic(err)

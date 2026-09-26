@@ -181,15 +181,24 @@ func (m *Manager) ListSessions() ([]SessionInfo, error) {
 // directories, a missing or corrupt meta.json, or a session that predates
 // titles). It never creates or migrates anything: listing must stay read-only.
 func (m *Manager) readMetaTitle(name string) string {
+	if meta := m.ReadMeta(name); meta != nil {
+		return meta.Title
+	}
+	return ""
+}
+
+// ReadMeta returns the named session's meta.json, or nil when it has none or
+// it cannot be read. Like readMetaTitle it never creates or migrates anything.
+func (m *Manager) ReadMeta(name string) *Meta {
 	data, err := os.ReadFile(filepath.Join(m.baseDir, name, metaFile))
 	if err != nil {
-		return ""
+		return nil
 	}
 	var meta Meta
 	if err := json.Unmarshal(data, &meta); err != nil {
-		return ""
+		return nil
 	}
-	return meta.Title
+	return &meta
 }
 
 // SessionTitle returns the named session's display title, or "" when it has

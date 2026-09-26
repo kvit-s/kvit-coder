@@ -76,6 +76,12 @@ type Config struct {
 		AllowedPaths          []string `yaml:"allowed_paths"`
 		AllowedReadPaths      []string `yaml:"allowed_read_paths"`
 		DeniedPaths           []string `yaml:"denied_paths"`
+		// DeniedWritePaths may be read and never written, inside the
+		// workspace or an allowed path as well as outside.
+		DeniedWritePaths []string `yaml:"denied_write_paths"`
+		// ReadOnlyRoot makes the workspace readable only: a file in it is
+		// written only where allowed_paths also names it.
+		ReadOnlyRoot bool `yaml:"read_only_root"`
 	} `yaml:"workspace"`
 
 	Agent AgentConfig `yaml:"agent"`

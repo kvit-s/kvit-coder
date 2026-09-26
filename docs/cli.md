@@ -28,6 +28,44 @@ are for; this file is the reference.
 | `--session-delete <name>` | Delete a session | - |
 | `--version` | Show version info | - |
 
+### kvit-coder acp
+
+`kvit-coder acp [-config <path>] [-log <path>]` runs the agent for an editor or
+another program that speaks the Agent Client Protocol, version 1: JSON-RPC
+messages, one per line, on standard input and standard output. Nothing else is
+written to standard output. What a `-p` run prints for a person goes to
+standard error, and a command the model runs reads nothing from standard input
+and writes its output into its tool result.
+
+- Sessions are kvit-coder sessions, and a session's id is its name.
+  `session/new` makes one whose workspace is the `cwd` the client sends;
+  `session/resume` reopens one; `session/load` reopens it and first sends its
+  history as updates; `session/list` gives the sessions whose workspace is the
+  directory asked about; `session/close` stops its prompt if one runs.
+- Each session has a `model` setting, from the config's `models:` catalogue,
+  and a `thought_level` setting, the chosen model's effort menu, changed with
+  `session/set_config_option` as `--model` and `--effort` change them.
+- Each `session/prompt` is one turn, set up as a `-p` turn is. Its steps arrive
+  as `session/update` notifications: the model's text and reasoning, each tool
+  call with its kind, file and arguments, its result (with a diff when it
+  changed a file), the plan, the session's title, and the context in use with
+  the session's cost so far. The answer gives `end_turn`, `max_turn_requests`
+  when the iteration budget ran out, or `cancelled` after `session/cancel`; a
+  turn that failed is answered with an error giving the reason.
+- A shell command that needs permission, a path outside the workspace, and a
+  Model Context Protocol tool not yet allowed are asked about with
+  `session/request_permission`, offering "Allow once", "Allow for this
+  session" and "Refuse". The answers that would write a permanent grant are
+  not offered.
+- `_meta.systemPrompt` on `session/new`, `session/resume` or `session/load`,
+  a string or an object with `append`, is added to the system prompt as
+  `-agent-file` is. `_meta.kvit.policy` holds what the session may touch:
+  `readable` and `writable` roots, `denied` paths (each with `read` and
+  `write`), and `shell`. It replaces the config's path lists for that session,
+  refuses any path outside them, makes the workspace read-only unless a
+  writable root covers it, and switches off the editing tools when nothing is
+  writable and the shell and background process tools when `shell` is false.
+
 ## kvit-coder-ui
 
 | Flag | Description | Default |

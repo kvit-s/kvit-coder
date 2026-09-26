@@ -69,6 +69,8 @@ cache. Setting `KVIT_RUN_ID` in the environment pins a value instead.
 | `path_safety_mode` | `allow` (what `--yolo` sets), `block`, `warn`, `ask_once` (default), `ask_always` |
 | `allowed_paths` / `allowed_read_paths` | Paths allowed outside workspace |
 | `denied_paths` | Explicitly denied paths |
+| `denied_write_paths` | Paths that may be read and never written, inside the workspace as well |
+| `read_only_root` | The workspace may be read, and written only where `allowed_paths` names (default: `false`) |
 
 ## `agent`
 

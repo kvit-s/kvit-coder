@@ -43,9 +43,20 @@ func (c *Config) CheckPathPermission(path string, accessType AccessType) (Permis
 		}
 	}
 
-	// Check if within workspace root
+	// Paths that may be read and never written, wherever they are.
+	if accessType == AccessWrite {
+		for _, denied := range c.Workspace.DeniedWritePaths {
+			deniedAbs, _ := filepath.Abs(ExpandHome(denied))
+			if pathWithin(deniedAbs, absPath) {
+				return PermissionReadOnly, fmt.Errorf("path is in denied_write_paths")
+			}
+		}
+	}
+
+	// Check if within workspace root. A read-only root is written only where
+	// allowed_paths says, which the check below finds.
 	workspaceAbs, _ := filepath.Abs(c.Workspace.Root)
-	if pathWithin(workspaceAbs, absPath) {
+	if pathWithin(workspaceAbs, absPath) && !(c.Workspace.ReadOnlyRoot && accessType == AccessWrite) {
 		return PermissionGranted, nil
 	}
 
@@ -55,6 +66,10 @@ func (c *Config) CheckPathPermission(path string, accessType AccessType) (Permis
 		if pathWithin(allowedAbs, absPath) {
 			return PermissionGranted, nil
 		}
+	}
+
+	if pathWithin(workspaceAbs, absPath) {
+		return PermissionReadOnly, fmt.Errorf("the workspace is read-only")
 	}
 
 	// Check allowed_read_paths (read-only)

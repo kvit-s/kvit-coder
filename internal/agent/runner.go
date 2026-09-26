@@ -43,6 +43,7 @@ type Runner struct {
 	procs             *procs.Registry
 	persist           func([]llm.Message) error
 	rollback          func(int) error
+	toolStart         func(internalName string, tc llm.ToolCall)
 }
 
 // RunnerOptions contains all dependencies for creating a Runner
@@ -519,6 +520,14 @@ func (r *Runner) flush(state *runState) {
 func (r *Runner) SetPersist(persist func([]llm.Message) error, rollback func(int) error) {
 	r.persist = persist
 	r.rollback = rollback
+}
+
+// SetToolStart installs a function told about each tool call just before its
+// checks and its run, after the model's message naming it has been handed to
+// the persist hook. A question a tool asks while it runs belongs to that
+// call. Passing nil removes it.
+func (r *Runner) SetToolStart(fn func(internalName string, tc llm.ToolCall)) {
+	r.toolStart = fn
 }
 
 // discard tells the session that messages written a moment ago are no longer

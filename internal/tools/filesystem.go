@@ -1123,6 +1123,9 @@ func (t *WriteFileTool) Check(ctx context.Context, args json.RawMessage) error {
 	if err != nil && permResult == config.PermissionDenied {
 		return fmt.Errorf("access denied: %w", err)
 	}
+	if permResult == config.PermissionReadOnly {
+		return fmt.Errorf("path is read-only: %w", err)
+	}
 
 	return nil
 }
@@ -1193,6 +1196,9 @@ func (t *WriteFileTool) Call(ctx context.Context, args json.RawMessage) (any, er
 	permResult, err := t.config.CheckPathPermission(fullPath, config.AccessWrite)
 	if err != nil && permResult == config.PermissionDenied {
 		return nil, fmt.Errorf("access denied: %w", err)
+	}
+	if permResult == config.PermissionReadOnly {
+		return nil, fmt.Errorf("path is read-only: %w", err)
 	}
 
 	// Ensure parent directory exists

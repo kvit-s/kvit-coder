@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/inbox"
 	"github.com/kvit-s/kvit-coder/internal/permissions"
@@ -39,15 +40,19 @@ func (t *ShellAdvancedTool) checkPermissions(command string) error {
 	}
 
 	grantor := t.grantor()
-	if grantor == nil || !t.interactive() {
+	var granted bool
+	switch {
+	case grantor != nil && t.toolCtx.PermissionAsker() != nil:
+		granted = t.askClient(grantor, worst)
+	case grantor == nil || !t.interactive():
 		return fmt.Errorf("%s.\nNo one is here to allow it. Add %q to tools.shell.allowed_commands, "+
 			"or run the command yourself, or work another way",
 			worst.Reason(), worst.Scope.Pattern())
-	}
-
-	granted, err := t.askToGrant(grantor, worst)
-	if err != nil {
-		return err
+	default:
+		var err error
+		if granted, err = t.askToGrant(grantor, worst); err != nil {
+			return err
+		}
 	}
 	if !granted {
 		return fmt.Errorf("%s.\nPermission was refused. Work another way, or say what you need it for",
@@ -151,6 +156,32 @@ func (t *ShellAdvancedTool) askToGrant(grantor *permissions.Grantor, verdict per
 		return false, nil
 	}
 	return t.applyGrant(grantor, verdict, answer, out)
+}
+
+// askClient puts the decision to the program driving this process, which is
+// offered two of the four answers: once, and for the rest of this session.
+// The two that write a grant every later session reads are left out, so a
+// program answering on its own cannot widen what the next session may do.
+func (t *ShellAdvancedTool) askClient(grantor *permissions.Grantor, verdict permissions.Verdict) bool {
+	started := time.Now()
+	answer := t.toolCtx.PermissionAsker()(PermissionRequest{
+		Title:   verdict.Reason(),
+		Pattern: verdict.Scope.Pattern(),
+	})
+	t.toolCtx.AddPromptWait(time.Since(started))
+	scope := permissions.GrantOnce
+	switch answer {
+	case PermissionAllowOnce:
+	case PermissionAllowSession:
+		scope = permissions.GrantSession
+	default:
+		return false
+	}
+	if err := grantor.Grant(scope, verdict.Scope.Pattern()); err != nil {
+		fmt.Fprintf(os.Stderr, "  could not record the grant: %v\n", err)
+		return false
+	}
+	return true
 }
 
 func (t *ShellAdvancedTool) applyGrant(grantor *permissions.Grantor, verdict permissions.Verdict, answer string, out io.Writer) (bool, error) {

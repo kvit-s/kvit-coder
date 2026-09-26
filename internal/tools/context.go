@@ -38,6 +38,12 @@ type ToolContext struct {
 	grantorMu sync.Mutex
 	grantor   *permissions.Grantor
 
+	// asker, when set, is where a permission question goes instead of the
+	// terminal: the program driving this process, which answers with a
+	// button (kvit-coder acp).
+	askerMu sync.Mutex
+	asker   func(PermissionRequest) PermissionAnswer
+
 	// promptWait is how long this process has spent, in total, waiting for a
 	// person to answer a prompt. The agent loop subtracts it from a tool's
 	// elapsed time before deciding the tool timed out: a read that waited two
@@ -110,6 +116,44 @@ func (tc *ToolContext) Grantor() *permissions.Grantor {
 	tc.grantorMu.Lock()
 	defer tc.grantorMu.Unlock()
 	return tc.grantor
+}
+
+// PermissionRequest is a question about one tool call, put to the program
+// driving this process rather than to a person at a terminal.
+type PermissionRequest struct {
+	// Title says what is asked, in one line.
+	Title string
+	// Pattern is what an allowance covers, as a grant records it ("curl *").
+	Pattern string
+}
+
+// PermissionAnswer is what the program answered.
+type PermissionAnswer int
+
+const (
+	PermissionRefused PermissionAnswer = iota
+	PermissionAllowOnce
+	// PermissionAllowSession allows it for the rest of this session.
+	PermissionAllowSession
+)
+
+// SetPermissionAsker sends permission questions to fn rather than to the
+// terminal. Passing nil puts them back on the terminal.
+func (tc *ToolContext) SetPermissionAsker(fn func(PermissionRequest) PermissionAnswer) {
+	tc.askerMu.Lock()
+	defer tc.askerMu.Unlock()
+	tc.asker = fn
+}
+
+// PermissionAsker returns where permission questions go, or nil for the
+// terminal.
+func (tc *ToolContext) PermissionAsker() func(PermissionRequest) PermissionAnswer {
+	if tc == nil {
+		return nil
+	}
+	tc.askerMu.Lock()
+	defer tc.askerMu.Unlock()
+	return tc.asker
 }
 
 // SetInteractive records whether someone is at the terminal to answer a tool

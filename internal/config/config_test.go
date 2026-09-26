@@ -336,6 +336,37 @@ func TestCheckPathPermissionPrefixSibling(t *testing.T) {
 	}
 }
 
+// TestReadOnlyRootWritesOnlyWhereAllowed: a workspace that may only be read
+// is written where allowed_paths names a folder inside it, and a path in
+// denied_write_paths is read and never written, even inside an allowed one.
+func TestReadOnlyRootWritesOnlyWhereAllowed(t *testing.T) {
+	cfg := &Config{}
+	cfg.Workspace.Root = "/home/user/project"
+	cfg.Workspace.PathSafetyMode = "block"
+	cfg.Workspace.ReadOnlyRoot = true
+	cfg.Workspace.AllowedPaths = []string{"/home/user/project/staged"}
+	cfg.Workspace.DeniedWritePaths = []string{"/home/user/project/staged/.git"}
+
+	cases := []struct {
+		path   string
+		access AccessType
+		want   PermissionResult
+	}{
+		{"/home/user/project/main.go", AccessRead, PermissionGranted},
+		{"/home/user/project/main.go", AccessWrite, PermissionReadOnly},
+		{"notes.md", AccessWrite, PermissionReadOnly},
+		{"/home/user/project/staged/main.go", AccessWrite, PermissionGranted},
+		{"/home/user/project/staged/.git/config", AccessRead, PermissionGranted},
+		{"/home/user/project/staged/.git/config", AccessWrite, PermissionReadOnly},
+		{"/home/user/elsewhere/a.go", AccessRead, PermissionDenied},
+	}
+	for _, c := range cases {
+		if got, _ := cfg.CheckPathPermission(c.path, c.access); got != c.want {
+			t.Errorf("%s (write=%v): got %v, want %v", c.path, c.access == AccessWrite, got, c.want)
+		}
+	}
+}
+
 // TestProfileStrongTurnsOffTheWeakModelMachinery: the profile is applied once,
 // at load, so nothing downstream has to consult it.
 func TestProfileStrongTurnsOffTheWeakModelMachinery(t *testing.T) {

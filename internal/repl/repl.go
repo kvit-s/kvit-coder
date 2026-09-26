@@ -30,6 +30,18 @@ import (
 // model call failed used to exit 0, which left a wrapper or a CI job unable to
 // tell a failed turn from a successful one.
 func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *config.Config, systemPrompt string, promptText string, quietMode bool, sess *session.Session, projectInstructions *ProjectInstructions, imagePaths []string) error {
+	result, err := RunTurn(ctx, runner, writer, cfg, systemPrompt, promptText, quietMode, sess, projectInstructions, imagePaths, nil)
+	if err != nil {
+		return err
+	}
+	return result.Failure
+}
+
+// RunTurn is RunExec for a caller that reports the turn somewhere else as
+// well: observe, when set, is handed each batch of messages right after the
+// session has recorded it, which is while the turn runs. It returns the loop's
+// result, or the error that stopped the loop.
+func RunTurn(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *config.Config, systemPrompt string, promptText string, quietMode bool, sess *session.Session, projectInstructions *ProjectInstructions, imagePaths []string, observe func([]llm.Message)) (*agent.RunResult, error) {
 	messages := []llm.Message{
 		{Role: llm.RoleSystem, Content: systemPrompt},
 	}
@@ -144,7 +156,13 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 	if sess != nil {
 		runner.SetPersist(
 			func(batch []llm.Message) error {
-				return sess.AppendMessages(stripProjectInstructions(batch, projectInstructions))
+				if err := sess.AppendMessages(stripProjectInstructions(batch, projectInstructions)); err != nil {
+					return err
+				}
+				if observe != nil {
+					observe(batch)
+				}
+				return nil
 			},
 			sess.Rollback,
 		)
@@ -171,11 +189,19 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 	if err != nil {
 		writer.Error(fmt.Sprintf("agent error: %v", err))
 		reportPersistent(writer, sess, turnPersistent, quietMode)
-		return err
+		return result, err
 	}
 
 	// The loop has already written its messages; what is left is why it stopped.
 	if sess != nil {
+		// The session's cost so far, summed over its turns, so a caller that
+		// starts one process per turn can still report the whole.
+		if cost := result.Stats.TotalCost; cost > 0 {
+			sess.Meta().Cost += cost
+			if err := sess.SaveMeta(); err != nil {
+				writer.Debug(fmt.Sprintf("Failed to write session metadata: %v", err))
+			}
+		}
 		if result.BudgetExhausted {
 			_ = sess.Notice("iteration budget reached without a final answer")
 		}
@@ -236,8 +262,8 @@ func RunExec(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 		writer.Debug(fmt.Sprintf("Stopped %d ephemeral background process(es) at turn end: %s", len(turnKilled), strings.Join(turnKilled, ", ")))
 	}
 	// A turn the loop could not finish has already said why on screen. It is
-	// returned rather than reprinted, so the caller can exit non-zero.
-	return result.Failure
+	// in the result rather than reprinted, so the caller can exit non-zero.
+	return result, nil
 }
 
 // isWakeTurn reports whether this turn carries no user prompt: the pending

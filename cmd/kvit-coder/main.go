@@ -36,6 +36,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "steer" {
 		os.Exit(runSteer(os.Args[2:]))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "acp" {
+		os.Exit(runACP(os.Args[2:]))
+	}
 
 	// Parse flags
 	configPath := flag.String("config", "", "path to config file (default: the first of $KVIT_CODER_CONFIG, ./config.yaml, ~/.kvit-coder/config.yaml, config.yaml beside the binary)")
