@@ -57,6 +57,15 @@ and writes its output into its tool result.
   `session/request_permission`, offering "Allow once", "Allow for this
   session" and "Refuse". The answers that would write a permanent grant are
   not offered.
+- When the client declares `elicitation.form` in `initialize`, the `Question`
+  tool puts each call's questions to it as one `elicitation/create` form, a
+  field per question (`q01`, `q02`, …): a choice for a question with options,
+  several choices for one that takes several, text otherwise, and beside each
+  choice a `<field>_other` text field for an answer in the person's own words.
+  It waits for the answer with no time limit. `decline` tells the model the
+  person chose not to answer, and `cancel` is taken as the turn being stopped.
+  A client that shows no forms gets the behaviour with no terminal: the
+  question waits `tools.question.timeout` seconds in the session's inbox.
 - `_meta.systemPrompt` on `session/new`, `session/resume` or `session/load`,
   a string or an object with `append`, is added to the system prompt as
   `-agent-file` is. `_meta.kvit.policy` holds what the session may touch:

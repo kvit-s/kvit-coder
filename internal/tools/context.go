@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,11 @@ type ToolContext struct {
 	// button (kvit-coder acp).
 	askerMu sync.Mutex
 	asker   func(PermissionRequest) PermissionAnswer
+
+	// formAsker, when set, is where the Question tool puts its questions: the
+	// program driving this process, which shows them as a form.
+	formAskerMu sync.Mutex
+	formAsker   FormAsker
 
 	// promptWait is how long this process has spent, in total, waiting for a
 	// person to answer a prompt. The agent loop subtracts it from a tool's
@@ -154,6 +160,52 @@ func (tc *ToolContext) PermissionAsker() func(PermissionRequest) PermissionAnswe
 	tc.askerMu.Lock()
 	defer tc.askerMu.Unlock()
 	return tc.asker
+}
+
+// FormQuestion is one question of a form.
+type FormQuestion struct {
+	Question string
+	Header   string
+	Options  []FormOption
+	Multi    bool
+}
+
+// FormOption is one choice of a question.
+type FormOption struct {
+	Label       string
+	Description string
+}
+
+// FormReply is what the program answered. Action is "accept", "decline" or
+// "cancel"; for an accepted form, Chosen holds each question's chosen labels
+// and Typed its answer in the person's own words, in the questions' order.
+type FormReply struct {
+	Action string
+	Chosen [][]string
+	Typed  []string
+}
+
+// FormAsker puts questions to the program driving this process and waits for
+// the answer, with no time limit of its own.
+type FormAsker func(ctx context.Context, questions []FormQuestion) (FormReply, error)
+
+// SetFormAsker sends the Question tool's questions to fn rather than to the
+// terminal. Passing nil puts them back on the terminal.
+func (tc *ToolContext) SetFormAsker(fn FormAsker) {
+	tc.formAskerMu.Lock()
+	defer tc.formAskerMu.Unlock()
+	tc.formAsker = fn
+}
+
+// FormAsker returns where the Question tool's questions go, or nil for the
+// terminal.
+func (tc *ToolContext) FormAsker() FormAsker {
+	if tc == nil {
+		return nil
+	}
+	tc.formAskerMu.Lock()
+	defer tc.formAskerMu.Unlock()
+	return tc.formAsker
 }
 
 // SetInteractive records whether someone is at the terminal to answer a tool

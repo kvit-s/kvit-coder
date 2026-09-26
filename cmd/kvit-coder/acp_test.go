@@ -116,8 +116,11 @@ type acpClient struct {
 	// "" for the cancelled outcome.
 	permission func(params map[string]any) string
 	asked      []map[string]any
-	log        *bytes.Buffer
-	done       chan error
+	// form answers elicitation/create with the result to send.
+	form  func(params map[string]any) map[string]any
+	forms []map[string]any
+	log   *bytes.Buffer
+	done  chan error
 }
 
 func startACP(t *testing.T, configPath string) *acpClient {
@@ -216,6 +219,14 @@ func (c *acpClient) wait(id float64) (map[string]any, map[string]any) {
 					outcome = map[string]any{"outcome": "selected", "optionId": option}
 				}
 				c.send(map[string]any{"id": msg["id"], "result": map[string]any{"outcome": outcome}})
+			case method == "elicitation/create":
+				params := msg["params"].(map[string]any)
+				c.forms = append(c.forms, params)
+				result := map[string]any{"action": "cancel"}
+				if c.form != nil {
+					result = c.form(params)
+				}
+				c.send(map[string]any{"id": msg["id"], "result": result})
 			case method == "":
 				if msg["id"] == id {
 					result, _ := msg["result"].(map[string]any)
@@ -302,6 +313,8 @@ const acpTestTools = `tools:
   search:
     enabled: true
   shell:
+    enabled: true
+  question:
     enabled: true
 `
 
@@ -684,5 +697,94 @@ workspace:
 	}
 	if kwargs, _ := request["chat_template_kwargs"].(map[string]any); kwargs["reasoning_effort"] != "low" {
 		t.Errorf("the request asked for effort %v, want low", request["chat_template_kwargs"])
+	}
+}
+
+// TestACPQuestionsAreAskedAsAForm: with a client that shows forms, the
+// Question tool's questions become one elicitation/create, a field per
+// question, and the answer comes back to the model as the tool's result.
+func TestACPQuestionsAreAskedAsAForm(t *testing.T) {
+	f := newACPFixture(t, "")
+	c := startACP(t, f.config)
+	c.call("initialize", map[string]any{
+		"protocolVersion":    1,
+		"clientCapabilities": map[string]any{"elicitation": map[string]any{"form": map[string]any{}}},
+	})
+	id := c.call("session/new", map[string]any{"cwd": f.workspace, "mcpServers": []any{}})["sessionId"].(string)
+	c.form = func(params map[string]any) map[string]any {
+		return map[string]any{"action": "accept", "content": map[string]any{
+			"q01":       "Reuse the wrapper",
+			"q02":       "call it Retry",
+			"q03":       []any{"Linux", "macOS"},
+			"q03_other": "",
+		}}
+	}
+	f.endpoint.script(
+		toolReply("call_ask", "Question", map[string]any{"questions": []any{
+			map[string]any{"question": "Reuse the wrapper or write a new one?", "header": "Retry",
+				"options": []any{map[string]any{"label": "Reuse the wrapper", "description": "already tested"},
+					map[string]any{"label": "Write a new one"}}},
+			map[string]any{"question": "What should it be called?"},
+			map[string]any{"question": "Which systems?", "multi": true,
+				"options": []any{map[string]any{"label": "Linux"}, map[string]any{"label": "macOS"}, map[string]any{"label": "Windows"}}},
+		}}),
+		textReply("Reusing it as Retry."),
+	)
+	c.call("session/prompt", textPrompt(id, "Add retries."))
+
+	if len(c.forms) != 1 {
+		t.Fatalf("got %d forms, want one for the call", len(c.forms))
+	}
+	form := c.forms[0]
+	if form["mode"] != "form" || form["toolCallId"] != "call_ask" || form["sessionId"] != id {
+		t.Errorf("form %v, want mode form for call_ask in %s", form, id)
+	}
+	props := form["requestedSchema"].(map[string]any)["properties"].(map[string]any)
+	first := props["q01"].(map[string]any)
+	if first["type"] != "string" || first["title"] != "Retry" || len(first["oneOf"].([]any)) != 2 {
+		t.Errorf("the first field is %v, want a choice of two titled Retry", first)
+	}
+	if _, ok := props["q01_other"]; !ok {
+		t.Error("the choice has no field for an answer in the person's own words")
+	}
+	if props["q02"].(map[string]any)["type"] != "string" || props["q02"].(map[string]any)["oneOf"] != nil {
+		t.Errorf("the free question is %v, want a plain string", props["q02"])
+	}
+	if props["q03"].(map[string]any)["type"] != "array" {
+		t.Errorf("the question that takes several is %v, want an array", props["q03"])
+	}
+
+	var result struct {
+		Answers []struct {
+			Question string   `json:"question"`
+			Answers  []string `json:"answers"`
+			FreeText string   `json:"free_text"`
+		} `json:"answers"`
+	}
+	for _, m := range f.endpoint.lastRequest()["messages"].([]any) {
+		msg := m.(map[string]any)
+		if msg["role"] == "tool" && msg["tool_call_id"] == "call_ask" {
+			if err := json.Unmarshal([]byte(msg["content"].(string)), &result); err != nil {
+				t.Fatalf("the tool's result is not JSON: %v: %s", err, msg["content"])
+			}
+		}
+	}
+	if len(result.Answers) != 3 ||
+		strings.Join(result.Answers[0].Answers, ",") != "Reuse the wrapper" ||
+		result.Answers[1].FreeText != "call it Retry" ||
+		strings.Join(result.Answers[2].Answers, ",") != "Linux,macOS" {
+		t.Errorf("the tool's result is %+v", result)
+	}
+
+	// Declined, the model is told the person chose not to answer.
+	c.form = func(map[string]any) map[string]any { return map[string]any{"action": "decline"} }
+	f.endpoint.script(
+		toolReply("call_again", "Question", map[string]any{"questions": []any{map[string]any{"question": "Proceed?"}}}),
+		textReply("Proceeding."),
+	)
+	c.call("session/prompt", textPrompt(id, "Go on."))
+	sent, _ := json.Marshal(f.endpoint.lastRequest()["messages"])
+	if !strings.Contains(string(sent), "chose not to answer") {
+		t.Errorf("a declined form did not reach the model as such: %s", sent)
 	}
 }

@@ -79,6 +79,10 @@ type acpAgent struct {
 	// environment; otherwise each prompt sets it from its session.
 	runIDPinned bool
 
+	// forms is set when the client declared that it shows questions as
+	// forms (clientCapabilities.elicitation.form).
+	forms bool
+
 	mu       sync.Mutex
 	sessions map[string]*acpSession
 	// turnMu lets one prompt run at a time in this process.
@@ -184,11 +188,20 @@ func decodeParams(params json.RawMessage, into any) error {
 
 func (a *acpAgent) initialize(params json.RawMessage) (any, error) {
 	var p struct {
-		ProtocolVersion int `json:"protocolVersion"`
+		ProtocolVersion    int `json:"protocolVersion"`
+		ClientCapabilities struct {
+			Elicitation struct {
+				Form json.RawMessage `json:"form"`
+			} `json:"elicitation"`
+		} `json:"clientCapabilities"`
 	}
 	if err := decodeParams(params, &p); err != nil {
 		return nil, err
 	}
+	form := p.ClientCapabilities.Elicitation.Form
+	a.mu.Lock()
+	a.forms = len(form) > 0 && string(form) != "null"
+	a.mu.Unlock()
 	return map[string]any{
 		"protocolVersion": acpProtocolVersion,
 		"agentCapabilities": map[string]any{
@@ -832,6 +845,12 @@ func (a *acpAgent) runPrompt(ctx context.Context, s *acpSession, text string, im
 		calls:     map[string]*reportedCall{},
 	}
 	turn.toolCtx.SetPermissionAsker(r.askShell)
+	a.mu.Lock()
+	forms := a.forms
+	a.mu.Unlock()
+	if forms {
+		turn.toolCtx.SetFormAsker(r.askForm)
+	}
 	config.SetLinePrompter(r.askLine)
 	mcp.SetLinePrompter(r.askLine)
 	defer config.SetLinePrompter(nil)
@@ -986,6 +1005,102 @@ func (r *turnReporter) askLine(prompt string) (string, bool) {
 		return "", false
 	}
 	return "n", true
+}
+
+// askForm puts the Question tool's questions to the client as one form
+// (elicitation/create), a field per question: a choice for a question with
+// options, several for one that takes several, and text otherwise. Beside
+// each choice is a field `<name>_other` for an answer in the person's own
+// words, which is always possible at a terminal. It waits for the answer with
+// no time limit; the prompt being cancelled ends the wait.
+func (r *turnReporter) askForm(ctx context.Context, questions []tools.FormQuestion) (tools.FormReply, error) {
+	properties := map[string]any{}
+	names := make([]string, len(questions))
+	for i, q := range questions {
+		name := fmt.Sprintf("q%02d", i+1)
+		names[i] = name
+		title := q.Header
+		if title == "" {
+			title = fmt.Sprintf("Question %d", i+1)
+		}
+		field := map[string]any{"title": title, "description": q.Question}
+		if len(q.Options) == 0 {
+			field["type"] = "string"
+		} else {
+			entries := make([]map[string]any, 0, len(q.Options))
+			for _, o := range q.Options {
+				entry := map[string]any{"const": o.Label, "title": o.Label}
+				if o.Description != "" {
+					entry["description"] = o.Description
+				}
+				entries = append(entries, entry)
+			}
+			if q.Multi {
+				field["type"] = "array"
+				field["items"] = map[string]any{"anyOf": entries}
+			} else {
+				field["type"] = "string"
+				field["oneOf"] = entries
+			}
+			properties[name+"_other"] = map[string]any{
+				"type":        "string",
+				"title":       "Other",
+				"description": "An answer in your own words.",
+			}
+		}
+		properties[name] = field
+	}
+	message := "A question from the agent."
+	if len(questions) == 1 {
+		message = questions[0].Question
+	} else if len(questions) > 1 {
+		message = fmt.Sprintf("%d questions from the agent.", len(questions))
+	}
+	params := map[string]any{
+		"sessionId":       r.s.id,
+		"mode":            "form",
+		"message":         message,
+		"requestedSchema": map[string]any{"type": "object", "properties": properties},
+	}
+	if r.current != "" {
+		params["toolCallId"] = r.current
+	}
+	var answer struct {
+		Action  string                     `json:"action"`
+		Content map[string]json.RawMessage `json:"content"`
+	}
+	if err := r.a.conn.Call(ctx, "elicitation/create", params, &answer); err != nil {
+		return tools.FormReply{}, err
+	}
+	reply := tools.FormReply{Action: answer.Action}
+	if answer.Action != "accept" {
+		return reply, nil
+	}
+	reply.Chosen = make([][]string, len(questions))
+	reply.Typed = make([]string, len(questions))
+	for i, name := range names {
+		if raw, ok := answer.Content[name]; ok {
+			var one string
+			var several []string
+			switch {
+			case json.Unmarshal(raw, &one) == nil:
+				if len(questions[i].Options) == 0 {
+					reply.Typed[i] = one
+				} else if one != "" {
+					reply.Chosen[i] = []string{one}
+				}
+			case json.Unmarshal(raw, &several) == nil:
+				reply.Chosen[i] = several
+			}
+		}
+		if raw, ok := answer.Content[name+"_other"]; ok {
+			var typed string
+			if json.Unmarshal(raw, &typed) == nil && typed != "" {
+				reply.Typed[i] = typed
+			}
+		}
+	}
+	return reply, nil
 }
 
 // questionTitle makes one line of a question written for a terminal.

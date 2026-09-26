@@ -152,11 +152,16 @@ type QuestionAnswer struct {
 	Dismissed bool `json:"dismissed,omitempty"`
 	// Unanswered is set when nobody answered within the time allowed.
 	Unanswered bool `json:"unanswered,omitempty"`
+	// Declined is set when the person chose not to answer.
+	Declined bool `json:"declined,omitempty"`
 }
 
 // unansweredNote is what the model is told when nobody answered. It says what
 // to do next, because otherwise the model asks the same question again.
 const unansweredNote = "No one answered. Use your judgement, proceed, and state what you assumed."
+
+// declinedNote is what the model is told when the person chose not to answer.
+const declinedNote = "The person chose not to answer. Use your judgement, proceed, and state what you assumed."
 
 func (t *QuestionTool) Check(ctx context.Context, args json.RawMessage) error {
 	var parsed questionArgs
@@ -188,6 +193,12 @@ func (t *QuestionTool) Call(ctx context.Context, args json.RawMessage) (any, err
 		return nil, SemanticErrorf("Question: arguments are not valid JSON: %v", err)
 	}
 
+	// A program driving this process shows every question of the call as
+	// one form.
+	if ask := t.toolCtx.FormAsker(); ask != nil {
+		return t.askForm(ctx, ask, parsed.Questions)
+	}
+
 	box := t.toolCtx.Inbox()
 	answers := make([]QuestionAnswer, 0, len(parsed.Questions))
 
@@ -215,6 +226,60 @@ func (t *QuestionTool) Call(ctx context.Context, args json.RawMessage) (any, err
 			break
 		}
 	}
+	return result, nil
+}
+
+// askForm puts the call's questions to the program driving this process as
+// one form, and waits as long as it takes: someone is there to answer, or the
+// program says the turn is being stopped.
+func (t *QuestionTool) askForm(ctx context.Context, ask FormAsker, specs []questionSpec) (any, error) {
+	questions := make([]FormQuestion, len(specs))
+	for i, spec := range specs {
+		q := FormQuestion{Question: spec.Question, Header: spec.Header, Multi: spec.Multi}
+		for _, opt := range spec.Options {
+			q.Options = append(q.Options, FormOption(opt))
+		}
+		questions[i] = q
+	}
+	started := time.Now()
+	reply, err := ask(ctx, questions)
+	t.toolCtx.AddPromptWait(time.Since(started))
+	if err != nil && ctx.Err() == nil {
+		reply = FormReply{}
+	} else if err != nil {
+		reply = FormReply{Action: "cancel"}
+	}
+
+	answers := make([]QuestionAnswer, len(specs))
+	result := map[string]any{}
+	for i, spec := range specs {
+		answer := QuestionAnswer{Question: spec.Question}
+		switch reply.Action {
+		case "accept":
+			if i < len(reply.Chosen) {
+				answer.Answers = reply.Chosen[i]
+			}
+			if i < len(reply.Typed) {
+				answer.FreeText = strings.TrimSpace(reply.Typed[i])
+			}
+			if len(answer.Answers) == 0 && answer.FreeText == "" {
+				answer.Unanswered = true
+				result["note"] = unansweredNote
+			}
+		case "decline":
+			answer.Declined = true
+			result["note"] = declinedNote
+		case "cancel":
+			// The turn is being stopped, as ctrl-c at the question stops it.
+			answer.Dismissed = true
+			t.toolCtx.RecordDismissedQuestion(spec.Question)
+		default:
+			answer.Unanswered = true
+			result["note"] = unansweredNote
+		}
+		answers[i] = answer
+	}
+	result["answers"] = answers
 	return result, nil
 }
 
