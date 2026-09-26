@@ -18,7 +18,9 @@ import (
 
 	"github.com/kvit-s/kvit-coder/internal/acp"
 	"github.com/kvit-s/kvit-coder/internal/config"
+	"github.com/kvit-s/kvit-coder/internal/inbox"
 	"github.com/kvit-s/kvit-coder/internal/mcp"
+	"github.com/kvit-s/kvit-coder/internal/procs"
 	"github.com/kvit-s/kvit-coder/internal/repl"
 	"github.com/kvit-s/kvit-coder/internal/session"
 	"github.com/kvit-s/kvit-coder/internal/tools"
@@ -85,8 +87,14 @@ type acpAgent struct {
 
 	mu       sync.Mutex
 	sessions map[string]*acpSession
-	// turnMu lets one prompt run at a time in this process.
+	// turnMu lets one prompt run at a time in this process, a pass woken by
+	// a background process included.
 	turnMu sync.Mutex
+	// serveCtx is the connection's: done when the client goes away.
+	serveCtx context.Context
+	// watchers are the goroutines that watch sessions' background processes
+	// between prompts.
+	watchers sync.WaitGroup
 }
 
 func newACPAgent(opts acpOptions) *acpAgent {
@@ -101,8 +109,14 @@ func newACPAgent(opts acpOptions) *acpAgent {
 }
 
 func (a *acpAgent) serve(ctx context.Context, in io.Reader, out io.Writer) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	a.serveCtx = ctx
 	a.conn = acp.NewConn(in, out, a)
-	return a.conn.Serve(ctx)
+	err := a.conn.Serve(ctx)
+	cancel()
+	a.watchers.Wait()
+	return err
 }
 
 // acpSession is what the client has said about one session in this process.
@@ -124,6 +138,11 @@ type acpSession struct {
 	// allowed holds the questions answered "for this session".
 	allowed map[string]bool
 	title   string
+	// tasks are the background processes announced to the client and not
+	// yet reported ended, by registry id; watching is set while a goroutine
+	// watches them between prompts.
+	tasks    map[string]bool
+	watching bool
 }
 
 // ---- requests ------------------------------------------------------------
@@ -148,6 +167,8 @@ func (a *acpAgent) HandleRequest(ctx context.Context, method string, params json
 		return a.setConfigOption(params)
 	case "session/prompt":
 		return a.prompt(ctx, params)
+	case "_session/async_task/stop":
+		return a.stopTask(params)
 	}
 	return nil, acp.Errorf(acp.CodeMethodNotFound, "method not found: %s", method)
 }
@@ -335,7 +356,7 @@ func (a *acpAgent) adopt(id string, p sessionParams) (*acpSession, error) {
 	defer a.mu.Unlock()
 	s := a.sessions[id]
 	if s == nil {
-		s = &acpSession{id: id, allowed: map[string]bool{}}
+		s = &acpSession{id: id, allowed: map[string]bool{}, tasks: map[string]bool{}}
 		a.sessions[id] = s
 	}
 	s.mu.Lock()
@@ -467,6 +488,157 @@ func (a *acpAgent) closeSession(params json.RawMessage) (any, error) {
 		s.cancelPrompt()
 	}
 	return struct{}{}, nil
+}
+
+// stopTask stops a background process the client was told about
+// (`_session/async_task/stop`, the JetBrains extension's request).
+func (a *acpAgent) stopTask(params json.RawMessage) (any, error) {
+	var p struct {
+		SessionID   string `json:"sessionId"`
+		AsyncTaskID string `json:"asyncTaskId"`
+	}
+	if err := decodeParams(params, &p); err != nil {
+		return nil, err
+	}
+	s := a.session(p.SessionID)
+	if s == nil {
+		return nil, acp.Errorf(acp.CodeInvalidParams, "no session %q in this process", p.SessionID)
+	}
+	registry, _, err := sessionProcesses(s.id)
+	if err != nil {
+		return nil, err
+	}
+	if err := registry.Kill(p.AsyncTaskID); err != nil {
+		return nil, acp.Errorf(acp.CodeInvalidParams, "%v", err)
+	}
+	(&turnReporter{a: a, s: s, procs: registry}).reportTasks()
+	return struct{}{}, nil
+}
+
+// sessionProcesses opens a session's background process registry and gives
+// its inbox directory.
+func sessionProcesses(name string) (*procs.Registry, string, error) {
+	mgr, err := session.NewManager()
+	if err != nil {
+		return nil, "", err
+	}
+	sess, err := mgr.Open(name)
+	if err != nil {
+		return nil, "", err
+	}
+	registry, err := procs.New(sess.ProcDir())
+	if err != nil {
+		return nil, "", err
+	}
+	return registry, sess.InboxDir(), nil
+}
+
+// watchTasks watches a session's announced background processes between
+// prompts, while the client is connected, as kcu does between turns: when the
+// registry has something the model asked to hear about (an exit, a pattern
+// matched, a reminder) it is put in the session's inbox and a pass of the loop
+// runs with no prompt, as --wake does, its messages sent as updates outside
+// any prompt. A process's end is reported after the pass it woke, so a client
+// that waits for its tasks sees the model's answer to it first. The watch ends
+// when no announced process runs.
+func (a *acpAgent) watchTasks(s *acpSession) {
+	s.mu.Lock()
+	if s.watching || len(s.tasks) == 0 || a.serveCtx == nil {
+		s.mu.Unlock()
+		return
+	}
+	s.watching = true
+	s.mu.Unlock()
+	a.watchers.Add(1)
+	go func() {
+		defer a.watchers.Done()
+		defer func() {
+			s.mu.Lock()
+			s.watching = false
+			s.mu.Unlock()
+		}()
+		ticker := time.NewTicker(watchInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-a.serveCtx.Done():
+				return
+			case <-ticker.C:
+			}
+			s.mu.Lock()
+			pending, busy := len(s.tasks), s.cancel != nil
+			s.mu.Unlock()
+			if pending == 0 {
+				return
+			}
+			if busy {
+				// A prompt is running; its own loop reads the registry.
+				continue
+			}
+			registry, inboxDir, err := sessionProcesses(s.id)
+			if err != nil {
+				continue
+			}
+			registry.Reconcile()
+			events := registry.Events()
+			wakes := false
+			for _, text := range events {
+				_, _ = inbox.Deliver(inboxDir, inbox.Message{Kind: inbox.KindProcessEvent, Text: text})
+				// Only a process the client was told is running wakes the
+				// model; the others, such as one the prompt's end stopped,
+				// wait in the inbox for the next prompt.
+				s.mu.Lock()
+				_, announced := s.tasks[eventProcess(text)]
+				s.mu.Unlock()
+				wakes = wakes || announced
+			}
+			if wakes {
+				a.wake(s)
+			}
+			(&turnReporter{a: a, s: s, procs: registry}).reportTasks()
+		}
+	}()
+}
+
+// eventProcess is the registry id a process event is about: every event
+// starts "Background process <id>" (procs.Registry.Events).
+func eventProcess(text string) string {
+	rest, ok := strings.CutPrefix(text, "Background process ")
+	if !ok {
+		return ""
+	}
+	if end := strings.IndexAny(rest, " .:\n"); end >= 0 {
+		return rest[:end]
+	}
+	return rest
+}
+
+// watchInterval is how often a session's background processes are looked at
+// between prompts.
+var watchInterval = time.Second
+
+// wake runs a pass of the loop with no prompt, for what a background process
+// said.
+func (a *acpAgent) wake(s *acpSession) {
+	a.turnMu.Lock()
+	defer a.turnMu.Unlock()
+	ctx, cancel := context.WithCancel(a.serveCtx)
+	defer cancel()
+	s.mu.Lock()
+	if s.cancel != nil {
+		s.mu.Unlock()
+		return
+	}
+	s.cancel, s.cancelled = cancel, false
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.cancel = nil
+		s.mu.Unlock()
+	}()
+	if _, err := a.runPrompt(ctx, s, "", nil); err != nil {
+		fmt.Fprintf(a.opts.Log, "kvit-coder acp: a pass woken by a background process failed: %v\n", err)
+	}
 }
 
 // ---- configuration options -------------------------------------------------
@@ -781,7 +953,9 @@ func (a *acpAgent) prompt(ctx context.Context, params json.RawMessage) (any, err
 	if ctx.Err() != nil {
 		return map[string]any{"stopReason": "cancelled"}, nil
 	}
-	return a.runPrompt(ctx, s, text, images)
+	result, err := a.runPrompt(ctx, s, text, images)
+	a.watchTasks(s)
+	return result, err
 }
 
 func (a *acpAgent) runPrompt(ctx context.Context, s *acpSession, text string, images []acpImage) (any, error) {
@@ -841,6 +1015,7 @@ func (a *acpAgent) runPrompt(ctx context.Context, s *acpSession, text string, im
 		registry:  turn.registry,
 		toolCtx:   turn.toolCtx,
 		plans:     turn.planManager,
+		procs:     turn.procRegistry,
 		title:     func() string { return turn.sess.Meta().Title },
 		calls:     map[string]*reportedCall{},
 	}
@@ -872,6 +1047,8 @@ func (a *acpAgent) runPrompt(ctx context.Context, s *acpSession, text string, im
 	}
 
 	result, err := repl.RunTurn(turn.runCtx, turn.runner, writer, turn.cfg, turn.systemPrompt, text, false, turn.sess, instructions, imagePaths, r.observe)
+	// The turn's end stopped the processes started without `persistent`.
+	r.reportTasks()
 	r.sendTitle(turn.sess.Meta().Title)
 	if err != nil {
 		return nil, err

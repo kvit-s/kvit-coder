@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/kvit-s/kvit-coder/internal/llm"
+	"github.com/kvit-s/kvit-coder/internal/procs"
 	"github.com/kvit-s/kvit-coder/internal/tools"
 )
 
@@ -38,6 +39,8 @@ type turnReporter struct {
 	registry  *tools.Registry
 	toolCtx   *tools.ToolContext
 	plans     *tools.PlanManager
+	// procs is the session's background process registry.
+	procs *procs.Registry
 	// title returns the session's title, which the turn sets before the
 	// loop's first call.
 	title func() string
@@ -86,6 +89,7 @@ func (r *turnReporter) observe(batch []llm.Message) {
 		r.message(m, false)
 	}
 	r.sendPlan()
+	r.reportTasks()
 }
 
 // replay sends a session's history, for session/load.
@@ -287,6 +291,79 @@ func (r *turnReporter) finish(m llm.Message, replay bool) {
 		"status":        status,
 		"content":       content,
 	})
+	if call := r.calls[m.ToolCallID]; call != nil && !replay && status == "completed" &&
+		strings.ReplaceAll(call.name, "_", ".") == "Shell.start" {
+		r.announceTask(m.ToolCallID, m.Content)
+	}
+}
+
+// announceTask tells the client about a process Shell.start started, with
+// the JetBrains extension the Claude and Codex adapters speak: its id in the
+// registry, its name, that it can be stopped, the call that started it, and
+// the file its output goes to.
+func (r *turnReporter) announceTask(toolCallID, result string) {
+	var started struct {
+		ID         string `json:"id"`
+		Command    string `json:"command"`
+		Persistent bool   `json:"persistent"`
+	}
+	if json.Unmarshal([]byte(result), &started) != nil || started.ID == "" {
+		return
+	}
+	name := started.Command
+	if r.procs != nil {
+		if info, err := r.procs.Status(started.ID); err == nil && info.Name != "" {
+			name = info.Name
+		}
+	}
+	u := map[string]any{
+		"sessionUpdate": "async_task_spawned",
+		"asyncTaskId":   started.ID,
+		"name":          name,
+		"type":          "shell",
+		"canStop":       true,
+		"toolCallId":    toolCallID,
+	}
+	if r.procs != nil {
+		u["outputFile"] = r.procs.LogPath(started.ID)
+	}
+	r.s.mu.Lock()
+	r.s.tasks[started.ID] = started.Persistent
+	r.s.mu.Unlock()
+	r.update(u)
+}
+
+// reportTasks tells the client which announced processes have ended, and
+// how: completed for an exit status of zero, failed for any other or for a
+// process that vanished, stopped for one kvit-coder killed.
+func (r *turnReporter) reportTasks() {
+	if r.procs == nil {
+		return
+	}
+	r.s.mu.Lock()
+	ids := make([]string, 0, len(r.s.tasks))
+	for id := range r.s.tasks {
+		ids = append(ids, id)
+	}
+	r.s.mu.Unlock()
+	for _, id := range ids {
+		info, err := r.procs.Status(id)
+		if err == nil && info.Running() {
+			continue
+		}
+		state := "failed"
+		switch {
+		case err != nil:
+		case info.State == procs.StateKilled:
+			state = "stopped"
+		case info.State == procs.StateExited && info.ExitCode == 0:
+			state = "completed"
+		}
+		r.s.mu.Lock()
+		delete(r.s.tasks, id)
+		r.s.mu.Unlock()
+		r.update(map[string]any{"sessionUpdate": "async_task_state_update", "asyncTaskId": id, "state": state})
+	}
 }
 
 func sameContent(a, b *string) bool {

@@ -238,6 +238,37 @@ func (c *acpClient) wait(id float64) (map[string]any, map[string]any) {
 	}
 }
 
+// waitForUpdate reads until an update satisfying match arrives, answering
+// requests and keeping every update on the way.
+func (c *acpClient) waitForUpdate(match func(map[string]any) bool) map[string]any {
+	c.t.Helper()
+	for _, u := range c.updates {
+		if match(u) {
+			return u
+		}
+	}
+	// A request id nothing will answer, so wait returns only on timeout;
+	// each update is checked as it is kept.
+	timeout := time.After(30 * time.Second)
+	for {
+		select {
+		case <-timeout:
+			c.t.Fatalf("the update never arrived; updates: %v", c.updates)
+		case msg, ok := <-c.lines:
+			if !ok {
+				c.t.Fatalf("the agent closed its output")
+			}
+			if msg["method"] == "session/update" {
+				u := msg["params"].(map[string]any)["update"].(map[string]any)
+				c.updates = append(c.updates, u)
+				if match(u) {
+					return u
+				}
+			}
+		}
+	}
+}
+
 func (c *acpClient) call(method string, params any) map[string]any {
 	c.t.Helper()
 	result, rpcErr := c.wait(c.start(method, params))
@@ -786,5 +817,101 @@ func TestACPQuestionsAreAskedAsAForm(t *testing.T) {
 	sent, _ := json.Marshal(f.endpoint.lastRequest()["messages"])
 	if !strings.Contains(string(sent), "chose not to answer") {
 		t.Errorf("a declined form did not reach the model as such: %s", sent)
+	}
+}
+
+// TestACPBackgroundProcessesAreAnnouncedAndWakeTheModel: a process Shell.start
+// runs is announced with the JetBrains extension. One started without
+// `persistent` is reported stopped when the prompt ends; a persistent one
+// keeps running, and its end wakes a pass of the loop outside any prompt,
+// whose reply arrives before the process is reported completed.
+func TestACPBackgroundProcessesAreAnnouncedAndWakeTheModel(t *testing.T) {
+	watchInterval = 100 * time.Millisecond
+	defer func() { watchInterval = time.Second }()
+	f := newACPFixture(t, "  procs:\n    enabled: true\n")
+	c := startACP(t, f.config)
+	c.call("initialize", map[string]any{"protocolVersion": 1})
+	id := c.call("session/new", map[string]any{"cwd": f.workspace, "mcpServers": []any{}})["sessionId"].(string)
+
+	f.endpoint.script(
+		toolReply("call_short", "Shell_start", map[string]any{"command": "sleep 30", "name": "idle"}),
+		toolReply("call_long", "Shell_start", map[string]any{"command": "sleep 1; echo built", "name": "build", "persistent": true}),
+		textReply("The build is running."),
+		textReply("The build finished and printed built."),
+	)
+	result := c.call("session/prompt", textPrompt(id, "Start the build."))
+	if result["stopReason"] != "end_turn" {
+		t.Fatalf("stopReason %v", result["stopReason"])
+	}
+	spawned := c.updatesOf("async_task_spawned")
+	if len(spawned) != 2 {
+		t.Fatalf("got %d announcements, want 2: %v", len(spawned), c.updates)
+	}
+	if spawned[1]["toolCallId"] != "call_long" || spawned[1]["type"] != "shell" || spawned[1]["canStop"] != true || spawned[1]["name"] != "build" {
+		t.Errorf("the persistent process was announced as %v", spawned[1])
+	}
+	shortID := spawned[0]["asyncTaskId"]
+	longID := spawned[1]["asyncTaskId"]
+	stopped := false
+	for _, u := range c.updatesOf("async_task_state_update") {
+		if u["asyncTaskId"] == shortID && u["state"] == "stopped" {
+			stopped = true
+		}
+		if u["asyncTaskId"] == longID {
+			t.Errorf("the persistent process was reported ended with the prompt: %v", u)
+		}
+	}
+	if !stopped {
+		t.Errorf("the process started without persistent was not reported stopped: %v", c.updates)
+	}
+
+	before := len(c.updatesOf("agent_message_chunk"))
+	c.waitForUpdate(func(u map[string]any) bool {
+		return u["sessionUpdate"] == "async_task_state_update" && u["asyncTaskId"] == longID
+	})
+	chunks := c.updatesOf("agent_message_chunk")
+	if len(chunks) != before+1 || chunks[len(chunks)-1]["content"].(map[string]any)["text"] != "The build finished and printed built." {
+		var kinds []string
+		for _, u := range c.updates {
+			kinds = append(kinds, fmt.Sprintf("%v/%v/%v", u["sessionUpdate"], u["asyncTaskId"], u["state"]))
+			if content, ok := u["content"].(map[string]any); ok {
+				kinds = append(kinds, fmt.Sprint(content["text"]))
+			}
+		}
+		t.Errorf("the model's answer to the process ending did not come before the end was reported: %v", kinds)
+	}
+	last := c.updatesOf("async_task_state_update")
+	if final := last[len(last)-1]; final["state"] != "completed" {
+		t.Errorf("the persistent process ended as %v, want completed", final)
+	}
+	sent, _ := json.Marshal(f.endpoint.lastRequest()["messages"])
+	if !strings.Contains(string(sent), "built") {
+		t.Errorf("the pass was not told what the process printed: %s", sent)
+	}
+}
+
+// TestACPStopsABackgroundProcessOnRequest: `_session/async_task/stop` ends
+// an announced process, which is then reported stopped.
+func TestACPStopsABackgroundProcessOnRequest(t *testing.T) {
+	f := newACPFixture(t, "  procs:\n    enabled: true\n")
+	c := startACP(t, f.config)
+	c.call("initialize", map[string]any{"protocolVersion": 1})
+	id := c.call("session/new", map[string]any{"cwd": f.workspace, "mcpServers": []any{}})["sessionId"].(string)
+	f.endpoint.script(
+		toolReply("call_serve", "Shell_start", map[string]any{"command": "sleep 60", "name": "server", "persistent": true}),
+		textReply("The server is up."),
+	)
+	c.call("session/prompt", textPrompt(id, "Start the server."))
+	spawned := c.updatesOf("async_task_spawned")
+	if len(spawned) != 1 {
+		t.Fatalf("got %d announcements: %v", len(spawned), c.updates)
+	}
+	task := spawned[0]["asyncTaskId"]
+	c.call("_session/async_task/stop", map[string]any{"sessionId": id, "asyncTaskId": task})
+	u := c.waitForUpdate(func(u map[string]any) bool {
+		return u["sessionUpdate"] == "async_task_state_update" && u["asyncTaskId"] == task
+	})
+	if u["state"] != "stopped" {
+		t.Errorf("the process ended as %v, want stopped", u["state"])
 	}
 }
