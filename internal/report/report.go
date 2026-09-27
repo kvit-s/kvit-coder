@@ -187,8 +187,7 @@ type Block struct {
 	RelatedFiles   []string `json:"related_files,omitempty"`
 
 	// finding
-	Importance        string `json:"importance,omitempty"`
-	BlocksCurrentTask *bool  `json:"blocks_current_task,omitempty"`
+	Importance string `json:"importance,omitempty"`
 
 	// check
 	Status           string `json:"status,omitempty"`
@@ -488,10 +487,7 @@ func JSONSchema(maxBlocks int) map[string]any {
 
 			"related_files": map[string]any{"type": "array", "description": "Workspace-relative paths this block is about.", "items": map[string]any{"type": "string"}},
 
-			"importance": enum("Required on 'finding': how much it matters.", Levels),
-
-			"blocks_current_task": map[string]any{"type": "boolean",
-				"description": "Required on 'finding': whether it stops the current task."},
+			"importance": enum("Optional on 'finding': how much it matters, when that is worth saying.", Levels),
 
 			"status": enum("Required on 'check': how the check went.", CheckStatuses),
 

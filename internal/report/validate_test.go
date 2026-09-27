@@ -309,12 +309,27 @@ func TestUnclassifiedMustSayWhy(t *testing.T) {
 	}
 }
 
-func TestFindingNeedsItsFields(t *testing.T) {
+func TestFindingNeedsAnImpact(t *testing.T) {
 	r := completedReport()
 	r.Blocks = append(r.Blocks, Block{Type: BlockFinding, ID: "root-cause", Summary: "The retry loop never terminates."})
 	ps := Validate(r, Rules{Mutated: true})
 	if !hasCode(ps, "field_required") {
-		t.Errorf("a finding with no impact or importance was accepted: %v", codes(ps))
+		t.Errorf("a finding with no impact was accepted: %v", codes(ps))
+	}
+}
+
+// importance is optional on a finding, but when it is given it is one of the
+// levels, so the card can sort findings by it.
+func TestFindingImportanceIsOptional(t *testing.T) {
+	r := completedReport()
+	r.Blocks = append(r.Blocks, Block{Type: BlockFinding, ID: "root-cause",
+		Summary: "The retry loop never terminates.", Impact: "Any call with an empty queue hangs the turn."})
+	if ps := Validate(r, Rules{Mutated: true}); len(ps) != 0 {
+		t.Fatalf("a finding with no importance was rejected: %v", codes(ps))
+	}
+	r.Blocks[1].Importance = "urgent"
+	if !hasCode(Validate(r, Rules{Mutated: true}), "field_unknown_value") {
+		t.Error("a finding with an unknown importance was accepted")
 	}
 }
 
@@ -350,16 +365,14 @@ func TestFormatProblemsLeadsWithTheMarker(t *testing.T) {
 // block. Demanding one is what pushes the explanation into a block that
 // verified nothing.
 func TestReadOnlyTurnNeedsNoCheck(t *testing.T) {
-	blocking := false
 	r := &Report{
 		TaskStatus: StatusCompleted,
 		Headline:   "The retry loop never terminates when the queue is empty.",
 		Blocks: []Block{{
 			Type: BlockFinding, ID: "root-cause",
-			Summary:           "drain() loops forever because the empty case never returns.",
-			Impact:            "Any call with an empty queue hangs the turn.",
-			Importance:        "high",
-			BlocksCurrentTask: &blocking,
+			Summary:    "drain() loops forever because the empty case never returns.",
+			Impact:     "Any call with an empty queue hangs the turn.",
+			Importance: "high",
 		}},
 	}
 	if ps := Validate(r, Rules{Mutated: false}); len(ps) != 0 {

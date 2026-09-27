@@ -194,13 +194,7 @@ func blockFields(b *Block, detailsHidden bool) []string {
 		add("Impact", b.Impact)
 	case BlockFinding:
 		add("Impact", b.Impact)
-		if b.Importance != "" {
-			line := "Importance: " + b.Importance
-			if b.BlocksCurrentTask != nil && *b.BlocksCurrentTask {
-				line += " (blocks this task)"
-			}
-			out = append(out, line)
-		}
+		add("Importance", b.Importance)
 		add("Recommendation", b.Recommendation)
 	case BlockCheck:
 		add("Evidence", b.Evidence)

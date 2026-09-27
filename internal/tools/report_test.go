@@ -198,7 +198,7 @@ func TestReportCheckRuleFollowsTheTurn(t *testing.T) {
 	  "task_status": "completed",
 	  "headline": "The retry loop never terminates when the queue is empty.",
 	  "blocks": [{"type":"finding","id":"root-cause","summary":"drain() never returns on an empty queue.",
-	    "impact":"Any call with an empty queue hangs the turn.","importance":"high","blocks_current_task":false}]
+	    "impact":"Any call with an empty queue hangs the turn.","importance":"high"}]
 	}`)
 
 	tool, _ := newReportTool(t)

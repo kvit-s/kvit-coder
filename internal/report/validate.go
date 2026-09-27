@@ -211,10 +211,8 @@ func checkBlock(r *Report, i int, seen map[string]int) []Problem {
 	switch b.Type {
 	case BlockFinding:
 		ps = append(ps, required(at, "impact", b.Impact, "why this finding matters for the task")...)
-		ps = append(ps, oneOf(at, "importance", b.Importance, Levels)...)
-		if b.BlocksCurrentTask == nil {
-			ps = append(ps, Problem{Path: at("blocks_current_task"), Code: "field_required",
-				Message: "A finding says whether it blocks the current task: set blocks_current_task to true or false."})
+		if b.Importance != "" {
+			ps = append(ps, oneOf(at, "importance", b.Importance, Levels)...)
 		}
 	case BlockCheck:
 		ps = append(ps, oneOf(at, "status", b.Status, CheckStatuses)...)
