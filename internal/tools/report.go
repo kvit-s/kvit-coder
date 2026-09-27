@@ -135,11 +135,16 @@ End every turn that %s with one Report call, as the last thing you do: the turn
 ends when the report is accepted, so say everything in the report rather than
 after it. Do not call it twice.
 
-A report is a status, a one-sentence headline, and typed blocks. The user reads
-the headline first, then the what's-next actions, then the bullet summaries,
-and almost never opens details — so the headline carries the material fact on
-its own, summaries stand alone, and nothing the user must act on lives only in
-details.
+A report is a status, a one-sentence headline, and typed blocks. The card
+the user sees shows the headline, then "What happened": one row per change,
+finding, warning and check, showing only its summary, with every other field
+and the details folded away until the user opens them. Then "Your call": each
+question and next shows its summary, "Recommended because:" with your reason,
+the option labels side by side, and what the recommended option sends. So the
+headline carries the material fact on its own, each summary is about one line
+(90 characters) and states its fact without the folded fields, option labels
+are two to four words, the reason and each instruction are one sentence, and
+nothing the user must act on lives only in details.
 
 Rules the schema cannot enforce for you:
 
@@ -161,6 +166,9 @@ Rules the schema cannot enforce for you:
   its label as the answer. "resolve" tells you nothing, so use it only for an
   option that means stopping without an answer.
 - A "blocked" report says what stops the work in a warning or finding.
+- When part of the work could not be checked — the program was not run, or
+  only the user can see the result — make that a "partial" or "not_run"
+  check, and when the check can be done, propose it as a "next" block.
 - "unclassified" is an escape hatch for something you must say that fits no
   other type. Do not use it routinely.
 - When there is an obvious continuation the user will likely ask for next

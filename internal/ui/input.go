@@ -1020,7 +1020,7 @@ func (m InputModel) View() string {
 		out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(
 			fmt.Sprintf("[%s: %s]", "image"+itoa(i+1), p))
 	}
-	return out
+	return out + m.cardFooter()
 }
 
 // completionView renders the completion list (or the "no match"

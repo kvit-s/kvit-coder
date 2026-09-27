@@ -286,7 +286,8 @@ func TestShortPromptTeachesNextBlocks(t *testing.T) {
 	for _, want := range []string{
 		`"next"`,
 		"one per proposal",
-		"almost never opens details",
+		"What happened",
+		"two to four words",
 		"needs_action",
 	} {
 		if !strings.Contains(section, want) {

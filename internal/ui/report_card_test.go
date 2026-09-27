@@ -98,7 +98,7 @@ func TestCardIsDrawnAboveThePrompt(t *testing.T) {
 	if !strings.Contains(view, "Implement reordering while preserving") {
 		t.Errorf("the instruction is not shown in full:\n%s", view)
 	}
-	if !strings.Contains(view, "1-3 answer") {
+	if !strings.Contains(view, "1-3 pick an option") {
 		t.Errorf("the key hint is missing:\n%s", view)
 	}
 }
@@ -288,10 +288,10 @@ func TestDigitsReachEveryBlocksOptions(t *testing.T) {
 		t.Fatalf("the report offers %d numbered choices, want 5", got)
 	}
 	view := withCard(rep).View()
-	if !strings.Contains(view, "4) Yes") {
+	if !strings.Contains(view, "[4] Yes") {
 		t.Errorf("the second block's options were not numbered on from the first:\n%s", view)
 	}
-	if !strings.Contains(view, "1-5 answer") {
+	if !strings.Contains(view, "1-5 pick an option") {
 		t.Errorf("the footer does not offer every option:\n%s", view)
 	}
 
@@ -349,7 +349,7 @@ func widest(text string) int {
 func TestCardWrapsToTheTerminal(t *testing.T) {
 	m := withCard(longReport())
 	mod, _ := m.Update(tea.WindowSizeMsg{Width: 90, Height: 40})
-	m = mod.(InputModel)
+	m = press(mod.(InputModel), "0")
 
 	view := m.cardView()
 	if got := widest(view); got > 90 {
@@ -449,13 +449,13 @@ func TestAnswerDescribeNamesThePickAndItsEffect(t *testing.T) {
 // block on saying nothing ran.
 func TestCardCollapsesNotRunCheck(t *testing.T) {
 	view := withCard(notRunReport()).View()
-	if strings.Contains(view, "Check [no-check]") {
+	if strings.Contains(view, "○ No build or test run") {
 		t.Errorf("the card showed the collapsed block:\n%s", view)
 	}
 	if !strings.Contains(view, "1 check not run (hidden)") {
 		t.Errorf("the footnote is missing:\n%s", view)
 	}
-	if !strings.Contains(view, "Change [add-screenshot]") {
+	if !strings.Contains(view, "δ Added docs/screen.png") {
 		t.Errorf("the change block went missing with the check:\n%s", view)
 	}
 }
@@ -463,7 +463,7 @@ func TestCardCollapsesNotRunCheck(t *testing.T) {
 // A check that ran still shows in full on the card.
 func TestCardKeepsPassedCheck(t *testing.T) {
 	view := withCard(doneReport()).View()
-	if !strings.Contains(view, "Check [tests]") {
+	if !strings.Contains(view, "✓ 14 tests pass") {
 		t.Errorf("a passed check was collapsed:\n%s", view)
 	}
 	if strings.Contains(view, "not run (hidden)") {
@@ -474,15 +474,15 @@ func TestCardKeepsPassedCheck(t *testing.T) {
 // 0 reveals the collapsed check, and 0 again hides it.
 func TestZeroRevealsCollapsedNotRun(t *testing.T) {
 	m := withCard(notRunReport())
-	if !strings.Contains(m.View(), "0 expand") {
+	if !strings.Contains(m.View(), "0 open or close details") {
 		t.Fatalf("the footer does not offer 0:\n%s", m.View())
 	}
 	m = press(m, "0")
-	if got := m.View(); !strings.Contains(got, "Check [no-check]") {
+	if got := m.View(); !strings.Contains(got, "○ No build or test run") {
 		t.Errorf("0 did not reveal the collapsed check:\n%s", got)
 	}
 	m = press(m, "0")
-	if got := m.View(); strings.Contains(got, "Check [no-check]") {
+	if got := m.View(); strings.Contains(got, "○ No build or test run") {
 		t.Errorf("0 did not hide the check again:\n%s", got)
 	}
 }
@@ -491,7 +491,7 @@ func TestZeroRevealsCollapsedNotRun(t *testing.T) {
 // is the quiet one.
 func TestTranscriptKeepsNotRunInFull(t *testing.T) {
 	got := Transcript(notRunReport(), nil)
-	if !strings.Contains(got, "Check [no-check]") {
+	if !strings.Contains(got, "○ No build or test run") {
 		t.Errorf("the transcript collapsed the block:\n%s", got)
 	}
 	if strings.Contains(got, "not run (hidden)") {
@@ -525,13 +525,13 @@ func longInstructionReport() *report.Report {
 func TestCardCutsInstructionsToOneLine(t *testing.T) {
 	m := withCard(longInstructionReport())
 	view := m.View()
-	if !strings.Contains(view, "→ Replace screen.gif") || !strings.Contains(view, "…") {
+	if !strings.Contains(view, "Sends: Replace screen.gif") || !strings.Contains(view, "…") {
 		t.Fatalf("the instruction was not cut to one marked line:\n%s", view)
 	}
 	if strings.Contains(view, "keeping the same filename") {
 		t.Errorf("the end of the instruction is still on the card:\n%s", view)
 	}
-	if !strings.Contains(view, "0 expand") {
+	if !strings.Contains(view, "0 open or close details") {
 		t.Errorf("the card does not offer the key that shows the full instruction:\n%s", view)
 	}
 
@@ -569,5 +569,34 @@ func TestPickingAnAnswerSendsIt(t *testing.T) {
 	}
 	if got := m.Value(); got != "[report filtered] Preserve hidden positions" {
 		t.Errorf("picking the answer sent %q", got)
+	}
+}
+
+// A row of what happened shows only its summary, marked when more is folded
+// under it; 0 unfolds the fields and the mark goes.
+func TestRowsFoldTheirFields(t *testing.T) {
+	m := withCard(longReport())
+	view := m.View()
+	if strings.Contains(view, "Severity: medium") {
+		t.Errorf("a folded row showed its fields:\n%s", view)
+	}
+	if !strings.Contains(view, "▸") {
+		t.Errorf("the folded row is not marked:\n%s", view)
+	}
+	m = press(m, "0")
+	view = m.View()
+	if !strings.Contains(view, "Severity: medium") || strings.Contains(view, "▸") {
+		t.Errorf("0 did not unfold the row:\n%s", view)
+	}
+}
+
+// The key hint sits under the composer, below the rule that ends the card.
+func TestHintSitsUnderTheComposer(t *testing.T) {
+	view := withCard(decisionReport()).View()
+	rule := strings.Index(view, "╌")
+	prompt := strings.Index(view, "(Enter to submit")
+	hint := strings.Index(view, "1-3 pick an option")
+	if rule < 0 || prompt < 0 || hint < 0 || !(rule < prompt && prompt < hint) {
+		t.Errorf("want the rule, then the composer, then the hint:\n%s", view)
 	}
 }

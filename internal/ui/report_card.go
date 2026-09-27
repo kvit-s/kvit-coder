@@ -112,10 +112,9 @@ func (m *InputModel) hiddenNotRun() int {
 }
 
 // anyDetails reports whether the card is holding anything back, which decides
-// whether the footer offers the key that shows it. Details count, and so do
-// collapsed not_run checks and instructions cut to one line: with nothing
-// else to expand, 0 is still the key that reveals them — and while one stands
-// revealed, 0 is the key that hides it again.
+// whether the footer offers the key that shows it: a block with folded
+// fields or details, a collapsed not_run check, or an instruction cut to one
+// line. While any of those stands revealed, 0 is the key that hides it again.
 func (m *InputModel) anyDetails() bool {
 	if m.card == nil {
 		return false
@@ -123,25 +122,21 @@ func (m *InputModel) anyDetails() bool {
 	if m.hiddenNotRun() > 0 {
 		return true
 	}
-	if _, cut := cardSegments(m.card, report.Options{HideNotRun: true}, m.cardWidth(), true); cut {
-		return true
-	}
 	for i := range m.card.Blocks {
 		b := &m.card.Blocks[i]
-		if b.Details != "" {
-			return true
-		}
-		if b.IsNotRunCheck() && m.cardExpanded[b.ID] {
+		if b.HasMore() || (b.IsNotRunCheck() && m.cardExpanded[b.ID]) {
 			return true
 		}
 	}
-	return false
+	_, cut := cardRows(m.card, report.Options{HideNotRun: true}, m.cardWidth(), true)
+	return cut
 }
 
-// expandable reports whether 0 has anything to show for this block: details,
-// a not_run check the card collapsed, or an instruction it may have cut short.
+// expandable reports whether 0 has anything to show for this block: folded
+// fields or details, a not_run check the card collapsed, or an instruction
+// it may have cut short.
 func expandable(b *report.Block) bool {
-	if b.Details != "" || b.IsNotRunCheck() {
+	if b.HasMore() || b.IsNotRunCheck() {
 		return true
 	}
 	for i := range b.Options {
@@ -243,14 +238,28 @@ func (m *InputModel) toggleAllDetails() {
 	}
 }
 
-// Card colors: shades of grey by how much each line matters, and one muted
-// color for the instructions a pick would send.
+// Card colors. What the turn did is drawn in grey, because it is there to be
+// skimmed; what it asks is drawn bright, with the recommended option picked
+// out, because it is what gets answered.
 var (
 	cardDim         = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	cardRow         = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
 	cardText        = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	cardOption      = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
-	cardInstruction = lipgloss.NewStyle().Foreground(lipgloss.Color("109"))
+	cardHeadline    = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Bold(true)
+	cardAccent      = lipgloss.NewStyle().Foreground(lipgloss.Color("78"))
+	cardFailed      = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
+	cardPick        = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("78"))
+	cardInstruction = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
 )
+
+// dotStyle colors the dot before the headline: red when the turn failed or is
+// stuck, green otherwise.
+func dotStyle(s report.Status) lipgloss.Style {
+	if s == report.StatusFailed || s == report.StatusBlocked {
+		return cardFailed
+	}
+	return cardAccent
+}
 
 // cardWidth is how wide the card may draw. It is the terminal less the two
 // columns the card indents by, so a wrapped line stops at the same place the
@@ -266,83 +275,130 @@ func (m InputModel) cardWidth() int {
 	return w - 2
 }
 
-// paintCardLine styles one wrapped card line the way the card does: block
-// lines in text white, numbered options brightened because they are the part
-// acted on, dispatch instructions muted, everything else dim.
-func paintCardLine(kind report.LineKind, option int, text string) string {
-	switch {
-	case kind == report.LineBlock:
-		return cardText.Render(text)
-	case kind == report.LineOption && option > 0:
-		return cardOption.Render(text)
-	case kind == report.LineInstruction:
-		return cardInstruction.Render(text)
-	}
-	return cardDim.Render(text)
-}
-
-// renderCardLines lays out a report the way the card does — indented,
-// wrapped, painted — but without the card's key hint, so both the live card
-// and the scrollback copy share one layout. shortInstructions is the live
-// card's setting; see cardSegments.
+// renderCardLines lays out a report the way the card does — wrapped and
+// painted — but without the card's key hint, so both the live card and the
+// scrollback copy share one layout. shortInstructions is the live card's
+// setting; see cardRows.
 func renderCardLines(card *report.Report, opts report.Options, width int, shortInstructions bool) string {
-	var sb strings.Builder
-	segs, _ := cardSegments(card, opts, width, shortInstructions)
-	for _, seg := range segs {
-		if seg.kind == report.LineHeader {
-			sb.WriteString(cardText.Render(seg.text))
-		} else {
-			sb.WriteString(paintCardLine(seg.kind, seg.option, seg.text))
-		}
-		sb.WriteString("\n")
+	rows, _ := cardRows(card, opts, width, shortInstructions)
+	if len(rows) == 0 {
+		return ""
 	}
-	return sb.String()
+	return strings.Join(rows, "\n") + "\n"
 }
 
-// cardSegment is one line of the card as it is drawn: wrapped, unpainted.
-type cardSegment struct {
-	kind   report.LineKind
-	option int
-	text   string
-}
-
-// cardSegments wraps the report's lines to the card's width. With
-// shortInstructions, a dispatch instruction in a block that is not expanded
-// keeps only its first line, ending in "…" when anything was cut, so a
-// two-option proposal does not spend four lines on what it would send. The
-// second result says whether anything was cut, which is what makes the expand
-// key worth offering.
-func cardSegments(card *report.Report, opts report.Options, width int, shortInstructions bool) ([]cardSegment, bool) {
-	var segs []cardSegment
+// cardRows wraps and paints the report's lines to the card's width. With
+// shortInstructions, an instruction in a block that is not expanded keeps
+// only its first row, ending in "…" when anything was cut, so a proposal does
+// not spend several rows on what it would send. The second result says
+// whether anything was cut, which is what makes the expand key worth
+// offering.
+func cardRows(card *report.Report, opts report.Options, width int, shortInstructions bool) ([]string, bool) {
+	var rows []string
 	cut := false
-	prevInstruction := false
 	for _, line := range report.Lines(card, opts) {
-		text := line.Text
-		if line.Kind != report.LineHeader {
-			text = "  " + text
-		}
-		wrapped := wrapCardLine(text, width)
-		if shortInstructions && line.Kind == report.LineInstruction &&
-			!opts.ExpandAll && !opts.Expanded[line.BlockID] {
-			if prevInstruction {
-				// A further line of the instruction just shown.
-				if !strings.HasSuffix(segs[len(segs)-1].text, "…") {
-					segs[len(segs)-1].text = withEllipsis(segs[len(segs)-1].text, width)
+		expanded := opts.ExpandAll || opts.Expanded[line.BlockID]
+		switch line.Kind {
+		case report.LineBlank:
+			rows = append(rows, "")
+
+		case report.LineHeader:
+			for i, row := range wrapCardLine(line.Text, width) {
+				if i == 0 {
+					rows = append(rows, dotStyle(card.TaskStatus).Render(line.Tag)+" "+
+						cardHeadline.Render(strings.TrimPrefix(row, line.Tag+" ")))
+				} else {
+					rows = append(rows, cardHeadline.Render(row))
 				}
-				cut = true
+			}
+
+		case report.LineSection:
+			rows = append(rows, cardDim.Render(line.Text))
+
+		case report.LineBlock:
+			if line.Block >= 0 && card.Blocks[line.Block].Interactive() {
+				for i, row := range wrapLine(line.Tag+"  ", line.Body, width, "  ") {
+					if i == 0 {
+						rows = append(rows, cardAccent.Render(line.Tag)+
+							cardHeadline.Render(strings.TrimPrefix(row, line.Tag)))
+					} else {
+						rows = append(rows, cardHeadline.Render(row))
+					}
+				}
 				continue
 			}
-			if len(wrapped) > 1 {
+			// A row of what happened: one line to skim, with a mark at the
+			// right edge when there is more folded under it.
+			wrapped := wrapCardLine(line.Text, width-2)
+			for i, row := range wrapped {
+				if i == 0 && line.More {
+					row += strings.Repeat(" ", max(1, width-1-visibleLen(row))) + "▸"
+				}
+				rows = append(rows, cardRow.Render(row))
+			}
+
+		case report.LineChoices:
+			rows = append(rows, choiceRows(line, width)...)
+
+		case report.LineInstruction:
+			pad := strings.Repeat(" ", line.Indent)
+			wrapped := wrapCardLine(pad+line.Tag+" "+strings.Join(strings.Fields(line.Body), " "), width)
+			if shortInstructions && !expanded && len(wrapped) > 1 {
 				wrapped = []string{withEllipsis(wrapped[0], width)}
 				cut = true
 			}
-		}
-		prevInstruction = line.Kind == report.LineInstruction
-		for _, out := range wrapped {
-			segs = append(segs, cardSegment{kind: line.Kind, option: line.Option, text: out})
+			for i, row := range wrapped {
+				if i == 0 {
+					rows = append(rows, pad+cardDim.Render(line.Tag)+
+						cardInstruction.Render(strings.TrimPrefix(row, pad+line.Tag)))
+				} else {
+					rows = append(rows, cardInstruction.Render(row))
+				}
+			}
+
+		case report.LineOption:
+			for _, row := range wrapCardLine(line.Text, width) {
+				rows = append(rows, cardText.Render(row))
+			}
+
+		default:
+			for _, row := range wrapCardLine(line.Text, width) {
+				rows = append(rows, cardDim.Render(row))
+			}
 		}
 	}
-	return segs, cut
+	return rows, cut
+}
+
+// choiceRows lays a block's options out side by side, wrapping to another row
+// when the next one would not fit. The recommended option is drawn as a
+// highlighted chip so the likeliest answer is found without reading.
+func choiceRows(line report.Line, width int) []string {
+	pad := strings.Repeat(" ", line.Indent)
+	const gap = "    "
+	var rows []string
+	row, rowLen := pad, line.Indent
+	for _, c := range line.Choices {
+		plain := c.Marker() + " " + c.Label
+		painted := cardDim.Render(c.Marker()) + " " + cardText.Render(c.Label)
+		if c.Recommended {
+			plain = " " + plain + " "
+			painted = cardPick.Render(plain)
+		}
+		n := visibleLen(plain)
+		if rowLen > line.Indent {
+			if rowLen+len(gap)+n > width {
+				rows = append(rows, row)
+				row, rowLen = pad, line.Indent
+			} else {
+				row += gap
+				rowLen += len(gap)
+			}
+		}
+		row += painted
+		rowLen += n
+	}
+	return append(rows, row)
 }
 
 // withEllipsis marks a line as cut short, dropping characters from its end
@@ -408,18 +464,31 @@ func TranscriptWidth(card *report.Report, ans *CardAnswer, width int) string {
 
 // cardView draws the report above the prompt, or nothing when there is no
 // report to draw. It is the same layout the agent prints headless, painted,
-// with the numbered options brightened because they are the part you act on,
-// and wrapped to the terminal so nothing runs off the right-hand side.
-// not_run checks collapse to a footnote here; the transcript keeps
-// them in full.
+// and wrapped to the terminal so nothing runs off the right-hand side. A
+// dashed rule ends it, so the card and the message being typed below it do
+// not run together. not_run checks collapse to a footnote here; the
+// transcript keeps them in full.
 func (m InputModel) cardView() string {
 	if !m.cardShowing() {
 		return ""
 	}
 	var sb strings.Builder
 	sb.WriteString(renderCardLines(m.card, m.cardOpts(), m.cardWidth(), true))
-	sb.WriteString(cardDim.Render(m.cardHint()) + "\n\n")
+	sb.WriteString("\n" + cardDim.Render(strings.Repeat("╌", m.cardWidth())) + "\n")
 	return sb.String()
+}
+
+// cardFooter is the key hint drawn under the composer while the card shows,
+// where the eye is when the next key is pressed.
+func (m InputModel) cardFooter() string {
+	if !m.cardShowing() {
+		return ""
+	}
+	hint := m.cardHint()
+	if hint == "" {
+		return ""
+	}
+	return "\n\n" + cardDim.Render(hint)
 }
 
 // wrapCardLine breaks one already-indented card line to fit the terminal,
@@ -432,7 +501,7 @@ func wrapCardLine(text string, width int) []string {
 
 // cardHint is the footer that says which keys the card is holding. It lists
 // only the ones that would do something on this report, so it never advertises
-// a key that does nothing.
+// a key that does nothing. esc and :report still work; they are in the help.
 func (m InputModel) cardHint() string {
 	var parts []string
 	if n := len(m.card.Choices()); n > 0 {
@@ -440,14 +509,13 @@ func (m InputModel) cardHint() string {
 			n = report.MaxChoices
 		}
 		if n == 1 {
-			parts = append(parts, "1 answers")
+			parts = append(parts, "1 picks the option")
 		} else {
-			parts = append(parts, fmt.Sprintf("1-%d answer", n))
+			parts = append(parts, fmt.Sprintf("1-%d pick an option", n))
 		}
 	}
 	if m.anyDetails() {
-		parts = append(parts, "0 expand")
+		parts = append(parts, "0 open or close details")
 	}
-	parts = append(parts, "esc dismiss", ":report reopen")
-	return "  [" + strings.Join(parts, " · ") + "]"
+	return strings.Join(parts, " · ")
 }

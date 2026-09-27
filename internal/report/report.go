@@ -382,30 +382,30 @@ func (b *Block) Glyph() string {
 	case BlockFinding:
 		return "•"
 	case BlockChange:
-		return "Δ"
+		return "δ"
 	}
 	return "~"
 }
 
-// typeRank orders block types for display: what asks the user something
-// (question, next), then warning, change, finding, check, and
-// unclassified last.
+// typeRank orders block types for display: what the turn did — warning,
+// change, finding, check, unclassified — then what it asks the user
+// (question, next), which the card draws nearest the prompt.
 func typeRank(t BlockType) int {
 	switch t {
-	case BlockQuestion:
-		return 0
-	case BlockNext:
-		return 1
 	case BlockWarning:
-		return 2
+		return 0
 	case BlockChange:
-		return 3
+		return 1
 	case BlockFinding:
-		return 4
+		return 2
 	case BlockCheck:
+		return 3
+	case BlockQuestion:
 		return 5
+	case BlockNext:
+		return 6
 	}
-	return 6
+	return 4
 }
 
 // levelRank orders severity and importance, most urgent first. An unset or
@@ -419,8 +419,8 @@ func levelRank(level string) int {
 	return len(Levels) + 1
 }
 
-// Order returns the block indices in display order: question, next,
-// warning, change, finding, check, unclassified —
+// Order returns the block indices in display order: warning, change,
+// finding, check, unclassified, question, next —
 // regardless of the order the model sent them in. Blocks that tie keep the
 // order they were sent in, so a report renders the same way every time.
 func (r *Report) Order() []int {
@@ -475,7 +475,7 @@ func JSONSchema(maxBlocks int) map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"id":          str("Short kebab-case name for this option, unique within the block."),
-			"label":       str(fmt.Sprintf("The choice in a few words, at most %d characters.", LabelMax)),
+			"label":       str(fmt.Sprintf("The choice in two to four words, at most %d characters. The card shows a block's labels side by side on one line.", LabelMax)),
 			"description": str(fmt.Sprintf("What choosing it means, at most %d characters.", TextMax)),
 			"consequence": str(fmt.Sprintf("What follows from choosing it, at most %d characters.", TextMax)),
 			"preview":     str("Optional excerpt of what this option would produce."),
@@ -484,7 +484,7 @@ func JSONSchema(maxBlocks int) map[string]any {
 				"and tells you nothing. On a 'question', an option that answers it is 'dispatch'.",
 				Effects),
 			"instruction": str("For a 'dispatch' option only: the prompt picking it will send, written as the instruction " +
-				"you want to receive. Required, except on a 'question': there, leaving it out sends the option's label " +
+				"you want to receive, in one sentence. Required, except on a 'question': there, leaving it out sends the option's label " +
 				"to you as the answer."),
 		},
 		"required": []string{"id", "label", "effect"},
@@ -501,7 +501,7 @@ func JSONSchema(maxBlocks int) map[string]any {
 				"you must say that fits no other type, and is not for routine use.",
 				blockTypeStrings()),
 			"id":      str("Short kebab-case name for this block, unique within the report, such as \"reorder-tests\"."),
-			"summary": str(fmt.Sprintf("The block's fact in one sentence that stands on its own, at most %d characters. The user may read only this, so it never depends on details. On a 'question' it is the question itself.", SummaryMax)),
+			"summary": str(fmt.Sprintf("The block's fact in one sentence that stands on its own, at most %d characters; aim for one line of about 90. On the card it is the block's whole row, with every other field folded away, so it never depends on them. On a 'question' it is the question itself; on a 'next', the proposal.", SummaryMax)),
 
 			"impact": str("Required on 'finding' (why it matters) and 'warning' (what breaks if ignored). Optional elsewhere: what changed for the user, in one line."),
 
@@ -522,7 +522,7 @@ func JSONSchema(maxBlocks int) map[string]any {
 			"severity":              enum("Required on 'warning': how bad it is.", Levels),
 			"options":               map[string]any{"type": "array", "description": fmt.Sprintf("Required on 'question' and 'next': %d to %d ways forward. A 'next' block needs one 'dispatch' accept option and at least one 'collect' or 'resolve' alternative.", MinOptions, MaxOptions), "items": option},
 			"response_type":         enum("Required on any block with options. Free text is always allowed alongside them.", []string{ResponseSingle}),
-			"recommendation_reason": str("Required on any block with options: why you recommend what you recommend, or why no safe default can be inferred."),
+			"recommendation_reason": str("Required on any block with options: why you recommend what you recommend, or why no safe default can be inferred, in one short sentence. The card shows it as 'Recommended because: ...'."),
 			"reason_unclassified":   str("Required on 'unclassified': why no other block type fits."),
 			"suggested_type":        str("On 'unclassified': the type that came closest."),
 		},
