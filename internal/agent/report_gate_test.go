@@ -49,7 +49,7 @@ func goodReport() map[string]any {
 		"task_status": "completed",
 		"headline":    "Renamed the ordering helper and updated its callers.",
 		"blocks": []any{map[string]any{
-			"type": "verification", "id": "unit-tests",
+			"type": "check", "id": "unit-tests",
 			"summary": "All 14 tests in the package pass.", "status": "passed",
 		}},
 	}
@@ -267,8 +267,8 @@ func TestHeadlessRunPrintsTheReport(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	printed := out.String()
-	if !strings.Contains(printed, "DONE ·") {
-		t.Errorf("the status chip was not printed:\n%s", printed)
+	if !strings.Contains(printed, "Renamed the ordering helper and updated its callers.") {
+		t.Errorf("the headline was not printed:\n%s", printed)
 	}
 	if !strings.Contains(printed, "All 14 tests in the package pass.") {
 		t.Errorf("the report body was not printed:\n%s", printed)
@@ -285,7 +285,7 @@ func TestUnderTheFrontEndTheAgentPrintsNoCard(t *testing.T) {
 	if _, err := runner.Run(context.Background(), RunConfig{Messages: userStart("rename the helper")}); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if printed := out.String(); strings.Contains(printed, "DONE ·") {
+	if printed := out.String(); strings.Contains(printed, "All 14 tests in the package pass.") {
 		t.Errorf("the agent drew a card the front end will draw again:\n%s", printed)
 	}
 }

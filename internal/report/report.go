@@ -33,7 +33,8 @@ const (
 	// answer something.
 	StatusNeedsAction Status = "needs_action"
 	// StatusBlocked means the work cannot continue without the user or
-	// something outside the session.
+	// something outside the session. A warning or finding says what is in
+	// the way.
 	StatusBlocked Status = "blocked"
 	// StatusFailed means the work did not succeed, with the reason recorded.
 	StatusFailed Status = "failed"
@@ -58,19 +59,18 @@ const (
 	BlockChange BlockType = "change"
 	// BlockFinding is something learned that matters to the task.
 	BlockFinding BlockType = "finding"
-	// BlockVerification is how the work was checked.
-	BlockVerification BlockType = "verification"
+	// BlockCheck is how the work was checked.
+	BlockCheck BlockType = "check"
 	// BlockWarning is a risk or caveat.
 	BlockWarning BlockType = "warning"
-	// BlockDecision is a choice only the user can make.
-	BlockDecision BlockType = "decision"
-	// BlockQuestion is information the user has to supply.
+	// BlockQuestion is something only the user can settle: a choice between
+	// ways forward, or information the user has. It differs from next
+	// in having no obvious continuation to accept.
 	BlockQuestion BlockType = "question"
-	// BlockBlocked is work that cannot continue.
-	BlockBlocked BlockType = "blocked"
-	// BlockNextStep is a proposed continuation the user accepts or redirects.
-	BlockNextStep BlockType = "next_step"
-	// BlockUnclassified is the last resort when nothing else fits.
+	// BlockNext is a proposed continuation the user accepts or redirects.
+	BlockNext BlockType = "next"
+	// BlockUnclassified is the escape hatch for something the model has to
+	// say that fits no other type. It is not meant to be used routinely.
 	BlockUnclassified BlockType = "unclassified"
 )
 
@@ -78,27 +78,35 @@ const (
 var BlockTypes = []BlockType{
 	BlockChange,
 	BlockFinding,
-	BlockVerification,
+	BlockCheck,
 	BlockWarning,
-	BlockDecision,
 	BlockQuestion,
-	BlockBlocked,
-	BlockNextStep,
+	BlockNext,
 	BlockUnclassified,
 }
 
-// Verification statuses.
+// renamedTypes maps block type names reports used to have onto the type that
+// replaced them. Sessions saved before the rename still hold reports with the
+// old names, and a model continuing such a session sees them in its history
+// and may copy them; Normalize translates both rather than rejecting them.
+var renamedTypes = map[BlockType]BlockType{
+	"verification": BlockCheck,
+	"decision":     BlockQuestion,
+	"next_step":    BlockNext,
+}
+
+// Check statuses.
 const (
-	VerifyPassed = "passed"
-	VerifyFailed = "failed"
-	// VerifyPartial and VerifyNotRun both require the block to say what was
-	// not verified and why.
-	VerifyPartial = "partial"
-	VerifyNotRun  = "not_run"
+	CheckPassed = "passed"
+	CheckFailed = "failed"
+	// CheckPartial and CheckNotRun both require the block to say what was
+	// not checked and why.
+	CheckPartial = "partial"
+	CheckNotRun  = "not_run"
 )
 
-// VerifyStatuses lists the allowed values of a verification block's status.
-var VerifyStatuses = []string{VerifyPassed, VerifyFailed, VerifyPartial, VerifyNotRun}
+// CheckStatuses lists the allowed values of a check block's status.
+var CheckStatuses = []string{CheckPassed, CheckFailed, CheckPartial, CheckNotRun}
 
 // Levels are the values importance and severity take, least to most urgent.
 var Levels = []string{"low", "medium", "high", "critical"}
@@ -164,7 +172,7 @@ type Option struct {
 // the rest of the fields apply to the types that document them, and the
 // validator rejects a block that omits one its type requires.
 //
-// One flat struct rather than nine is deliberate: it keeps decoding to a plain
+// One flat struct rather than one per type is deliberate: it keeps decoding to a plain
 // json.Unmarshal, and it lets the validator report every problem in a report at
 // once instead of stopping at the first type it cannot decode.
 type Block struct {
@@ -182,7 +190,7 @@ type Block struct {
 	Importance        string `json:"importance,omitempty"`
 	BlocksCurrentTask *bool  `json:"blocks_current_task,omitempty"`
 
-	// verification
+	// check
 	Status           string `json:"status,omitempty"`
 	Evidence         string `json:"evidence,omitempty"`
 	Limitation       string `json:"limitation,omitempty"`
@@ -191,14 +199,7 @@ type Block struct {
 	// warning
 	Severity string `json:"severity,omitempty"`
 
-	// question
-	Question string `json:"question,omitempty"`
-
-	// blocked
-	Blocker        string `json:"blocker,omitempty"`
-	RequiredAction string `json:"required_action,omitempty"`
-
-	// decision, question, blocked, next_step
+	// question, next
 	Options              []Option `json:"options,omitempty"`
 	ResponseType         string   `json:"response_type,omitempty"`
 	RecommendationReason string   `json:"recommendation_reason,omitempty"`
@@ -221,7 +222,7 @@ type Report struct {
 // turn while it waits.
 func (b *Block) Interactive() bool {
 	switch b.Type {
-	case BlockDecision, BlockQuestion, BlockBlocked, BlockNextStep:
+	case BlockQuestion, BlockNext:
 		return true
 	}
 	return false
@@ -260,7 +261,7 @@ var buriedProposalMarks = []string{
 // BuriedProposalHint reports whether a rejected report proposes a follow-up
 // in prose while offering no interactive block for it. The caller appends a
 // one-line hint telling the model to expose each proposal as its own
-// next_step block instead.
+// next block instead.
 func BuriedProposalHint(r *Report) bool {
 	if r == nil || r.HasInteractive() {
 		return false
@@ -316,23 +317,6 @@ func (b *Block) Option(id string) *Option {
 	return nil
 }
 
-// Chip is the status as it appears at the head of the card.
-func (s Status) Chip() string {
-	switch s {
-	case StatusCompleted:
-		return "DONE"
-	case StatusCompletedWithNotes:
-		return "DONE · NOTES"
-	case StatusNeedsAction:
-		return "NEEDS DECISION"
-	case StatusBlocked:
-		return "BLOCKED"
-	case StatusFailed:
-		return "FAILED"
-	}
-	return string(s)
-}
-
 // Label is the block type as it appears at the head of its line.
 func (t BlockType) Label() string {
 	switch t {
@@ -340,18 +324,14 @@ func (t BlockType) Label() string {
 		return "Change"
 	case BlockFinding:
 		return "Finding"
-	case BlockVerification:
-		return "Verification"
+	case BlockCheck:
+		return "Check"
 	case BlockWarning:
 		return "Warning"
-	case BlockDecision:
-		return "Decision"
 	case BlockQuestion:
 		return "Question"
-	case BlockBlocked:
-		return "Blocked"
-	case BlockNextStep:
-		return "Next step"
+	case BlockNext:
+		return "Next"
 	case BlockUnclassified:
 		return "Note"
 	}
@@ -359,25 +339,23 @@ func (t BlockType) Label() string {
 }
 
 // Glyph is the one-character marker at the start of a block's line. A
-// verification's glyph says how the check went, so the outcome is legible
-// without reading the line.
+// check's glyph says how the check went, so the outcome is legible without
+// reading the line.
 func (b *Block) Glyph() string {
 	switch b.Type {
-	case BlockVerification:
+	case BlockCheck:
 		switch b.Status {
-		case VerifyPassed:
+		case CheckPassed:
 			return "✓"
-		case VerifyFailed:
+		case CheckFailed:
 			return "✗"
-		case VerifyPartial:
+		case CheckPartial:
 			return "◐"
 		default:
 			return "○"
 		}
-	case BlockDecision, BlockQuestion, BlockNextStep:
+	case BlockQuestion, BlockNext:
 		return "?"
-	case BlockBlocked:
-		return "⛔"
 	case BlockWarning:
 		return "⚠"
 	case BlockFinding:
@@ -389,28 +367,24 @@ func (b *Block) Glyph() string {
 }
 
 // typeRank orders block types for display: what asks the user something
-// (decision, question, blocked, next_step), then warning, change, finding,
-// verification, and unclassified last.
+// (question, next), then warning, change, finding, check, and
+// unclassified last.
 func typeRank(t BlockType) int {
 	switch t {
-	case BlockDecision:
-		return 0
 	case BlockQuestion:
+		return 0
+	case BlockNext:
 		return 1
-	case BlockBlocked:
-		return 2
-	case BlockNextStep:
-		return 3
 	case BlockWarning:
-		return 4
+		return 2
 	case BlockChange:
-		return 5
+		return 3
 	case BlockFinding:
-		return 6
-	case BlockVerification:
-		return 7
+		return 4
+	case BlockCheck:
+		return 5
 	}
-	return 8
+	return 6
 }
 
 // levelRank orders severity and importance, most urgent first. An unset or
@@ -424,8 +398,8 @@ func levelRank(level string) int {
 	return len(Levels) + 1
 }
 
-// Order returns the block indices in display order: decision, question,
-// blocked, next_step, warning, change, finding, verification, unclassified —
+// Order returns the block indices in display order: question, next,
+// warning, change, finding, check, unclassified —
 // regardless of the order the model sent them in. Blocks that tie keep the
 // order they were sent in, so a report renders the same way every time.
 func (r *Report) Order() []int {
@@ -455,12 +429,12 @@ func (r *Report) Order() []int {
 
 // JSONSchema is the tool's parameter schema as the model sees it.
 //
-// The nine block types share one object rather than being expressed as a
+// The block types share one object rather than being expressed as a
 // discriminated union: several endpoints handle oneOf poorly, and a model that
 // cannot decode the schema sends nothing usable at all. Each field's
 // description says which types require it, and Validate is what actually
 // enforces that, reporting every violation at once so a wrong guess costs one
-// round trip rather than nine.
+// round trip rather than one per mistake.
 func JSONSchema(maxBlocks int) map[string]any {
 	if maxBlocks <= 0 {
 		maxBlocks = DefaultMaxBlocks
@@ -497,19 +471,20 @@ func JSONSchema(maxBlocks int) map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"type": enum("Which kind of item this is. 'change' is work output; 'finding' is something learned; "+
-				"'verification' is how the work was checked; 'warning' is a risk; 'decision' is a choice only the user "+
-				"can make; 'question' is information only the user has; 'blocked' is work that cannot continue; "+
-				"'next_step' is a proposed continuation the user accepts or redirects — emit one such block per proposal "+
-				"when there are several (e.g. apply the fix, commit it); 'unclassified' is the last resort.",
+				"'check' is how the work was checked; 'warning' is a risk; 'question' is something only the user can "+
+				"settle — a choice between ways forward, or information only they have; "+
+				"'next' is a proposed continuation the user accepts or redirects — emit one such block per proposal "+
+				"when there are several (e.g. apply the fix, commit it); 'unclassified' is the escape hatch for something "+
+				"you must say that fits no other type, and is not for routine use.",
 				blockTypeStrings()),
 			"id":      str("Short kebab-case name for this block, unique within the report, such as \"reorder-tests\"."),
-			"summary": str(fmt.Sprintf("The block's fact in one sentence that stands on its own, at most %d characters. The user may read only this, so it never depends on details.", SummaryMax)),
+			"summary": str(fmt.Sprintf("The block's fact in one sentence that stands on its own, at most %d characters. The user may read only this, so it never depends on details. On a 'question' it is the question itself.", SummaryMax)),
 
 			"impact": str("Required on 'finding' (why it matters) and 'warning' (what breaks if ignored). Optional elsewhere: what changed for the user, in one line."),
 
-			"recommendation": str("On 'decision', 'blocked' and 'next_step': the id of the option you recommend, and required there. On 'question': the same, when a safe default exists. On 'finding' and 'warning': free text saying what to do."),
+			"recommendation": str("On 'next': the id of the option you recommend, and required there. On 'question': the same, when a safe default exists. On 'finding' and 'warning': free text saying what to do."),
 
-			"details": str(fmt.Sprintf("Markdown evidence, logs and file-by-file notes, at most %d bytes. Hidden until the user opens it, so nothing here is needed to understand the summary — and nothing the user must act on lives only here; propose continuations as next_step blocks instead.", DetailsMax)),
+			"details": str(fmt.Sprintf("Markdown evidence, logs and file-by-file notes, at most %d bytes. Hidden until the user opens it, so nothing here is needed to understand the summary — and nothing the user must act on lives only here; propose continuations as 'next' blocks instead.", DetailsMax)),
 
 			"related_files": map[string]any{"type": "array", "description": "Workspace-relative paths this block is about.", "items": map[string]any{"type": "string"}},
 
@@ -518,17 +493,14 @@ func JSONSchema(maxBlocks int) map[string]any {
 			"blocks_current_task": map[string]any{"type": "boolean",
 				"description": "Required on 'finding': whether it stops the current task."},
 
-			"status": enum("Required on 'verification': how the check went.", VerifyStatuses),
+			"status": enum("Required on 'check': how the check went.", CheckStatuses),
 
-			"evidence": str("On 'verification': the command or check behind the outcome."),
+			"evidence": str("On 'check': the command or check behind the outcome."),
 
-			"limitation":            str("Required on a 'partial' or 'not_run' verification: what was not checked, and why."),
-			"required_to_verify":    str("On 'verification': what would be needed to check it. Accepted in place of 'limitation'."),
+			"limitation":            str("Required on a 'partial' or 'not_run' check: what was not checked, and why."),
+			"required_to_verify":    str("On 'check': what would be needed to check it. Accepted in place of 'limitation'."),
 			"severity":              enum("Required on 'warning': how bad it is.", Levels),
-			"question":              str("Required on 'question': the question, phrased as a question."),
-			"blocker":               str("Required on 'blocked': what is stopping the work."),
-			"required_action":       str("Required on 'blocked': what must happen before it can continue."),
-			"options":               map[string]any{"type": "array", "description": fmt.Sprintf("Required on 'decision', 'question', 'blocked' and 'next_step': %d to %d ways forward. A 'next_step' needs one 'dispatch' accept option and at least one 'collect' or 'resolve' alternative.", MinOptions, MaxOptions), "items": option},
+			"options":               map[string]any{"type": "array", "description": fmt.Sprintf("Required on 'question' and 'next': %d to %d ways forward. A 'next' block needs one 'dispatch' accept option and at least one 'collect' or 'resolve' alternative.", MinOptions, MaxOptions), "items": option},
 			"response_type":         enum("Required on any block with options. Free text is always allowed alongside them.", []string{ResponseSingle}),
 			"recommendation_reason": str("Required on any block with options: why you recommend what you recommend, or why no safe default can be inferred."),
 			"reason_unclassified":   str("Required on 'unclassified': why no other block type fits."),
@@ -541,14 +513,15 @@ func JSONSchema(maxBlocks int) map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"task_status": enum("What this turn amounted to. A report that asks the user anything is 'needs_action' or 'blocked'. "+
-				"'completed' and 'completed_with_notes' need a verification block. When there is an obvious continuation, "+
-				"prefer 'needs_action' with next_step blocks over 'completed' with instructions in details.", statusStrings()),
+				"'completed' and 'completed_with_notes' need a check block. 'blocked' needs a warning or finding saying what "+
+				"stops the work. When there is an obvious continuation, "+
+				"prefer 'needs_action' with 'next' blocks over 'completed' with instructions in details.", statusStrings()),
 			"headline": str(fmt.Sprintf("One sentence, at most %d characters, no line break. It is the part that gets read, so put the "+
 				"material fact in it rather than a label for it.", HeadlineMax)),
 			"blocks": map[string]any{
 				"type": "array",
 				"description": fmt.Sprintf("The typed items behind the headline, 0 to %d of them. Fewer is better: several routine steps "+
-					"belong in one block's details, not one block each — but each proposed continuation gets its own next_step block.", maxBlocks),
+					"belong in one block's details, not one block each — but each proposed continuation gets its own 'next' block.", maxBlocks),
 				"items": block,
 			},
 		},

@@ -13,9 +13,9 @@ func transcriptReport() *report.Report {
 		TaskStatus: report.StatusNeedsAction,
 		Headline:   "Ordering works; the filtered case needs a decision.",
 		Blocks: []report.Block{
-			{Type: report.BlockVerification, ID: "tests", Summary: "14 tests pass.",
-				Status: report.VerifyPassed, Details: "ran the suite twice"},
-			{Type: report.BlockDecision, ID: "filtered", Summary: "Choose the filtered behaviour.",
+			{Type: report.BlockCheck, ID: "tests", Summary: "14 tests pass.",
+				Status: report.CheckPassed, Details: "ran the suite twice"},
+			{Type: report.BlockQuestion, ID: "filtered", Summary: "Choose the filtered behaviour.",
 				Options: []report.Option{
 					{ID: "preserve", Label: "Preserve hidden positions", Effect: report.EffectDispatch,
 						Instruction: "Implement reordering while preserving hidden-row positions."},

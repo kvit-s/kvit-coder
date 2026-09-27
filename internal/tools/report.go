@@ -107,7 +107,7 @@ func (t *ReportTool) reject(problems []report.Problem, hint ...bool) error {
 	msg := report.FormatProblems(problems)
 	if len(hint) > 0 && hint[0] {
 		msg += "\nHint: the report proposes a follow-up in prose; expose each proposal " +
-			"as its own next_step block with status \"needs_action\" instead."
+			"as its own \"next\" block with status \"needs_action\" instead."
 	}
 	if attempt >= max {
 		msg += fmt.Sprintf("\n\nThat was attempt %d of %d. Stop repairing the report: "+
@@ -144,26 +144,32 @@ details.
 Rules the schema cannot enforce for you:
 
 - When the turn changed something, "completed" and "completed_with_notes" need
-  a verification block saying how you checked it. If you ran nothing, say so
-  with status "not_run" and a limitation, rather than putting an explanation
-  in a verification block that checked nothing. A turn that only read and
-  explained puts its answer in a finding and needs no verification.
-- Any block that asks the user something — decision, question, blocked,
-  next_step — makes the report "needs_action" or "blocked", offers %d to %d
-  options, and says why you recommend the one you recommend. A "dispatch"
-  option's instruction is shown to the user and sent verbatim as the next
-  prompt if they pick it.
+  a check block saying how you checked it. If you ran nothing, say so with
+  status "not_run" and a limitation, rather than putting an explanation in a
+  check block that checked nothing. A turn that only read and explained puts
+  its answer in a finding and needs no check.
+- Any block that asks the user something — question or next — makes the
+  report "needs_action" or "blocked", offers %d to %d options, and says why you
+  recommend the one you recommend. A "dispatch" option's instruction is shown
+  to the user and sent verbatim as the next prompt if they pick it.
+- Use "question" when only the user can settle something: a choice between
+  alternatives with no obvious default, or information only they have. Its
+  summary is the question. Alternatives to one another go in one question as
+  its options, never in separate "next" blocks.
+- A "blocked" report says what stops the work in a warning or finding.
+- "unclassified" is an escape hatch for something you must say that fits no
+  other type. Do not use it routinely.
 - When there is an obvious continuation the user will likely ask for next
-  (apply the fix, commit the change, debug the failed test), add a "next_step"
+  (apply the fix, commit the change, debug the failed test), add a "next"
   block for EACH proposal — there are often several, so emit several
-  "next_step" blocks, one per proposal. Each has one "dispatch" accept option
+  "next" blocks, one per proposal. Each has one "dispatch" accept option
   and at least one "collect" or "resolve" alternative. The options inside one
   block are ways to answer that proposal, not different proposals. Never bury
   "say the word and I will ..." in details prose — make it the accept option's
   instruction.
 
 Fewer blocks read better: put related steps in one block's details rather than
-one block each — but each proposed continuation gets its own next_step block.`, t.modeSentence(), report.MinOptions, report.MaxOptions)
+one block each — but each proposed continuation gets its own "next" block.`, t.modeSentence(), report.MinOptions, report.MaxOptions)
 }
 
 // modeSentence describes, in the model's terms, which turns owe a report.
@@ -196,10 +202,10 @@ const reportExample = "```json\n" + `{
     {"type": "change", "id": "reorder-impl",
      "summary": "Added drag handles to the row list and persisted the new order.",
      "related_files": ["internal/ui/rows.go"]},
-    {"type": "verification", "id": "reorder-tests",
+    {"type": "check", "id": "reorder-tests",
      "summary": "14/14 relevant tests pass and ordering survives a restart.",
      "status": "passed", "evidence": "go test ./internal/store"},
-    {"type": "next_step", "id": "filtered-reordering",
+    {"type": "next", "id": "filtered-reordering",
      "summary": "Apply the filtered-view fix preserving hidden positions.",
      "options": [
        {"id": "preserve", "label": "Apply the fix",
@@ -211,7 +217,7 @@ const reportExample = "```json\n" + `{
      "recommendation": "preserve",
      "recommendation_reason": "It disturbs the least unrelated state.",
      "response_type": "single"},
-    {"type": "next_step", "id": "commit-reorder",
+    {"type": "next", "id": "commit-reorder",
      "summary": "Commit the reordering change.",
      "options": [
        {"id": "commit", "label": "Commit it",

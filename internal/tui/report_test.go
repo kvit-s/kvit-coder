@@ -9,6 +9,8 @@ import (
 	"github.com/kvit-s/kvit-coder/internal/session"
 )
 
+// reportArgs uses "decision", the name question blocks had before the two were
+// merged, so reading it back also covers a session saved before the rename.
 const reportArgs = `{"task_status":"needs_action",` +
 	`"headline":"Ordering works; the filtered case needs a decision.",` +
 	`"blocks":[{"type":"decision","id":"filtered","summary":"Choose the filtered behaviour.",` +

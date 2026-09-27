@@ -24,7 +24,7 @@ const validReportArgs = `{
   "task_status": "completed",
   "headline": "Renamed the ordering helper and updated its callers.",
   "blocks": [
-    {"type": "verification", "id": "unit-tests",
+    {"type": "check", "id": "unit-tests",
      "summary": "All 14 tests in the package pass.",
      "status": "passed", "evidence": "go test ./internal/store"}
   ]
@@ -73,7 +73,7 @@ func TestReportRejectionListsEveryProblem(t *testing.T) {
 	_, err := tool.Call(context.Background(), json.RawMessage(`{
 	  "task_status": "completed",
 	  "headline": "",
-	  "blocks": [{"type": "verification", "id": "Bad Id", "summary": ""}]
+	  "blocks": [{"type": "check", "id": "Bad Id", "summary": ""}]
 	}`))
 	if err == nil {
 		t.Fatal("a broken report was accepted")
@@ -133,7 +133,7 @@ func TestReportHonoursTheBlockLimit(t *testing.T) {
 	  "task_status": "completed",
 	  "headline": "Two things happened.",
 	  "blocks": [
-	    {"type": "verification", "id": "tests", "summary": "Tests pass.", "status": "passed"},
+	    {"type": "check", "id": "tests", "summary": "Tests pass.", "status": "passed"},
 	    {"type": "change", "id": "edit", "summary": "Renamed the helper."}
 	  ]
 	}`))
@@ -193,7 +193,7 @@ func TestReportModeDecidesWhoOwesOne(t *testing.T) {
 
 // The tool asks the turn what it did, so the same report is judged by what the
 // turn actually changed rather than by a fixed rule.
-func TestReportVerificationRuleFollowsTheTurn(t *testing.T) {
+func TestReportCheckRuleFollowsTheTurn(t *testing.T) {
 	explanation := json.RawMessage(`{
 	  "task_status": "completed",
 	  "headline": "The retry loop never terminates when the queue is empty.",
@@ -209,7 +209,7 @@ func TestReportVerificationRuleFollowsTheTurn(t *testing.T) {
 	tool, tc := newReportTool(t)
 	tc.NoteMutatingTool()
 	_, err := tool.Call(context.Background(), explanation)
-	if err == nil || !strings.Contains(err.Error(), "status_needs_verification") &&
+	if err == nil || !strings.Contains(err.Error(), "status_needs_check") &&
 		!strings.Contains(err.Error(), "how that was checked") {
 		t.Errorf("a turn that changed something was not asked how it checked: %v", err)
 	}
@@ -271,12 +271,12 @@ func TestReportToolIsRegisteredOnlyWhenEnabled(t *testing.T) {
 
 // The strong-profile prompt has to teach what the schema cannot: how the user
 // reads the card, and that every obvious continuation becomes its own
-// next_step block rather than prose in details.
-func TestShortPromptTeachesNextSteps(t *testing.T) {
+// "next" block rather than prose in details.
+func TestShortPromptTeachesNextBlocks(t *testing.T) {
 	tool, _ := newReportTool(t)
 	section := tool.ShortPromptSection()
 	for _, want := range []string{
-		"next_step",
+		`"next"`,
 		"one per proposal",
 		"almost never opens details",
 		"needs_action",
@@ -302,8 +302,8 @@ func TestRejectionHintsAtBuriedProposal(t *testing.T) {
 	if err == nil {
 		t.Fatal("a finding without impact was accepted")
 	}
-	if !strings.Contains(err.Error(), "next_step") {
-		t.Errorf("rejection names no next_step hint:\n%v", err)
+	if !strings.Contains(err.Error(), `"next" block`) {
+		t.Errorf("rejection names no next-block hint:\n%v", err)
 	}
 
 	plain := `{

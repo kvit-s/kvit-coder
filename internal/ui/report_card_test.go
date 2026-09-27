@@ -31,9 +31,9 @@ func decisionReport() *report.Report {
 		TaskStatus: report.StatusNeedsAction,
 		Headline:   "Ordering works; the filtered case needs a decision.",
 		Blocks: []report.Block{
-			{Type: report.BlockVerification, ID: "tests", Summary: "14 tests pass.", Status: report.VerifyPassed,
+			{Type: report.BlockCheck, ID: "tests", Summary: "14 tests pass.", Status: report.CheckPassed,
 				Details: "ran the suite twice"},
-			{Type: report.BlockDecision, ID: "filtered", Summary: "Choose the filtered behaviour.",
+			{Type: report.BlockQuestion, ID: "filtered", Summary: "Choose the filtered behaviour.",
 				Options: []report.Option{
 					{ID: "preserve", Label: "Preserve hidden positions", Effect: report.EffectDispatch,
 						Instruction: "Implement reordering while preserving hidden-row positions."},
@@ -52,7 +52,7 @@ func doneReport() *report.Report {
 		TaskStatus: report.StatusCompleted,
 		Headline:   "Renamed the helper.",
 		Blocks: []report.Block{{
-			Type: report.BlockVerification, ID: "tests", Summary: "14 tests pass.", Status: report.VerifyPassed,
+			Type: report.BlockCheck, ID: "tests", Summary: "14 tests pass.", Status: report.CheckPassed,
 		}},
 	}
 }
@@ -64,8 +64,8 @@ func notRunReport() *report.Report {
 		Headline:   "Added docs/screen.png to README.md.",
 		Blocks: []report.Block{
 			{Type: report.BlockChange, ID: "add-screenshot", Summary: "Added docs/screen.png to README.md."},
-			{Type: report.BlockVerification, ID: "no-check", Summary: "No build or test run for a docs-only image link.",
-				Status: report.VerifyNotRun, Limitation: "Markdown render not previewed."},
+			{Type: report.BlockCheck, ID: "no-check", Summary: "No build or test run for a docs-only image link.",
+				Status: report.CheckNotRun, Limitation: "Markdown render not previewed."},
 		},
 	}
 }
@@ -78,7 +78,7 @@ func withCard(rep *report.Report) InputModel {
 
 func TestNoReportLeavesTheComposerAsItWas(t *testing.T) {
 	m := withCard(nil)
-	if view := m.View(); strings.Contains(view, "DONE") {
+	if view := m.View(); view != NewInputModel(">", nil).View() {
 		t.Errorf("a card was drawn with no report:\n%s", view)
 	}
 	m = press(m, "1")
@@ -89,8 +89,8 @@ func TestNoReportLeavesTheComposerAsItWas(t *testing.T) {
 
 func TestCardIsDrawnAboveThePrompt(t *testing.T) {
 	view := withCard(decisionReport()).View()
-	if !strings.Contains(view, "NEEDS DECISION") {
-		t.Errorf("the status chip is missing:\n%s", view)
+	if !strings.Contains(view, "Ordering works; the filtered case needs a decision.") {
+		t.Errorf("the headline is missing:\n%s", view)
 	}
 	if !strings.Contains(view, "Preserve hidden positions") {
 		t.Errorf("the options are missing:\n%s", view)
@@ -129,7 +129,7 @@ func TestCollectOptionSeedsTheComposer(t *testing.T) {
 	if got := m.textarea.Value(); !strings.Contains(got, "[report filtered]") || !strings.Contains(got, "Let me describe it") {
 		t.Errorf("textarea = %q, want the block id and the label", got)
 	}
-	if strings.Contains(m.View(), "NEEDS DECISION") {
+	if strings.Contains(m.View(), "Ordering works; the filtered case") {
 		t.Error("the card stayed up after an answer was staged")
 	}
 }
@@ -169,7 +169,7 @@ func TestUnusedDigitFallsThroughToTheComposer(t *testing.T) {
 
 func TestEscDismissesTheCardAndLettersStillType(t *testing.T) {
 	m := press(withCard(decisionReport()), "esc")
-	if strings.Contains(m.View(), "NEEDS DECISION") {
+	if strings.Contains(m.View(), "Ordering works; the filtered case") {
 		t.Error("esc did not dismiss the card")
 	}
 	m = press(m, "d", "o")
@@ -447,24 +447,24 @@ func TestAnswerDescribeNamesThePickAndItsEffect(t *testing.T) {
 
 // The live card collapses a not_run check to a footnote instead of spending a
 // block on saying nothing ran.
-func TestCardCollapsesNotRunVerification(t *testing.T) {
+func TestCardCollapsesNotRunCheck(t *testing.T) {
 	view := withCard(notRunReport()).View()
-	if strings.Contains(view, "Verification [no-check]") {
+	if strings.Contains(view, "Check [no-check]") {
 		t.Errorf("the card showed the collapsed block:\n%s", view)
 	}
 	if !strings.Contains(view, "1 check not run (hidden)") {
 		t.Errorf("the footnote is missing:\n%s", view)
 	}
 	if !strings.Contains(view, "Change [add-screenshot]") {
-		t.Errorf("the change block went missing with the verification:\n%s", view)
+		t.Errorf("the change block went missing with the check:\n%s", view)
 	}
 }
 
 // A check that ran still shows in full on the card.
-func TestCardKeepsPassedVerification(t *testing.T) {
+func TestCardKeepsPassedCheck(t *testing.T) {
 	view := withCard(doneReport()).View()
-	if !strings.Contains(view, "Verification [tests]") {
-		t.Errorf("a passed verification was collapsed:\n%s", view)
+	if !strings.Contains(view, "Check [tests]") {
+		t.Errorf("a passed check was collapsed:\n%s", view)
 	}
 	if strings.Contains(view, "not run (hidden)") {
 		t.Errorf("the footnote appeared with nothing hidden:\n%s", view)
@@ -478,11 +478,11 @@ func TestZeroRevealsCollapsedNotRun(t *testing.T) {
 		t.Fatalf("the footer does not offer 0:\n%s", m.View())
 	}
 	m = press(m, "0")
-	if got := m.View(); !strings.Contains(got, "Verification [no-check]") {
+	if got := m.View(); !strings.Contains(got, "Check [no-check]") {
 		t.Errorf("0 did not reveal the collapsed check:\n%s", got)
 	}
 	m = press(m, "0")
-	if got := m.View(); strings.Contains(got, "Verification [no-check]") {
+	if got := m.View(); strings.Contains(got, "Check [no-check]") {
 		t.Errorf("0 did not hide the check again:\n%s", got)
 	}
 }
@@ -491,7 +491,7 @@ func TestZeroRevealsCollapsedNotRun(t *testing.T) {
 // is the quiet one.
 func TestTranscriptKeepsNotRunInFull(t *testing.T) {
 	got := Transcript(notRunReport(), nil)
-	if !strings.Contains(got, "Verification [no-check]") {
+	if !strings.Contains(got, "Check [no-check]") {
 		t.Errorf("the transcript collapsed the block:\n%s", got)
 	}
 	if strings.Contains(got, "not run (hidden)") {

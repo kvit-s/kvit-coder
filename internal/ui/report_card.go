@@ -95,7 +95,7 @@ func (m *InputModel) cardHolds() bool {
 	return m.cardShowing() && m.card.HasInteractive()
 }
 
-// cardOpts is what the live card draws with: not_run verifications collapse
+// cardOpts is what the live card draws with: not_run checks collapse
 // to a one-line footnote, but an expanded block (or everything expanded)
 // still shows in full. The transcript and headless output expand everything
 // and never collapse.
@@ -103,7 +103,7 @@ func (m *InputModel) cardOpts() report.Options {
 	return report.Options{Expanded: m.cardExpanded, HideNotRun: true}
 }
 
-// hiddenNotRun is how many not_run verifications the card is collapsing.
+// hiddenNotRun is how many not_run checks the card is collapsing.
 func (m *InputModel) hiddenNotRun() int {
 	if m.card == nil {
 		return 0
@@ -127,7 +127,7 @@ func (m *InputModel) anyDetails() bool {
 		if b.Details != "" {
 			return true
 		}
-		if b.IsNotRunVerification() && m.cardExpanded[b.ID] {
+		if b.IsNotRunCheck() && m.cardExpanded[b.ID] {
 			return true
 		}
 	}
@@ -213,39 +213,26 @@ func (m *InputModel) toggleAllDetails() {
 	open := false
 	for i := range m.card.Blocks {
 		if b := &m.card.Blocks[i]; m.cardExpanded[b.ID] {
-			if b.Details != "" || b.IsNotRunVerification() {
+			if b.Details != "" || b.IsNotRunCheck() {
 				open = true
 			}
 		}
 	}
 	for i := range m.card.Blocks {
-		if b := &m.card.Blocks[i]; b.Details != "" || b.IsNotRunVerification() {
+		if b := &m.card.Blocks[i]; b.Details != "" || b.IsNotRunCheck() {
 			m.cardExpanded[b.ID] = !open
 		}
 	}
 }
 
-// Card colors. The status chip is the only part that changes color, because it
-// is the only part whose meaning is a single word.
+// Card colors: shades of grey by how much each line matters, and one muted
+// color for the instructions a pick would send.
 var (
 	cardDim         = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	cardText        = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
 	cardOption      = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
 	cardInstruction = lipgloss.NewStyle().Foreground(lipgloss.Color("109"))
-	cardChipDone    = lipgloss.NewStyle().Foreground(lipgloss.Color("71")).Bold(true)
-	cardChipAsk     = lipgloss.NewStyle().Foreground(lipgloss.Color("178")).Bold(true)
-	cardChipBad     = lipgloss.NewStyle().Foreground(lipgloss.Color("167")).Bold(true)
 )
-
-func chipStyle(s report.Status) lipgloss.Style {
-	switch s {
-	case report.StatusCompleted, report.StatusCompletedWithNotes:
-		return cardChipDone
-	case report.StatusNeedsAction:
-		return cardChipAsk
-	}
-	return cardChipBad
-}
 
 // cardWidth is how wide the card may draw. It is the terminal less the two
 // columns the card indents by, so a wrapped line stops at the same place the
@@ -286,15 +273,9 @@ func renderCardLines(card *report.Report, opts report.Options, width int) string
 		if line.Kind != report.LineHeader {
 			text = "  " + text
 		}
-		for i, out := range wrapCardLine(text, width) {
+		for _, out := range wrapCardLine(text, width) {
 			if line.Kind == report.LineHeader {
-				// The chip is a word, so it only ever sits on the first
-				// wrapped line of the headline.
-				if chip, rest, found := strings.Cut(out, " · "); found && i == 0 {
-					sb.WriteString(chipStyle(card.TaskStatus).Render(chip) + cardText.Render(" · "+rest))
-				} else {
-					sb.WriteString(cardText.Render(out))
-				}
+				sb.WriteString(cardText.Render(out))
 			} else {
 				sb.WriteString(paintCardLine(line.Kind, line.Option, out))
 			}
@@ -325,7 +306,7 @@ func transcriptWidth() int {
 }
 
 // Transcript returns the scrollback copy of a report with the same colors as
-// the card: chip and headline, block lines, dim fields, bright options and
+// the card: headline, block lines, dim fields, bright options and
 // muted instructions. Details are always expanded, so nothing the card kept
 // folded is lost from the history.
 func Transcript(card *report.Report, ans *CardAnswer) string {
@@ -358,7 +339,7 @@ func TranscriptWidth(card *report.Report, ans *CardAnswer, width int) string {
 // report to draw. It is the same layout the agent prints headless, painted,
 // with the numbered options brightened because they are the part you act on,
 // and wrapped to the terminal so nothing runs off the right-hand side.
-// not_run verifications collapse to a footnote here; the transcript keeps
+// not_run checks collapse to a footnote here; the transcript keeps
 // them in full.
 func (m InputModel) cardView() string {
 	if !m.cardShowing() {

@@ -15,7 +15,7 @@ func reportCall(headline string) llm.Message {
 			Function: llm.ToolCallFunction{
 				Name: ReportToolName,
 				Arguments: `{"task_status":"completed","headline":"` + headline + `",` +
-					`"blocks":[{"type":"verification","id":"tests","summary":"Tests pass.","status":"passed"}]}`,
+					`"blocks":[{"type":"check","id":"tests","summary":"Tests pass.","status":"passed"}]}`,
 			},
 		}},
 	}

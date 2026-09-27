@@ -11,19 +11,19 @@ func completedReport() *Report {
 		TaskStatus: StatusCompleted,
 		Headline:   "Renamed the ordering helper and updated its callers.",
 		Blocks: []Block{{
-			Type:    BlockVerification,
+			Type:    BlockCheck,
 			ID:      "unit-tests",
 			Summary: "All 14 tests in the package pass.",
-			Status:  VerifyPassed,
+			Status:  CheckPassed,
 		}},
 	}
 }
 
-// decisionBlock is a well-formed interactive block, used as the starting point
+// questionBlock is a well-formed interactive block, used as the starting point
 // for the tests that break one rule at a time.
-func decisionBlock() Block {
+func questionBlock() Block {
 	return Block{
-		Type:    BlockDecision,
+		Type:    BlockQuestion,
 		ID:      "filtered-reordering",
 		Summary: "Choose how reordering behaves while a filter hides rows.",
 		Options: []Option{
@@ -97,7 +97,7 @@ func TestEveryProblemIsReportedAtOnce(t *testing.T) {
 		TaskStatus: "finished",
 		Headline:   "",
 		Blocks: []Block{
-			{Type: BlockVerification, ID: "Bad ID", Summary: ""},
+			{Type: BlockCheck, ID: "Bad ID", Summary: ""},
 		},
 	}
 	ps := Validate(r, Rules{Mutated: true})
@@ -149,49 +149,49 @@ func TestBlockLimit(t *testing.T) {
 
 // A completed turn has to say how it was checked. This is the rule that keeps a
 // turn from claiming success it never verified.
-func TestCompletedNeedsVerification(t *testing.T) {
+func TestCompletedNeedsCheck(t *testing.T) {
 	r := completedReport()
 	r.Blocks[0] = Block{Type: BlockChange, ID: "rename", Summary: "Renamed the helper."}
-	if !hasCode(Validate(r, Rules{Mutated: true}), "status_needs_verification") {
-		t.Error("a completed report with no verification was accepted")
+	if !hasCode(Validate(r, Rules{Mutated: true}), "status_needs_check") {
+		t.Error("a completed report with no check was accepted")
 	}
 }
 
 // Saying plainly that nothing was run satisfies it; that is the intended way
 // out for a turn that only read and explained.
-func TestNotRunVerificationSatisfiesCompleted(t *testing.T) {
+func TestNotRunCheckSatisfiesCompleted(t *testing.T) {
 	r := completedReport()
 	r.Blocks[0] = Block{
-		Type: BlockVerification, ID: "nothing-run", Summary: "No tests were run.",
-		Status: VerifyNotRun, Limitation: "No files changed, so no test applies.",
+		Type: BlockCheck, ID: "nothing-run", Summary: "No tests were run.",
+		Status: CheckNotRun, Limitation: "No files changed, so no test applies.",
 	}
 	if ps := Validate(r, Rules{Mutated: true}); len(ps) != 0 {
 		t.Fatalf("not_run with a limitation rejected: %v", codes(ps))
 	}
 }
 
-func TestPartialVerificationNeedsALimitation(t *testing.T) {
+func TestPartialCheckNeedsALimitation(t *testing.T) {
 	r := completedReport()
-	r.Blocks[0].Status = VerifyPartial
-	if !hasCode(Validate(r, Rules{Mutated: true}), "verification_needs_limitation") {
-		t.Error("a partial verification with no limitation was accepted")
+	r.Blocks[0].Status = CheckPartial
+	if !hasCode(Validate(r, Rules{Mutated: true}), "check_needs_limitation") {
+		t.Error("a partial check with no limitation was accepted")
 	}
 	r.Blocks[0].RequiredToVerify = "A machine with the GPU driver installed."
-	if hasCode(Validate(r, Rules{Mutated: true}), "verification_needs_limitation") {
+	if hasCode(Validate(r, Rules{Mutated: true}), "check_needs_limitation") {
 		t.Error("required_to_verify did not satisfy the rule")
 	}
 }
 
 func TestInteractiveBlockForcesTheStatus(t *testing.T) {
 	r := completedReport()
-	r.Blocks = append(r.Blocks, decisionBlock())
+	r.Blocks = append(r.Blocks, questionBlock())
 	if !hasCode(Validate(r, Rules{Mutated: true}), "interaction_needs_status") {
-		t.Error("a completed report holding a decision was accepted")
+		t.Error("a completed report holding a question was accepted")
 	}
 
 	r.TaskStatus = StatusNeedsAction
 	if ps := Validate(r, Rules{Mutated: true}); len(ps) != 0 {
-		t.Fatalf("needs_action with a decision rejected: %v", codes(ps))
+		t.Fatalf("needs_action with a question rejected: %v", codes(ps))
 	}
 }
 
@@ -216,7 +216,7 @@ func TestOptionRules(t *testing.T) {
 	base := func() *Report {
 		r := completedReport()
 		r.TaskStatus = StatusNeedsAction
-		r.Blocks = append(r.Blocks, decisionBlock())
+		r.Blocks = append(r.Blocks, questionBlock())
 		return r
 	}
 
@@ -256,8 +256,7 @@ func TestOptionRules(t *testing.T) {
 	t.Run("a question may have no recommendation", func(t *testing.T) {
 		r := base()
 		b := &r.Blocks[1]
-		b.Type = BlockQuestion
-		b.Question = "Which database should the exporter write to?"
+		b.Summary = "Which database should the exporter write to?"
 		b.Recommendation = ""
 		b.RecommendationReason = "Both are in use and nothing in the repository says which is canonical."
 		if ps := Validate(r, Rules{Mutated: true}); len(ps) != 0 {
@@ -265,31 +264,32 @@ func TestOptionRules(t *testing.T) {
 		}
 	})
 
-	t.Run("a decision may not", func(t *testing.T) {
+	t.Run("a next block may not", func(t *testing.T) {
 		r := base()
+		r.Blocks[1].Type = BlockNext
 		r.Blocks[1].Recommendation = ""
 		if !hasCode(Validate(r, Rules{Mutated: true}), "field_required") {
-			t.Error("a decision with no recommendation was accepted")
+			t.Error("a next block with no recommendation was accepted")
 		}
 	})
 }
 
-func TestNextStepNeedsAcceptAndAlternative(t *testing.T) {
+func TestNextNeedsAcceptAndAlternative(t *testing.T) {
 	r := completedReport()
 	r.TaskStatus = StatusNeedsAction
-	b := decisionBlock()
-	b.Type = BlockNextStep
+	b := questionBlock()
+	b.Type = BlockNext
 	b.ID = "apply-patch"
 	r.Blocks = append(r.Blocks, b)
 
 	ps := Validate(r, Rules{Mutated: true})
-	if !hasCode(ps, "next_step_needs_alternative") {
-		t.Errorf("a next_step of two dispatches was accepted: %v", codes(ps))
+	if !hasCode(ps, "next_needs_alternative") {
+		t.Errorf("a next block of two dispatches was accepted: %v", codes(ps))
 	}
 
 	r.Blocks[1].Options[1] = Option{ID: "say-more", Label: "Tell me what to change instead", Effect: EffectCollect}
 	if ps := Validate(r, Rules{Mutated: true}); len(ps) != 0 {
-		t.Fatalf("a next_step with an accept and an alternative was rejected: %v", codes(ps))
+		t.Fatalf("a next block with an accept and an alternative was rejected: %v", codes(ps))
 	}
 }
 
@@ -297,7 +297,7 @@ func TestNonInteractiveBlockRejectsOptions(t *testing.T) {
 	r := completedReport()
 	r.Blocks[0].Options = []Option{{ID: "a", Label: "A", Effect: EffectResolve}}
 	if !hasCode(Validate(r, Rules{Mutated: true}), "options_not_allowed") {
-		t.Error("a verification block with options was accepted")
+		t.Error("a check block with options was accepted")
 	}
 }
 
@@ -321,7 +321,7 @@ func TestFindingNeedsItsFields(t *testing.T) {
 func TestProblemPathsPointAtTheField(t *testing.T) {
 	r := completedReport()
 	r.TaskStatus = StatusNeedsAction
-	b := decisionBlock()
+	b := questionBlock()
 	b.Options[0].Instruction = ""
 	r.Blocks = append(r.Blocks, b)
 
@@ -346,10 +346,10 @@ func TestFormatProblemsLeadsWithTheMarker(t *testing.T) {
 	}
 }
 
-// A turn that only read and explained is finished without a verification
+// A turn that only read and explained is finished without a check
 // block. Demanding one is what pushes the explanation into a block that
 // verified nothing.
-func TestReadOnlyTurnNeedsNoVerification(t *testing.T) {
+func TestReadOnlyTurnNeedsNoCheck(t *testing.T) {
 	blocking := false
 	r := &Report{
 		TaskStatus: StatusCompleted,
@@ -365,9 +365,9 @@ func TestReadOnlyTurnNeedsNoVerification(t *testing.T) {
 	if ps := Validate(r, Rules{Mutated: false}); len(ps) != 0 {
 		t.Fatalf("an explanation-only report was rejected: %v", codes(ps))
 	}
-	// The same report from a turn that changed files still owes a verification.
-	if !hasCode(Validate(r, Rules{Mutated: true}), "status_needs_verification") {
-		t.Error("a turn that changed something got away with no verification")
+	// The same report from a turn that changed files still owes a check.
+	if !hasCode(Validate(r, Rules{Mutated: true}), "status_needs_check") {
+		t.Error("a turn that changed something got away with no check")
 	}
 }
 
@@ -405,11 +405,11 @@ func TestBuriedProposalHint(t *testing.T) {
 				Summary: "Line 144 runs ls on a missing directory.",
 				Details: "Say the word and I will apply either fix.",
 			},
-			decisionBlock(),
+			questionBlock(),
 		},
 	}
-	// decisionBlock is a decision, so the report already offers a keypress.
-	withAction.Blocks[1].Type = BlockNextStep
+	// questionBlock asks something, so the report already offers a keypress.
+	withAction.Blocks[1].Type = BlockNext
 	if BuriedProposalHint(withAction) {
 		t.Error("a report that already offers an action drew the hint")
 	}
@@ -425,5 +425,54 @@ func TestBuriedProposalHint(t *testing.T) {
 	}
 	if BuriedProposalHint(plain) {
 		t.Error("a report with no proposal drew the hint")
+	}
+}
+
+// A blocked report says what is in the way with a warning or a finding, now
+// that there is no block type of its own for it.
+func TestBlockedIsExplainedByAWarning(t *testing.T) {
+	r := completedReport()
+	r.TaskStatus = StatusBlocked
+	r.Blocks = append(r.Blocks, Block{
+		Type: BlockWarning, ID: "no-token", Summary: "The deploy token has expired.",
+		Severity: "high", Impact: "Nothing can be pushed until it is renewed.",
+	})
+	if ps := Validate(r, Rules{Mutated: true}); len(ps) != 0 {
+		t.Fatalf("a blocked report explained by a warning was rejected: %v", codes(ps))
+	}
+}
+
+// Sessions saved before the rename hold blocks under their old names, and a
+// model continuing one may copy them. Both are read as the type that replaced
+// them rather than rejected.
+func TestNormalizeTranslatesRenamedTypes(t *testing.T) {
+	r := completedReport()
+	r.TaskStatus = StatusNeedsAction
+	r.Blocks[0].Type = "verification"
+	old := questionBlock()
+	old.Type = "decision"
+	step := questionBlock()
+	step.Type = "next_step"
+	step.ID = "apply-patch"
+	step.Options[1] = Option{ID: "not-now", Label: "Not now", Effect: EffectResolve}
+	r.Blocks = append(r.Blocks, old, step)
+
+	Normalize(r)
+	if r.Blocks[0].Type != BlockCheck || r.Blocks[1].Type != BlockQuestion || r.Blocks[2].Type != BlockNext {
+		t.Fatalf("old type names were not translated: %q, %q, %q", r.Blocks[0].Type, r.Blocks[1].Type, r.Blocks[2].Type)
+	}
+	if ps := Validate(r, Rules{Mutated: true}); len(ps) != 0 {
+		t.Fatalf("a translated report was rejected: %v", codes(ps))
+	}
+}
+
+// blocked is no longer a block type, so a model that sends one is told the
+// types there are.
+func TestBlockedIsNotABlockType(t *testing.T) {
+	r := completedReport()
+	r.Blocks = append(r.Blocks, Block{Type: "blocked", ID: "stuck", Summary: "Cannot reach the registry."})
+	Normalize(r)
+	if !hasCode(Validate(r, Rules{Mutated: true}), "block_type_unknown") {
+		t.Error("a blocked block was accepted")
 	}
 }

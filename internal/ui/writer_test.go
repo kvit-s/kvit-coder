@@ -691,7 +691,7 @@ func TestReportPrintWrapsOnlyForATerminal(t *testing.T) {
 		TaskStatus: report.StatusCompleted,
 		Headline:   "Renamed the ordering helper.",
 		Blocks: []report.Block{{
-			Type: report.BlockVerification, ID: "tests", Status: report.VerifyPassed,
+			Type: report.BlockCheck, ID: "tests", Status: report.CheckPassed,
 			Summary:  "All 14 tests pass.",
 			Evidence: strings.Repeat("go test ./internal/store ", 12),
 		}},

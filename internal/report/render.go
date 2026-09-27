@@ -11,7 +11,8 @@ import (
 type LineKind int
 
 const (
-	// LineHeader is the status chip and the headline.
+	// LineHeader is the headline. The status is not drawn: what the turn
+	// amounted to is in the headline, and the card shows what to answer.
 	LineHeader LineKind = iota
 	// LineBlock is a block's own line: glyph, kind, id, summary.
 	LineBlock
@@ -45,7 +46,7 @@ type Options struct {
 	// ExpandAll shows every block's details, which is what a headless run and
 	// the full viewer do.
 	ExpandAll bool
-	// HideNotRun collapses verification blocks that ran nothing into a
+	// HideNotRun collapses check blocks that ran nothing into a
 	// one-line footnote, which is what the live card does: the check stays
 	// mandatory, but a docs-only edit no longer spends two lines saying so.
 	// ExpandAll or an entry in Expanded still shows the block in full, and
@@ -53,14 +54,14 @@ type Options struct {
 	HideNotRun bool
 }
 
-// IsNotRunVerification reports whether this block is a verification that ran
-// nothing. Those are the rows the live card collapses: required by the
-// validator, noise on the card.
-func (b *Block) IsNotRunVerification() bool {
-	return b != nil && b.Type == BlockVerification && b.Status == VerifyNotRun
+// IsNotRunCheck reports whether this block is a check that ran nothing.
+// Those are the rows the live card collapses: required by the validator,
+// noise on the card.
+func (b *Block) IsNotRunCheck() bool {
+	return b != nil && b.Type == BlockCheck && b.Status == CheckNotRun
 }
 
-// HiddenNotRunCount is how many not_run verifications opts would collapse.
+// HiddenNotRunCount is how many not_run checks opts would collapse.
 // The card uses it for its footnote and for offering the expand key even
 // when there are no details to show.
 func (r *Report) HiddenNotRunCount(opts Options) int {
@@ -69,7 +70,7 @@ func (r *Report) HiddenNotRunCount(opts Options) int {
 	}
 	n := 0
 	for i := range r.Blocks {
-		if b := &r.Blocks[i]; b.IsNotRunVerification() && !opts.Expanded[b.ID] {
+		if b := &r.Blocks[i]; b.IsNotRunCheck() && !opts.Expanded[b.ID] {
 			n++
 		}
 	}
@@ -86,7 +87,7 @@ func Lines(r *Report, opts Options) []Line {
 	out := []Line{{
 		Kind:  LineHeader,
 		Block: -1,
-		Text:  r.TaskStatus.Chip() + " · " + r.Headline,
+		Text:  r.Headline,
 	}}
 
 	// Every option is numbered, continuously across blocks, so a digit
@@ -102,7 +103,7 @@ func Lines(r *Report, opts Options) []Line {
 		// block was expanded (or everything was). The footnote below keeps
 		// the signal; the transcript and headless output expand everything
 		// and never collapse.
-		if opts.HideNotRun && !opts.ExpandAll && !opts.Expanded[b.ID] && b.IsNotRunVerification() {
+		if opts.HideNotRun && !opts.ExpandAll && !opts.Expanded[b.ID] && b.IsNotRunCheck() {
 			continue
 		}
 		add := func(kind LineKind, option int, format string, args ...any) {
@@ -201,7 +202,7 @@ func blockFields(b *Block, detailsHidden bool) []string {
 			out = append(out, line)
 		}
 		add("Recommendation", b.Recommendation)
-	case BlockVerification:
+	case BlockCheck:
 		add("Evidence", b.Evidence)
 		add("Not verified", b.Limitation)
 		add("Would need", b.RequiredToVerify)
@@ -209,13 +210,6 @@ func blockFields(b *Block, detailsHidden bool) []string {
 		add("Severity", b.Severity)
 		add("Impact", b.Impact)
 		add("Recommendation", b.Recommendation)
-	case BlockQuestion:
-		if b.Question != "" {
-			out = append(out, b.Question)
-		}
-	case BlockBlocked:
-		add("Blocked by", b.Blocker)
-		add("Needs", b.RequiredAction)
 	case BlockUnclassified:
 		add("Unclassified because", b.ReasonUnclassified)
 		add("Closest type", b.SuggestedType)

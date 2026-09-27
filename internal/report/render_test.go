@@ -15,16 +15,16 @@ func blockIDsInOrder(r *Report) []string {
 
 // Blocks are shown in a fixed display order, not by the order the model
 // happened to send them: interactive blocks first, then warning, change,
-// finding, verification, and unclassified last.
+// finding, check, and unclassified last.
 func TestOrderPutsWhatStopsTheWorkFirst(t *testing.T) {
 	r := &Report{
 		TaskStatus: StatusBlocked,
 		Headline:   "Cannot continue without credentials.",
 		Blocks: []Block{
 			{Type: BlockChange, ID: "edit"},
-			{Type: BlockVerification, ID: "tests"},
+			{Type: BlockCheck, ID: "tests"},
 			{Type: BlockFinding, ID: "cause"},
-			{Type: BlockBlocked, ID: "no-token"},
+			{Type: BlockQuestion, ID: "no-token"},
 			{Type: BlockWarning, ID: "risk"},
 		},
 	}
@@ -38,26 +38,24 @@ func TestOrderPutsWhatStopsTheWorkFirst(t *testing.T) {
 }
 
 // The model may send blocks in any order; the card shows them in the fixed
-// display order: decision, question, blocked, next_step, warning, change,
-// finding, verification, unclassified.
+// display order: question, next, warning, change, finding, check,
+// unclassified.
 func TestOrderFollowsFixedDisplayOrder(t *testing.T) {
 	r := &Report{
 		TaskStatus: StatusNeedsAction,
 		Headline:   "Scrambled submission order.",
 		Blocks: []Block{
 			{Type: BlockUnclassified, ID: "note"},
-			{Type: BlockVerification, ID: "tests"},
+			{Type: BlockCheck, ID: "tests"},
 			{Type: BlockFinding, ID: "cause"},
 			{Type: BlockChange, ID: "edit"},
 			{Type: BlockWarning, ID: "risk"},
-			{Type: BlockNextStep, ID: "step"},
-			{Type: BlockBlocked, ID: "stuck"},
+			{Type: BlockNext, ID: "step"},
 			{Type: BlockQuestion, ID: "ask"},
-			{Type: BlockDecision, ID: "pick"},
 		},
 	}
 	got := blockIDsInOrder(r)
-	want := []string{"pick", "ask", "stuck", "step", "risk", "edit", "cause", "tests", "note"}
+	want := []string{"ask", "step", "risk", "edit", "cause", "tests", "note"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("order is %v, want %v", got, want)
@@ -97,25 +95,26 @@ func TestOrderIsStableWithinAType(t *testing.T) {
 	}
 }
 
-func TestVerificationGlyphSaysHowItWent(t *testing.T) {
+func TestCheckGlyphSaysHowItWent(t *testing.T) {
 	for status, glyph := range map[string]string{
-		VerifyPassed:  "✓",
-		VerifyFailed:  "✗",
-		VerifyPartial: "◐",
-		VerifyNotRun:  "○",
+		CheckPassed:  "✓",
+		CheckFailed:  "✗",
+		CheckPartial: "◐",
+		CheckNotRun:  "○",
 	} {
-		b := Block{Type: BlockVerification, Status: status}
+		b := Block{Type: BlockCheck, Status: status}
 		if got := b.Glyph(); got != glyph {
 			t.Errorf("%s renders %q, want %q", status, got, glyph)
 		}
 	}
 }
 
-func TestHeaderIsTheChipAndHeadline(t *testing.T) {
+// The first line is the headline alone: the status is not drawn.
+func TestHeaderIsTheHeadline(t *testing.T) {
 	r := completedReport()
 	first := Render(r, Options{})
 	line := strings.SplitN(first, "\n", 2)[0]
-	if line != "DONE · Renamed the ordering helper and updated its callers." {
+	if line != "Renamed the ordering helper and updated its callers." {
 		t.Errorf("header is %q", line)
 	}
 }
@@ -154,7 +153,7 @@ func TestPlainTextShowsEverything(t *testing.T) {
 func TestDispatchInstructionIsShownInFull(t *testing.T) {
 	r := completedReport()
 	r.TaskStatus = StatusNeedsAction
-	r.Blocks = append(r.Blocks, decisionBlock())
+	r.Blocks = append(r.Blocks, questionBlock())
 
 	text := Render(r, Options{})
 	if !strings.Contains(text, "Implement reordering while preserving hidden-row positions.") {
@@ -167,9 +166,9 @@ func TestDispatchInstructionIsShownInFull(t *testing.T) {
 func TestOptionsAreNumberedAcrossBlocks(t *testing.T) {
 	r := completedReport()
 	r.TaskStatus = StatusNeedsAction
-	first := decisionBlock()
-	second := decisionBlock()
-	second.ID = "second-decision"
+	first := questionBlock()
+	second := questionBlock()
+	second.ID = "second-question"
 	r.Blocks = append(r.Blocks, first, second)
 
 	numbers := map[string][]int{}
@@ -178,14 +177,14 @@ func TestOptionsAreNumberedAcrossBlocks(t *testing.T) {
 			numbers[l.BlockID] = append(numbers[l.BlockID], l.Option)
 		}
 	}
-	if len(numbers["filtered-reordering"]) == 0 || len(numbers["second-decision"]) == 0 {
+	if len(numbers["filtered-reordering"]) == 0 || len(numbers["second-question"]) == 0 {
 		t.Fatalf("not every block was numbered: %v", numbers)
 	}
 	// The second block picks up where the first left off.
-	if numbers["second-decision"][0] <= numbers["filtered-reordering"][0] {
+	if numbers["second-question"][0] <= numbers["filtered-reordering"][0] {
 		t.Errorf("numbering restarted on the second block: %v", numbers)
 	}
-	if c := r.Choice(3); c == nil || r.Blocks[c.Block].ID != "second-decision" {
+	if c := r.Choice(3); c == nil || r.Blocks[c.Block].ID != "second-question" {
 		t.Errorf("digit 3 does not reach the second block: %v", c)
 	}
 }
@@ -193,14 +192,13 @@ func TestOptionsAreNumberedAcrossBlocks(t *testing.T) {
 func TestRecommendationIsNamedOrItsAbsenceExplained(t *testing.T) {
 	r := completedReport()
 	r.TaskStatus = StatusNeedsAction
-	b := decisionBlock()
+	b := questionBlock()
 	r.Blocks = append(r.Blocks, b)
 	if !strings.Contains(Render(r, Options{}), "Recommended: Preserve hidden positions") {
 		t.Error("the recommendation was not named")
 	}
 
-	r.Blocks[1].Type = BlockQuestion
-	r.Blocks[1].Question = "Which database?"
+	r.Blocks[1].Summary = "Which database?"
 	r.Blocks[1].Recommendation = ""
 	if !strings.Contains(Render(r, Options{}), "No recommendation:") {
 		t.Error("a question with no recommendation did not say so")
@@ -210,7 +208,7 @@ func TestRecommendationIsNamedOrItsAbsenceExplained(t *testing.T) {
 func TestFirstInteractiveSkipsBlocksThatAskNothing(t *testing.T) {
 	r := completedReport()
 	r.TaskStatus = StatusNeedsAction
-	r.Blocks = append(r.Blocks, decisionBlock())
+	r.Blocks = append(r.Blocks, questionBlock())
 	i := r.FirstInteractive()
 	if i < 0 || r.Blocks[i].ID != "filtered-reordering" {
 		t.Errorf("FirstInteractive returned %d", i)
@@ -232,15 +230,15 @@ func TestNilReportRendersNothing(t *testing.T) {
 }
 
 // notRunReport is the docs-only turn from the card-noise complaint: a change
-// plus a verification that ran nothing.
+// plus a check that ran nothing.
 func notRunReport() *Report {
 	return &Report{
 		TaskStatus: StatusCompleted,
 		Headline:   "Added docs/screen.png to README.md.",
 		Blocks: []Block{
 			{Type: BlockChange, ID: "add-screenshot", Summary: "Added docs/screen.png to README.md."},
-			{Type: BlockVerification, ID: "no-check", Summary: "No build or test run for a docs-only image link.",
-				Status: VerifyNotRun, Limitation: "Markdown render not previewed."},
+			{Type: BlockCheck, ID: "no-check", Summary: "No build or test run for a docs-only image link.",
+				Status: CheckNotRun, Limitation: "Markdown render not previewed."},
 		},
 	}
 }
@@ -248,7 +246,7 @@ func notRunReport() *Report {
 // Without the flag nothing collapses: the old layout is untouched.
 func TestNotRunShowsInFullByDefault(t *testing.T) {
 	text := Render(notRunReport(), Options{})
-	if !strings.Contains(text, "Verification [no-check]") {
+	if !strings.Contains(text, "Check [no-check]") {
 		t.Errorf("the not_run block went missing without HideNotRun:\n%s", text)
 	}
 	if strings.Contains(text, "not run (hidden)") {
@@ -259,22 +257,22 @@ func TestNotRunShowsInFullByDefault(t *testing.T) {
 // With the flag the block collapses to one dim footnote.
 func TestHideNotRunCollapsesToFootnote(t *testing.T) {
 	text := Render(notRunReport(), Options{HideNotRun: true})
-	if strings.Contains(text, "Verification [no-check]") {
+	if strings.Contains(text, "Check [no-check]") {
 		t.Errorf("the not_run block was shown despite HideNotRun:\n%s", text)
 	}
 	if !strings.Contains(text, "1 check not run (hidden)") {
 		t.Errorf("the footnote is missing:\n%s", text)
 	}
 	if !strings.Contains(text, "Change [add-screenshot]") {
-		t.Errorf("the change block went missing with the verification:\n%s", text)
+		t.Errorf("the change block went missing with the check:\n%s", text)
 	}
 }
 
 // Two collapsed checks share one footnote line.
 func TestHideNotRunCountsEveryCheck(t *testing.T) {
 	r := notRunReport()
-	r.Blocks = append(r.Blocks, Block{Type: BlockVerification, ID: "no-check-2",
-		Summary: "No second check either.", Status: VerifyNotRun, Limitation: "Nothing ran."})
+	r.Blocks = append(r.Blocks, Block{Type: BlockCheck, ID: "no-check-2",
+		Summary: "No second check either.", Status: CheckNotRun, Limitation: "Nothing ran."})
 	text := Render(r, Options{HideNotRun: true})
 	if !strings.Contains(text, "2 checks not run (hidden)") {
 		t.Errorf("the footnote did not count both checks:\n%s", text)
@@ -284,8 +282,8 @@ func TestHideNotRunCountsEveryCheck(t *testing.T) {
 // A check that actually ran is never collapsed.
 func TestHideNotRunLeavesPassedAlone(t *testing.T) {
 	text := Render(completedReport(), Options{HideNotRun: true})
-	if !strings.Contains(text, "Verification [unit-tests]") {
-		t.Errorf("a passed verification was collapsed:\n%s", text)
+	if !strings.Contains(text, "Check [unit-tests]") {
+		t.Errorf("a passed check was collapsed:\n%s", text)
 	}
 	if strings.Contains(text, "not run (hidden)") {
 		t.Errorf("the footnote appeared with nothing hidden:\n%s", text)
@@ -296,7 +294,7 @@ func TestHideNotRunLeavesPassedAlone(t *testing.T) {
 func TestHideNotRunExpandAllShowsFull(t *testing.T) {
 	r := notRunReport()
 	text := Render(r, Options{HideNotRun: true, ExpandAll: true})
-	if !strings.Contains(text, "Verification [no-check]") {
+	if !strings.Contains(text, "Check [no-check]") {
 		t.Errorf("ExpandAll still collapsed the block:\n%s", text)
 	}
 	if strings.Contains(text, "not run (hidden)") {
@@ -312,7 +310,7 @@ func TestHideNotRunExpandedBlockShowsFull(t *testing.T) {
 	r := notRunReport()
 	opts := Options{HideNotRun: true, Expanded: map[string]bool{"no-check": true}}
 	text := Render(r, opts)
-	if !strings.Contains(text, "Verification [no-check]") {
+	if !strings.Contains(text, "Check [no-check]") {
 		t.Errorf("the expanded block stayed hidden:\n%s", text)
 	}
 	if strings.Contains(text, "not run (hidden)") {

@@ -26,8 +26,8 @@ var idPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,63}$`)
 var fencePattern = regexp.MustCompile("(?s)^```[a-zA-Z0-9_+-]*\n(.*)\n?```$")
 
 // Normalize cleans up what a model sent before it is checked: surrounding
-// whitespace everywhere, and a code fence wrapped around a whole Markdown
-// value. It never changes meaning, so a report that only needed normalizing is
+// whitespace everywhere, a code fence wrapped around a whole Markdown value,
+// and a block type under a name it used to have. It never changes meaning, so a report that only needed normalizing is
 // accepted rather than bounced for a formatting habit.
 func Normalize(r *Report) {
 	if r == nil {
@@ -38,6 +38,9 @@ func Normalize(r *Report) {
 	for i := range r.Blocks {
 		b := &r.Blocks[i]
 		b.Type = BlockType(strings.TrimSpace(string(b.Type)))
+		if renamed, ok := renamedTypes[b.Type]; ok {
+			b.Type = renamed
+		}
 		b.ID = strings.TrimSpace(b.ID)
 		b.Summary = strings.TrimSpace(b.Summary)
 		b.Impact = strings.TrimSpace(b.Impact)
@@ -49,9 +52,6 @@ func Normalize(r *Report) {
 		b.Limitation = strings.TrimSpace(b.Limitation)
 		b.RequiredToVerify = strings.TrimSpace(b.RequiredToVerify)
 		b.Severity = strings.TrimSpace(b.Severity)
-		b.Question = strings.TrimSpace(b.Question)
-		b.Blocker = strings.TrimSpace(b.Blocker)
-		b.RequiredAction = strings.TrimSpace(b.RequiredAction)
 		b.ResponseType = strings.TrimSpace(b.ResponseType)
 		b.RecommendationReason = strings.TrimSpace(b.RecommendationReason)
 		b.ReasonUnclassified = strings.TrimSpace(b.ReasonUnclassified)
@@ -88,8 +88,8 @@ type Rules struct {
 	// Mutated says whether the turn changed anything. It decides what
 	// "completed" has to show: a turn that edited files says how it checked
 	// them, while a turn that only read and explained is finished without a
-	// verification block. Demanding one of a question-answering turn is how
-	// the explanation ends up inside a block that verified nothing.
+	// check block. Demanding one of a question-answering turn is how the
+	// explanation ends up inside a block that checked nothing.
 	Mutated bool
 }
 
@@ -216,21 +216,16 @@ func checkBlock(r *Report, i int, seen map[string]int) []Problem {
 			ps = append(ps, Problem{Path: at("blocks_current_task"), Code: "field_required",
 				Message: "A finding says whether it blocks the current task: set blocks_current_task to true or false."})
 		}
-	case BlockVerification:
-		ps = append(ps, oneOf(at, "status", b.Status, VerifyStatuses)...)
-		if (b.Status == VerifyPartial || b.Status == VerifyNotRun) &&
+	case BlockCheck:
+		ps = append(ps, oneOf(at, "status", b.Status, CheckStatuses)...)
+		if (b.Status == CheckPartial || b.Status == CheckNotRun) &&
 			b.Limitation == "" && b.RequiredToVerify == "" {
-			ps = append(ps, Problem{Path: at("limitation"), Code: "verification_needs_limitation",
-				Message: fmt.Sprintf("A %q verification says what was not checked and why: set limitation, or required_to_verify.", b.Status)})
+			ps = append(ps, Problem{Path: at("limitation"), Code: "check_needs_limitation",
+				Message: fmt.Sprintf("A %q check says what was not checked and why: set limitation, or required_to_verify.", b.Status)})
 		}
 	case BlockWarning:
 		ps = append(ps, oneOf(at, "severity", b.Severity, Levels)...)
 		ps = append(ps, required(at, "impact", b.Impact, "what breaks if this is ignored")...)
-	case BlockQuestion:
-		ps = append(ps, required(at, "question", b.Question, "the question, phrased as a question")...)
-	case BlockBlocked:
-		ps = append(ps, required(at, "blocker", b.Blocker, "what is stopping the work")...)
-		ps = append(ps, required(at, "required_action", b.RequiredAction, "what must happen before the work can continue")...)
 	case BlockUnclassified:
 		ps = append(ps, required(at, "reason_unclassified", b.ReasonUnclassified,
 			"why no other block type fits")...)
@@ -240,14 +235,14 @@ func checkBlock(r *Report, i int, seen map[string]int) []Problem {
 		ps = append(ps, checkInteractive(b, at)...)
 	} else if len(b.Options) > 0 {
 		ps = append(ps, Problem{Path: at("options"), Code: "options_not_allowed",
-			Message: fmt.Sprintf("A %s block has no options. Use decision, question, blocked or next_step to ask for something.", b.Type)})
+			Message: fmt.Sprintf("A %s block has no options. Use \"question\" or \"next\" to ask for something.", b.Type)})
 	}
 	return ps
 }
 
-// checkInteractive covers the four block types that ask the user for
-// something. They share one option list, one response type and one
-// recommendation, so they share one check.
+// checkInteractive covers the block types that ask the user for something.
+// They share one option list, one response type and one recommendation, so
+// they share one check.
 func checkInteractive(b *Block, at func(string) string) []Problem {
 	var ps []Problem
 
@@ -331,9 +326,9 @@ func checkInteractive(b *Block, at func(string) string) []Problem {
 			Message: "Say why you recommend what you recommend, or why no safe default can be inferred."})
 	}
 
-	// A question may have no safe default; the other three must recommend one.
+	// A question may have no safe default; a next block must recommend one.
 	if b.Recommendation == "" {
-		if b.Type != BlockQuestion {
+		if b.Type == BlockNext {
 			ps = append(ps, Problem{Path: at("recommendation"), Code: "field_required",
 				Message: fmt.Sprintf("A %s block recommends one of its options by id.", b.Type)})
 		}
@@ -342,14 +337,14 @@ func checkInteractive(b *Block, at func(string) string) []Problem {
 			Message: fmt.Sprintf("The recommendation %q is not one of this block's option ids.", b.Recommendation)})
 	}
 
-	if b.Type == BlockNextStep {
+	if b.Type == BlockNext {
 		if dispatches == 0 {
-			ps = append(ps, Problem{Path: at("options"), Code: "next_step_needs_dispatch",
-				Message: "A next_step needs an accept option with effect \"dispatch\" and the instruction it would run."})
+			ps = append(ps, Problem{Path: at("options"), Code: "next_needs_dispatch",
+				Message: "A next block needs an accept option with effect \"dispatch\" and the instruction it would run."})
 		}
 		if alternatives == 0 {
-			ps = append(ps, Problem{Path: at("options"), Code: "next_step_needs_alternative",
-				Message: "A next_step needs at least one alternative with effect \"collect\" or \"resolve\", so accepting is a choice rather than the only option."})
+			ps = append(ps, Problem{Path: at("options"), Code: "next_needs_alternative",
+				Message: "A next block needs at least one alternative with effect \"collect\" or \"resolve\", so accepting is a choice rather than the only option."})
 		}
 	}
 	return ps
@@ -364,32 +359,32 @@ func checkConsistency(r *Report, rules Rules) []Problem {
 	for i := range r.Blocks {
 		count[r.Blocks[i].Type]++
 	}
-	interactive := count[BlockDecision] + count[BlockQuestion] + count[BlockBlocked] + count[BlockNextStep]
+	interactive := count[BlockQuestion] + count[BlockNext]
 
 	switch r.TaskStatus {
 	case StatusCompleted, StatusCompletedWithNotes:
 		switch {
-		case rules.Mutated && count[BlockVerification] == 0:
-			ps = append(ps, Problem{Path: "/blocks", Code: "status_needs_verification",
-				Message: "This turn changed something, so the report says how that was checked: add a verification block. When you ran nothing, use status \"not_run\" with a limitation saying why."})
+		case rules.Mutated && count[BlockCheck] == 0:
+			ps = append(ps, Problem{Path: "/blocks", Code: "status_needs_check",
+				Message: "This turn changed something, so the report says how that was checked: add a check block. When you ran nothing, use status \"not_run\" with a limitation saying why."})
 		case !rules.Mutated && len(r.Blocks) == 0:
 			ps = append(ps, Problem{Path: "/blocks", Code: "status_needs_block",
-				Message: "A completed report needs at least one block. This turn changed nothing, so what it found goes in a finding rather than a verification."})
+				Message: "A completed report needs at least one block. This turn changed nothing, so what it found goes in a finding rather than a check."})
 		}
 	case StatusNeedsAction:
-		if count[BlockDecision]+count[BlockQuestion]+count[BlockNextStep] == 0 {
+		if interactive == 0 {
 			ps = append(ps, Problem{Path: "/blocks", Code: "status_needs_interaction",
-				Message: "needs_action means the user has something to answer: add a decision, question or next_step block."})
+				Message: "needs_action means the user has something to answer: add a question or next block."})
 		}
 	case StatusBlocked:
-		if count[BlockBlocked] == 0 {
+		if count[BlockWarning]+count[BlockFinding] == 0 {
 			ps = append(ps, Problem{Path: "/blocks", Code: "status_needs_blocked",
-				Message: "blocked means something is stopping the work: add a blocked block saying what, and what would unblock it."})
+				Message: "blocked means something is stopping the work: add a warning or finding saying what, and a question if the user can clear it."})
 		}
 	case StatusFailed:
-		if count[BlockFinding]+count[BlockWarning]+count[BlockBlocked] == 0 {
+		if count[BlockFinding]+count[BlockWarning] == 0 {
 			ps = append(ps, Problem{Path: "/blocks", Code: "status_needs_explanation",
-				Message: "A failed turn says why it failed: add a finding, warning or blocked block."})
+				Message: "A failed turn says why it failed: add a finding or warning."})
 		}
 	}
 

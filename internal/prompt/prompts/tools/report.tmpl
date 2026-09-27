@@ -12,7 +12,7 @@ A report has three fields:
   read, so put the material fact in it.
 - `blocks`: the typed items behind the headline. Fewer is better — put related
   steps in one block's `details`, not one block each — but each proposed
-  continuation gets its own `next_step` block.
+  continuation gets its own `next` block.
 
 Every block has a `type`, a kebab-case `id` unique in the report, and a
 `summary` that states its fact on its own.
@@ -21,7 +21,7 @@ The user reads the headline first, then the what's-next actions, then the
 bullet summaries, and almost never opens details. So the headline carries the
 material fact on its own, summaries stand alone, and nothing the user must act
 on lives only in details. Never bury "say the word and I will ..." in details
-prose — make it a `next_step` accept option's `instruction`.
+prose — make it a `next` accept option's `instruction`.
 
 ```json
 {
@@ -31,10 +31,10 @@ prose — make it a `next_step` accept option's `instruction`.
     {"type": "change", "id": "reorder-impl",
      "summary": "Added drag handles to the row list and persisted the new order.",
      "related_files": ["internal/ui/rows.go", "internal/store/order.go"]},
-    {"type": "verification", "id": "reorder-tests",
+    {"type": "check", "id": "reorder-tests",
      "summary": "14/14 relevant tests pass and ordering survives a restart.",
      "status": "passed", "evidence": "go test ./internal/store (14 passed)"},
-    {"type": "next_step", "id": "filtered-reordering",
+    {"type": "next", "id": "filtered-reordering",
      "summary": "Apply the filtered-view fix preserving hidden positions.",
      "options": [
        {"id": "preserve", "label": "Apply the fix",
@@ -46,7 +46,7 @@ prose — make it a `next_step` accept option's `instruction`.
      "recommendation": "preserve",
      "recommendation_reason": "It disturbs the least unrelated state and keeps hidden rows stable.",
      "response_type": "single"},
-    {"type": "next_step", "id": "commit-reorder",
+    {"type": "next", "id": "commit-reorder",
      "summary": "Commit the reordering change.",
      "options": [
        {"id": "commit", "label": "Commit it",
@@ -63,35 +63,38 @@ prose — make it a `next_step` accept option's `instruction`.
 
 **Which block type to use.** `change` for work output. `finding` for something
 learned that matters, with `impact`, `importance` and `blocks_current_task`.
-`verification` for how you checked, with `status`. `warning` for a risk, with
-`severity` and `impact`. `decision` when only the user can choose. `question`
-when only the user has the information. `blocked` when something outside stops
-you. `next_step` when there is an obvious continuation to accept or redirect.
-There are often several — emit one `next_step` block per proposal (e.g. apply
-the fix, commit it); the options inside one block are ways to answer that
-proposal, not different proposals.
-`unclassified` only when nothing else fits, and say why.
+`check` for how you checked, with `status`. `warning` for a risk, with
+`severity` and `impact`. `question` when only the user can settle something: a
+choice between alternatives with no obvious default, or information only they
+have; its `summary` is the question, and alternatives to one another go in one
+`question` as its options rather than in separate blocks. `next` when
+there is an obvious continuation to accept or redirect. There are often
+several — emit one `next` block per proposal (e.g. apply the fix, commit
+it); the options inside one block are ways to answer that proposal, not
+different proposals. `unclassified` is an escape hatch for something you must
+say that fits no other type; do not use it routinely, and say why.
 
 **The rules that get broken most.**
 
 - When the turn changed something, `completed` and `completed_with_notes` need a
-  `verification` block. If you ran nothing, say so: status `not_run` with a
-  `limitation` explaining why. Do not put an explanation in a verification block
-  that verified nothing. A turn that only read and explained puts its answer in
-  a `finding` and needs no verification.
+  `check` block. If you ran nothing, say so: status `not_run` with a
+  `limitation` explaining why. Do not put an explanation in a check block that
+  checked nothing. A turn that only read and explained puts its answer in a
+  `finding` and needs no check.
 - Any block that asks the user something makes the whole report `needs_action`
-  or `blocked`.
+  or `blocked`. A `blocked` report says what stops the work in a `warning` or
+  `finding`.
 - An interactive block needs 2 to 6 options, a `recommendation_reason`, and
-  `response_type: "single"`. `decision`, `blocked` and `next_step` also need a
-  `recommendation` naming one option id; `question` may omit it when there is no
-  safe default, and then the reason says why.
+  `response_type: "single"`. `next` also needs a `recommendation` naming
+  one option id; `question` may omit it when there is no safe default, and then
+  the reason says why.
 - An option's `effect` is `dispatch` (its `instruction` becomes the next prompt,
   and the user reads it before choosing, so write it as an instruction you want
   to receive), `collect` (the user writes an answer), or `resolve` (the user
   stops here). Only a `dispatch` option has an `instruction`.
-- Each `next_step` needs one `dispatch` accept option and at least one `collect`
+- Each `next` needs one `dispatch` accept option and at least one `collect`
   or `resolve` alternative. Never put something the user must act on only in
-  `details` — make it a `next_step` option.
+  `details` — make it a `next` option.
 
 A report that does not fit comes back as `REPORT_REJECTED` with every problem
 listed by field. Fix all of them and call again.
