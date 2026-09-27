@@ -3,17 +3,14 @@
 [![Test](https://github.com/kvit-s/kvit-coder/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/kvit-s/kvit-coder/actions/workflows/test.yml)
 [![Release](https://img.shields.io/github/v/release/kvit-s/kvit-coder?sort=semver)](https://github.com/kvit-s/kvit-coder/releases/latest)
 
-A coding agent in Go. Two binaries: `kvit-coder` runs one turn and exits, which is what you
-script against, and `kvit-coder-ui` is the interactive terminal front end.
-A turn is one run of that loop against a single instruction.
+A coding agent in Go. Two binaries: `kvit-coder` runs one turn (user question -> multiple steps calling tools -> model's answer) and exits. And `kvit-coder-ui` - the interactive terminal front end.
 
 The agent started as experiment to see how much coding can be done with locally ran weak models
-and was extended with features more suitable to strong models. Modes adjust how tool behave
-how much handholding is done. Each model added to the agent has flag weak or strong for agent
-to adapt accordingly.
+and was extended with features more suitable to strong models. Weak/strong modes change how tools behave
+and how much handholding is done. Each model added to the agent flagged as weak or strong.
 
 It uses small amound of RAM (<30 Mb) compared to hundreds Mbs other agents use. See [`docs/agents-ram.md`](docs/agents-ram.md).
-This part is important to me as I often have dosens of agents opened/running/waiting at any moment.
+This was is important to me as I often have dosens of agents opened/running/waiting at any moment.
 
 ![kvit-coder-ui running a session](docs/screen.png)
 
@@ -23,21 +20,11 @@ This part is important to me as I often have dosens of agents opened/running/wai
 curl -fsSL https://raw.githubusercontent.com/kvit-s/kvit-coder/main/install.sh | sh
 ```
 
-That works out which build fits the machine, downloads it from the latest
-release, checks it against the release's checksums, and puts both binaries in
-`~/.local/bin` under four names: `kc` and `kvit-coder` for the headless agent,
-`kcu` and `kvit-coder-ui` for the front end. If there is no configuration yet it
-leaves one at `~/.kvit-coder/config.yaml` to edit. `KVIT_BIN_DIR` puts the
-binaries somewhere else and `KVIT_VERSION` installs a particular release.
-
 To build from source, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 **Platforms.** Linux is where this is developed and used daily, including under
 Windows Subsystem for Linux (WSL). The macOS builds compile and are published,
-but nothing has been run on them, so treat them as untested. Windows is not
-supported: the program uses Unix process groups, signals and file locking, and
-does not compile for it. Under Windows, run it inside WSL, which is a tested
-configuration.
+but never tested. Windows is not supported yet.
 
 ## Configure
 
@@ -46,20 +33,11 @@ Copy [`config.example.yaml`](config.example.yaml) to
 a local llama.cpp, vLLM or Ollama server, or any hosted API that speaks the same
 protocol:
 
-```yaml
-llm:
-  base_url: "http://localhost:8080/v1"
-  model: "your-model"
-  api_backend: "chat_completions"   # or "responses"
-  api_key_env: "OPENAI_API_KEY"     # a local server usually needs no key
-  context: 131072
-```
-
 Without `-config`, both binaries take the first of `$KVIT_CODER_CONFIG`,
 `./config.yaml`, `~/.kvit-coder/config.yaml`, and `config.yaml` beside the
-binary with symlinks resolved. A file belonging to some other program is passed
-over rather than loaded: it has to have an `llm:` or `models:` section to count
-as one of ours. Every key is documented in
+binary with symlinks resolved.
+
+Every key is documented in
 [`docs/configuration.md`](docs/configuration.md), including the parts
 `config.example.yaml` leaves out: defining more than one model and switching
 between them, Model Context Protocol (MCP) servers that provide external tools,
@@ -97,14 +75,8 @@ disables these prompts for a run.
 
 ## Benchmarks
 
-Three benchmark families ship with the program and run through `kvit-coder`,
-and each measures something small local models get wrong: tool benchmarks for
-whether the model calls tools with the right arguments on small checkable
-tasks, haystack for whether it still retrieves a fact once the context is long,
-and thinkbench for whether it can finish a coding task scored by a held-out
-grader, a test script the agent never sees, over 72 vendored tasks. The task
-inputs are checked into git and the run outputs are not. See
-[`benchmarks/README.md`](benchmarks/README.md).
+The harness includes three benchmarks. These are designed to check basic agentic
+skills of weak models. See [`benchmarks/README.md`](benchmarks/README.md).
 
 ## Documents
 
