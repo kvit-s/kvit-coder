@@ -206,8 +206,16 @@ func TestReportCheckRuleFollowsTheTurn(t *testing.T) {
 		t.Fatalf("a read-only turn's report was rejected: %v", err)
 	}
 
+	// A tool that could have changed something but only read, such as Shell
+	// running ls, owes no check.
 	tool, tc := newReportTool(t)
 	tc.NoteMutatingTool()
+	if _, err := tool.Call(context.Background(), explanation); err != nil {
+		t.Fatalf("a turn that only ran a read-only command was asked for a check: %v", err)
+	}
+
+	tool, tc = newReportTool(t)
+	tc.NoteChange()
 	_, err := tool.Call(context.Background(), explanation)
 	if err == nil || !strings.Contains(err.Error(), "status_needs_check") &&
 		!strings.Contains(err.Error(), "how that was checked") {

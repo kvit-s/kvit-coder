@@ -80,7 +80,8 @@ say that fits no other type; do not use it routinely, and say why.
   `check` block. If you ran nothing, say so: status `not_run` with a
   `limitation` explaining why. Do not put an explanation in a check block that
   checked nothing. A turn that only read and explained puts its answer in a
-  `finding` and needs no check.
+  `finding` and needs no check; commands that only read, such as `ls`, `grep`
+  or `git diff`, are reading.
 - Any block that asks the user something makes the whole report `needs_action`
   or `blocked`. A `blocked` report says what stops the work in a `warning` or
   `finding`.

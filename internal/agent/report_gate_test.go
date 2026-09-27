@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -19,6 +20,18 @@ import (
 type readOnlyTool struct{ scriptedTool }
 
 func (r *readOnlyTool) ParallelSafe() bool { return true }
+
+// shellLikeTool stands in for Shell: it is not safe to run beside others, so
+// running it owes a report under mode "mutating", but it can say of one call
+// that it only reads. Here that is a call whose arg is "ls".
+type shellLikeTool struct{ scriptedTool }
+
+func (s *shellLikeTool) ReadOnlyCall(args json.RawMessage) bool {
+	var a struct {
+		Arg string `json:"arg"`
+	}
+	return json.Unmarshal(args, &a) == nil && a.Arg == "ls"
+}
 
 // reportingConfig turns the Report tool on in the given mode.
 func reportingConfig(mode config.ReportMode) *config.Config {
@@ -81,6 +94,55 @@ func TestAcceptedReportEndsTheTurn(t *testing.T) {
 	rep := runner.toolCtx.AcceptedReport()
 	if rep == nil || rep.TaskStatus != report.StatusCompleted {
 		t.Fatalf("accepted report is %v", rep)
+	}
+}
+
+// A turn that only ran a read-only command still owes a report, because it ran
+// a command, but the report needs no check: nothing was changed to check.
+func TestReadOnlyCommandNeedsNoCheck(t *testing.T) {
+	explanation := map[string]any{
+		"task_status": "completed",
+		"headline":    "The helper lives in internal/store.",
+		"blocks": []any{map[string]any{
+			"type": "finding", "id": "where", "summary": "store.go defines it.",
+			"impact": "Callers import internal/store.",
+		}},
+	}
+	client := newFakeClient(
+		calls(toolCall("c1", "sh", map[string]string{"arg": "ls"})),
+		calls(toolCall("r1", "Report", explanation)),
+	)
+	sh := &shellLikeTool{scriptedTool{name: "sh"}}
+	runner := newReportingRunner(t, reportingConfig(config.ReportModeMutating), client, sh)
+
+	if _, err := runner.Run(context.Background(), RunConfig{Messages: userStart("where is the helper?")}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if runner.toolCtx.AcceptedReport() == nil {
+		t.Error("a report with no check was rejected after a read-only command")
+	}
+	if !runner.toolCtx.MutatedThisTurn() {
+		t.Error("running the command no longer owes a report")
+	}
+	if runner.toolCtx.ChangedThisTurn() {
+		t.Error("a read-only command was recorded as a change")
+	}
+}
+
+// The same tool with a command that is not read-only is a change.
+func TestCommandThatWritesIsAChange(t *testing.T) {
+	client := newFakeClient(
+		calls(toolCall("c1", "sh", map[string]string{"arg": "rm"})),
+		calls(toolCall("r1", "Report", goodReport())),
+	)
+	sh := &shellLikeTool{scriptedTool{name: "sh"}}
+	runner := newReportingRunner(t, reportingConfig(config.ReportModeMutating), client, sh)
+
+	if _, err := runner.Run(context.Background(), RunConfig{Messages: userStart("delete it")}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !runner.toolCtx.ChangedThisTurn() {
+		t.Error("a command that is not read-only was not recorded as a change")
 	}
 }
 

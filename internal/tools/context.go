@@ -71,13 +71,15 @@ type ToolContext struct {
 	sessionTmp   string
 
 	// reportMu guards everything about the turn's structured report: the one
-	// that was accepted, how many were rejected first, and whether anything
-	// this turn changed the workspace (which is what decides a report is owed
-	// under report mode "mutating").
+	// that was accepted, how many were rejected first, whether this turn ran
+	// a tool that is not read-only (which is what decides a report is owed
+	// under report mode "mutating"), and whether one of those calls actually
+	// changed something (which is what decides the report needs a check).
 	reportMu       sync.Mutex
 	acceptedReport *report.Report
 	reportRepairs  int
 	mutated        bool
+	changed        bool
 }
 
 // NewToolContext creates a new ToolContext with initialized state.
@@ -454,4 +456,28 @@ func (tc *ToolContext) MutatedThisTurn() bool {
 	tc.reportMu.Lock()
 	defer tc.reportMu.Unlock()
 	return tc.mutated
+}
+
+// NoteChange records that a call this turn changed something, as opposed to
+// running a tool that could have and only read this time, such as Shell
+// running ls. It implies NoteMutatingTool.
+func (tc *ToolContext) NoteChange() {
+	if tc == nil {
+		return
+	}
+	tc.reportMu.Lock()
+	defer tc.reportMu.Unlock()
+	tc.mutated = true
+	tc.changed = true
+}
+
+// ChangedThisTurn reports whether any call this turn changed something. It is
+// what decides a completed report has to say how the work was checked.
+func (tc *ToolContext) ChangedThisTurn() bool {
+	if tc == nil {
+		return false
+	}
+	tc.reportMu.Lock()
+	defer tc.reportMu.Unlock()
+	return tc.changed
 }

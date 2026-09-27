@@ -79,7 +79,7 @@ func (t *ReportTool) Call(ctx context.Context, args json.RawMessage) (any, error
 	}
 
 	report.Normalize(&rep)
-	rules := report.Rules{MaxBlocks: t.maxBlocks(), Mutated: t.toolCtx.MutatedThisTurn()}
+	rules := report.Rules{MaxBlocks: t.maxBlocks(), Mutated: t.toolCtx.ChangedThisTurn()}
 	if problems := report.Validate(&rep, rules); len(problems) > 0 {
 		return nil, t.reject(problems, report.BuriedProposalHint(&rep))
 	}
@@ -147,7 +147,8 @@ Rules the schema cannot enforce for you:
   a check block saying how you checked it. If you ran nothing, say so with
   status "not_run" and a limitation, rather than putting an explanation in a
   check block that checked nothing. A turn that only read and explained puts
-  its answer in a finding and needs no check.
+  its answer in a finding and needs no check; commands that only read, such
+  as ls, grep or git diff, are reading.
 - Any block that asks the user something — question or next — makes the
   report "needs_action" or "blocked", offers %d to %d options, and says why you
   recommend the one you recommend. A "dispatch" option's instruction is shown

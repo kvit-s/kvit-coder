@@ -202,6 +202,24 @@ func (t *ShellTool) Check(ctx context.Context, args json.RawMessage) error {
 	return t.advanced.validateCommand(params.Command, t.advanced.workspaceRoot)
 }
 
+// ReadOnlyCall reports whether the command only reads, so a turn that ran
+// nothing but ls, grep or git diff is not treated as one that changed files.
+func (t *ShellTool) ReadOnlyCall(args json.RawMessage) bool {
+	return t.advanced.ReadOnlyCall(args)
+}
+
+// ReadOnlyCall reports whether the command only reads. The working directory
+// and timeout do not change the answer.
+func (t *ShellAdvancedTool) ReadOnlyCall(args json.RawMessage) bool {
+	var params struct {
+		Command string `json:"command"`
+	}
+	if err := json.Unmarshal(args, &params); err != nil {
+		return false
+	}
+	return permissions.ReadOnly(params.Command)
+}
+
 // Call executes command - delegates to Shell.advanced (ignores working_dir/timeout)
 func (t *ShellTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
 	// Pass through to advanced - it will use defaults for working_dir and timeout

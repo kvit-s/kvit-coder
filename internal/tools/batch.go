@@ -204,7 +204,11 @@ func (t *BatchTool) Call(ctx context.Context, args json.RawMessage) (any, error)
 			continue
 		}
 		if !isParallelSafe(tool) {
-			tc.NoteMutatingTool()
+			if Changes(tool, call.Args) {
+				tc.NoteChange()
+			} else {
+				tc.NoteMutatingTool()
+			}
 			sequential = append(sequential, i)
 			continue
 		}
@@ -289,4 +293,23 @@ func Mutates(t Tool) bool {
 		return false
 	}
 	return !isParallelSafe(t)
+}
+
+// ReadOnlyCaller is a tool that can change things in general but can tell
+// from one call's arguments that this call only reads. Shell is the case:
+// ls and rm are both Shell calls, and only the command tells them apart.
+type ReadOnlyCaller interface {
+	ReadOnlyCall(args json.RawMessage) bool
+}
+
+// Changes reports whether this particular call can change something: the
+// tool Mutates, and it cannot vouch for these arguments as read-only.
+func Changes(t Tool, args json.RawMessage) bool {
+	if !Mutates(t) {
+		return false
+	}
+	if r, ok := t.(ReadOnlyCaller); ok && r.ReadOnlyCall(args) {
+		return false
+	}
+	return true
 }

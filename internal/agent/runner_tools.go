@@ -72,10 +72,15 @@ func (r *Runner) executeTools(
 		if strings.HasPrefix(internalName, "Tasks.") {
 			result.tasksToolExecuted = true
 		}
-		// Report mode "mutating" asks for a report from a turn that changed
-		// something. Recording it here, per call, is what tells a turn that
-		// edited a file apart from one that only read.
-		if tools.Mutates(r.registry.Get(internalName)) {
+		// Report mode "mutating" asks for a report from a turn that ran a
+		// tool that is not read-only, and a completed report needs a check
+		// only when one of those calls changed something. Recording both here,
+		// per call, is what tells a turn that edited a file apart from one
+		// that only ran ls.
+		switch tool := r.registry.Get(internalName); {
+		case tools.Changes(tool, json.RawMessage(tc.Function.Arguments)):
+			r.toolCtx.NoteChange()
+		case tools.Mutates(tool):
 			r.toolCtx.NoteMutatingTool()
 		}
 	}

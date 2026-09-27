@@ -377,3 +377,24 @@ func TestShellTool_YoloAnswersTheAsks(t *testing.T) {
 		}
 	}
 }
+
+// A Shell call is a change unless its command only reads, which is what lets
+// a turn that ran nothing but ls end without a check block.
+func TestShellCallsThatOnlyReadAreNotChanges(t *testing.T) {
+	tempMgr := NewTempFileManager(os.TempDir())
+	defer tempMgr.CleanupAll()
+	shell := NewShellTool(newTestConfig(), 10*time.Second, tempMgr)
+	advanced := NewShellAdvancedTool(newTestConfig(), 10*time.Second, tempMgr)
+
+	for _, tool := range []Tool{shell, advanced} {
+		if Changes(tool, json.RawMessage(`{"command":"git diff --stat && ls"}`)) {
+			t.Errorf("%s: a read-only command counted as a change", tool.Name())
+		}
+		if !Changes(tool, json.RawMessage(`{"command":"rm -f notes.txt"}`)) {
+			t.Errorf("%s: rm did not count as a change", tool.Name())
+		}
+		if !Mutates(tool) {
+			t.Errorf("%s: running a shell command no longer owes a report", tool.Name())
+		}
+	}
+}
