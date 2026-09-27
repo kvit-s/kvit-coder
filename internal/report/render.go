@@ -129,30 +129,35 @@ func Lines(r *Report, opts Options) []Line {
 					marker = fmt.Sprintf("%d)", n)
 				}
 
+				recommended := o.ID == b.Recommendation
 				line := fmt.Sprintf("%s%s %s", indent, marker, o.Label)
-				if o.ID == b.Recommendation {
+				if recommended {
 					line += " (recommended)"
 				}
-
-				if o.Description != "" {
-					line += " — " + o.Description
+				// What choosing it means and what follows from it share the
+				// option's line, so an option costs one line before its
+				// instruction rather than two.
+				if about := sentences(o.Description, o.Consequence); about != "" {
+					line += " — " + about
 				}
-
 				add(LineOption, n, "%s", line)
-				if o.Consequence != "" {
-					add(LineOption, n, "%s%s%s", indent, indent+indent, o.Consequence)
-				}
 
-				// The instruction is shown in full: it is what picking the
-				// option will send, and agreeing to something unseen is not a
-				// choice.
-
+				// The instruction is given in full: it is what picking the
+				// option will send. The live card cuts it to one line until 0
+				// is pressed; the scrollback copy and headless output show it
+				// all.
 				if o.Effect == EffectDispatch && o.Instruction != "" {
 					for _, l := range strings.Split(o.Instruction, "\n") {
 						add(LineInstruction, n, "%s%s→ %s", indent, indent, l)
 					}
 				}
 
+				// The reason sits under the option it argues for. The option
+				// line already says which one that is, so the block does not
+				// name it a second time.
+				if recommended && b.RecommendationReason != "" {
+					add(LineField, n, "%s%sWhy: %s", indent, indent, b.RecommendationReason)
+				}
 			}
 		}
 
@@ -209,13 +214,10 @@ func blockFields(b *Block, detailsHidden bool) []string {
 		add("Closest type", b.SuggestedType)
 	}
 
-	if b.Interactive() {
-		if rec := b.Option(b.Recommendation); rec != nil {
-			add("Recommended", rec.Label)
-			add("Because", b.RecommendationReason)
-		} else {
-			add("No recommendation", b.RecommendationReason)
-		}
+	// A recommended option carries its reason on the option itself; only the
+	// absence of one is said at the block.
+	if b.Interactive() && b.Option(b.Recommendation) == nil {
+		add("No recommendation", b.RecommendationReason)
 	}
 
 	if len(b.RelatedFiles) > 0 {
@@ -225,6 +227,21 @@ func blockFields(b *Block, detailsHidden bool) []string {
 		out = append(out, fmt.Sprintf("(%d bytes of detail, hidden)", len(b.Details)))
 	}
 	return out
+}
+
+// sentences joins an option's description and consequence into one run of
+// text, adding the full stop the first one usually lacks.
+func sentences(first, second string) string {
+	switch {
+	case first == "":
+		return second
+	case second == "":
+		return first
+	}
+	if !strings.ContainsAny(first[len(first)-1:], ".!?;:") {
+		first += "."
+	}
+	return first + " " + second
 }
 
 // Render is the report as plain text, which is what a headless run prints and

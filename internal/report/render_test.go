@@ -194,8 +194,15 @@ func TestRecommendationIsNamedOrItsAbsenceExplained(t *testing.T) {
 	r.TaskStatus = StatusNeedsAction
 	b := questionBlock()
 	r.Blocks = append(r.Blocks, b)
-	if !strings.Contains(Render(r, Options{}), "Recommended: Preserve hidden positions") {
-		t.Error("the recommendation was not named")
+	text := Render(r, Options{})
+	if !strings.Contains(text, "Preserve hidden positions (recommended)") {
+		t.Errorf("the recommended option was not marked:\n%s", text)
+	}
+	if !strings.Contains(text, "Why: It disturbs the least unrelated state.") {
+		t.Errorf("the reason was not shown under the recommended option:\n%s", text)
+	}
+	if strings.Contains(text, "Recommended:") {
+		t.Errorf("the recommendation was named twice:\n%s", text)
 	}
 
 	r.Blocks[1].Summary = "Which database?"
@@ -331,5 +338,19 @@ func TestHiddenNotRunCount(t *testing.T) {
 	}
 	if got := completedReport().HiddenNotRunCount(Options{HideNotRun: true}); got != 0 {
 		t.Errorf("HiddenNotRunCount on a passed check is %d, want 0", got)
+	}
+}
+
+// An option's description and consequence share its line.
+func TestOptionTextIsOneLine(t *testing.T) {
+	r := completedReport()
+	r.TaskStatus = StatusNeedsAction
+	b := questionBlock()
+	b.Options[1].Description = "Push hidden rows to the end"
+	b.Options[1].Consequence = "Their old slots are lost."
+	r.Blocks = append(r.Blocks, b)
+	text := Render(r, Options{})
+	if !strings.Contains(text, "Recompute the ordering — Push hidden rows to the end. Their old slots are lost.") {
+		t.Errorf("description and consequence were not joined on the option line:\n%s", text)
 	}
 }

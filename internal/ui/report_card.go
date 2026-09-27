@@ -111,15 +111,19 @@ func (m *InputModel) hiddenNotRun() int {
 	return m.card.HiddenNotRunCount(m.cardOpts())
 }
 
-// anyDetails reports whether any block has details, which decides whether the
-// footer offers the key that shows them. Collapsed not_run checks count too:
-// with nothing else to expand, 0 is still the key that reveals them — and
-// while one stands revealed, 0 is the key that hides it again.
+// anyDetails reports whether the card is holding anything back, which decides
+// whether the footer offers the key that shows it. Details count, and so do
+// collapsed not_run checks and instructions cut to one line: with nothing
+// else to expand, 0 is still the key that reveals them — and while one stands
+// revealed, 0 is the key that hides it again.
 func (m *InputModel) anyDetails() bool {
 	if m.card == nil {
 		return false
 	}
 	if m.hiddenNotRun() > 0 {
+		return true
+	}
+	if _, cut := cardSegments(m.card, report.Options{HideNotRun: true}, m.cardWidth(), true); cut {
 		return true
 	}
 	for i := range m.card.Blocks {
@@ -128,6 +132,20 @@ func (m *InputModel) anyDetails() bool {
 			return true
 		}
 		if b.IsNotRunCheck() && m.cardExpanded[b.ID] {
+			return true
+		}
+	}
+	return false
+}
+
+// expandable reports whether 0 has anything to show for this block: details,
+// a not_run check the card collapsed, or an instruction it may have cut short.
+func expandable(b *report.Block) bool {
+	if b.Details != "" || b.IsNotRunCheck() {
+		return true
+	}
+	for i := range b.Options {
+		if b.Options[i].Effect == report.EffectDispatch && b.Options[i].Instruction != "" {
 			return true
 		}
 	}
@@ -207,19 +225,17 @@ func (m *InputModel) pickOption(n int) (bool, tea.Cmd) {
 }
 
 // toggleAllDetails opens every block's details, or closes them all when any is
-// already open. Collapsed not_run checks ride along: 0 reveals them, and 0
-// again hides them with the details.
+// already open. Collapsed not_run checks and shortened instructions ride
+// along: 0 reveals them, and 0 again hides them with the details.
 func (m *InputModel) toggleAllDetails() {
 	open := false
 	for i := range m.card.Blocks {
-		if b := &m.card.Blocks[i]; m.cardExpanded[b.ID] {
-			if b.Details != "" || b.IsNotRunCheck() {
-				open = true
-			}
+		if b := &m.card.Blocks[i]; m.cardExpanded[b.ID] && expandable(b) {
+			open = true
 		}
 	}
 	for i := range m.card.Blocks {
-		if b := &m.card.Blocks[i]; b.Details != "" || b.IsNotRunCheck() {
+		if b := &m.card.Blocks[i]; expandable(b) {
 			m.cardExpanded[b.ID] = !open
 		}
 	}
@@ -265,24 +281,77 @@ func paintCardLine(kind report.LineKind, option int, text string) string {
 
 // renderCardLines lays out a report the way the card does — indented,
 // wrapped, painted — but without the card's key hint, so both the live card
-// and the scrollback copy share one layout.
-func renderCardLines(card *report.Report, opts report.Options, width int) string {
+// and the scrollback copy share one layout. shortInstructions is the live
+// card's setting; see cardSegments.
+func renderCardLines(card *report.Report, opts report.Options, width int, shortInstructions bool) string {
 	var sb strings.Builder
+	segs, _ := cardSegments(card, opts, width, shortInstructions)
+	for _, seg := range segs {
+		if seg.kind == report.LineHeader {
+			sb.WriteString(cardText.Render(seg.text))
+		} else {
+			sb.WriteString(paintCardLine(seg.kind, seg.option, seg.text))
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+// cardSegment is one line of the card as it is drawn: wrapped, unpainted.
+type cardSegment struct {
+	kind   report.LineKind
+	option int
+	text   string
+}
+
+// cardSegments wraps the report's lines to the card's width. With
+// shortInstructions, a dispatch instruction in a block that is not expanded
+// keeps only its first line, ending in "…" when anything was cut, so a
+// two-option proposal does not spend four lines on what it would send. The
+// second result says whether anything was cut, which is what makes the expand
+// key worth offering.
+func cardSegments(card *report.Report, opts report.Options, width int, shortInstructions bool) ([]cardSegment, bool) {
+	var segs []cardSegment
+	cut := false
+	prevInstruction := false
 	for _, line := range report.Lines(card, opts) {
 		text := line.Text
 		if line.Kind != report.LineHeader {
 			text = "  " + text
 		}
-		for _, out := range wrapCardLine(text, width) {
-			if line.Kind == report.LineHeader {
-				sb.WriteString(cardText.Render(out))
-			} else {
-				sb.WriteString(paintCardLine(line.Kind, line.Option, out))
+		wrapped := wrapCardLine(text, width)
+		if shortInstructions && line.Kind == report.LineInstruction &&
+			!opts.ExpandAll && !opts.Expanded[line.BlockID] {
+			if prevInstruction {
+				// A further line of the instruction just shown.
+				if !strings.HasSuffix(segs[len(segs)-1].text, "…") {
+					segs[len(segs)-1].text = withEllipsis(segs[len(segs)-1].text, width)
+				}
+				cut = true
+				continue
 			}
-			sb.WriteString("\n")
+			if len(wrapped) > 1 {
+				wrapped = []string{withEllipsis(wrapped[0], width)}
+				cut = true
+			}
+		}
+		prevInstruction = line.Kind == report.LineInstruction
+		for _, out := range wrapped {
+			segs = append(segs, cardSegment{kind: line.Kind, option: line.Option, text: out})
 		}
 	}
-	return sb.String()
+	return segs, cut
+}
+
+// withEllipsis marks a line as cut short, dropping characters from its end
+// when the mark would not otherwise fit in width.
+func withEllipsis(text string, width int) string {
+	text = strings.TrimRight(text, " ")
+	for visibleLen(text)+1 > width && text != "" {
+		r := []rune(text)
+		text = strings.TrimRight(string(r[:len(r)-1]), " ")
+	}
+	return text + "…"
 }
 
 // transcriptWidth is the width the scrollback copy wraps to. The live card
@@ -325,7 +394,7 @@ func TranscriptWidth(card *report.Report, ans *CardAnswer, width int) string {
 	var sb strings.Builder
 	sb.WriteString("\n")
 	sb.WriteString(cardDim.Render("── report (previous turn, expanded) ──") + "\n")
-	sb.WriteString(renderCardLines(card, report.Options{ExpandAll: true}, width))
+	sb.WriteString(renderCardLines(card, report.Options{ExpandAll: true}, width, false))
 	sb.WriteString(cardDim.Render("─────────────────────────────────────") + "\n")
 	if ans != nil {
 		if d := ans.Describe(); d != "" {
@@ -346,7 +415,7 @@ func (m InputModel) cardView() string {
 		return ""
 	}
 	var sb strings.Builder
-	sb.WriteString(renderCardLines(m.card, m.cardOpts(), m.cardWidth()))
+	sb.WriteString(renderCardLines(m.card, m.cardOpts(), m.cardWidth(), true))
 	sb.WriteString(cardDim.Render(m.cardHint()) + "\n\n")
 	return sb.String()
 }
@@ -375,7 +444,7 @@ func (m InputModel) cardHint() string {
 		}
 	}
 	if m.anyDetails() {
-		parts = append(parts, "0 details")
+		parts = append(parts, "0 expand")
 	}
 	parts = append(parts, "esc dismiss", ":report reopen")
 	return "  [" + strings.Join(parts, " · ") + "]"

@@ -474,7 +474,7 @@ func TestCardKeepsPassedCheck(t *testing.T) {
 // 0 reveals the collapsed check, and 0 again hides it.
 func TestZeroRevealsCollapsedNotRun(t *testing.T) {
 	m := withCard(notRunReport())
-	if !strings.Contains(m.View(), "0 details") {
+	if !strings.Contains(m.View(), "0 expand") {
 		t.Fatalf("the footer does not offer 0:\n%s", m.View())
 	}
 	m = press(m, "0")
@@ -496,5 +496,64 @@ func TestTranscriptKeepsNotRunInFull(t *testing.T) {
 	}
 	if strings.Contains(got, "not run (hidden)") {
 		t.Errorf("the footnote leaked into the transcript:\n%s", got)
+	}
+}
+
+// longInstructionReport has a proposal whose instruction wraps at the default
+// card width and has no details, so the instruction is the only thing the
+// card can hold back.
+func longInstructionReport() *report.Report {
+	return &report.Report{
+		TaskStatus: report.StatusNeedsAction,
+		Headline:   "The GIF is too large to embed.",
+		Blocks: []report.Block{{
+			Type: report.BlockNext, ID: "swap-gif", Summary: "Swap in the compressed GIF.",
+			Options: []report.Option{
+				{ID: "swap", Label: "Swap it", Effect: report.EffectDispatch,
+					Instruction: "Replace screen.gif with the compressed 2.2MB version (720w, 6fps, 128 colors), " +
+						"keeping the same filename, and report the size before and after."},
+				{ID: "leave", Label: "Leave it", Effect: report.EffectResolve},
+			},
+			Recommendation:       "swap",
+			RecommendationReason: "A 44MB file cannot load inline.",
+			ResponseType:         report.ResponseSingle,
+		}},
+	}
+}
+
+// The live card cuts an instruction to its first line; 0 shows it in full.
+func TestCardCutsInstructionsToOneLine(t *testing.T) {
+	m := withCard(longInstructionReport())
+	view := m.View()
+	if !strings.Contains(view, "→ Replace screen.gif") || !strings.Contains(view, "…") {
+		t.Fatalf("the instruction was not cut to one marked line:\n%s", view)
+	}
+	if strings.Contains(view, "keeping the same filename") {
+		t.Errorf("the end of the instruction is still on the card:\n%s", view)
+	}
+	if !strings.Contains(view, "0 expand") {
+		t.Errorf("the card does not offer the key that shows the full instruction:\n%s", view)
+	}
+
+	m = press(m, "0")
+	if got := m.View(); !strings.Contains(got, "keeping the same filename") {
+		t.Errorf("0 did not show the full instruction:\n%s", got)
+	}
+	m = press(m, "0")
+	if got := m.View(); strings.Contains(got, "keeping the same filename") {
+		t.Errorf("a second 0 did not cut the instruction again:\n%s", got)
+	}
+}
+
+// Picking still sends the whole instruction, and the scrollback copy shows it.
+func TestCutInstructionIsSentAndKeptInFull(t *testing.T) {
+	rep := longInstructionReport()
+	full := rep.Blocks[0].Options[0].Instruction
+	m := press(withCard(rep), "1")
+	if !m.Submitted() || m.Value() != full {
+		t.Errorf("picking sent %q, want the full instruction", m.Value())
+	}
+	if got := TranscriptWidth(rep, nil, 80); !strings.Contains(got, "keeping the same filename") {
+		t.Errorf("the scrollback copy cut the instruction:\n%s", got)
 	}
 }
