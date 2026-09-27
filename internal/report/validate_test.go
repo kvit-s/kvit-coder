@@ -231,9 +231,27 @@ func TestOptionRules(t *testing.T) {
 
 	t.Run("dispatch needs an instruction", func(t *testing.T) {
 		r := base()
+		r.Blocks[1].Type = BlockNext
 		r.Blocks[1].Options[0].Instruction = ""
 		if !hasCode(Validate(r, Rules{Mutated: true}), "option_instruction_required") {
 			t.Error("a dispatch option with no instruction was accepted")
+		}
+	})
+
+	// An answer to a question may be only its label: picking it sends the
+	// label, anchored to the question, as the next prompt.
+	t.Run("a question's answer needs no instruction", func(t *testing.T) {
+		r := base()
+		r.Blocks[1].Options[0].Instruction = ""
+		if ps := Validate(r, Rules{Mutated: true}); len(ps) != 0 {
+			t.Fatalf("an answer with no instruction was rejected: %v", codes(ps))
+		}
+		b := &r.Blocks[1]
+		if got := b.Prompt(&b.Options[0]); got != "[report filtered-reordering] Preserve hidden positions" {
+			t.Errorf("picking the answer sends %q", got)
+		}
+		if got := b.Prompt(&b.Options[1]); got != b.Options[1].Instruction {
+			t.Errorf("an option with an instruction sends %q, want the instruction", got)
 		}
 	})
 
@@ -337,6 +355,7 @@ func TestProblemPathsPointAtTheField(t *testing.T) {
 	r := completedReport()
 	r.TaskStatus = StatusNeedsAction
 	b := questionBlock()
+	b.Type = BlockNext
 	b.Options[0].Instruction = ""
 	r.Blocks = append(r.Blocks, b)
 

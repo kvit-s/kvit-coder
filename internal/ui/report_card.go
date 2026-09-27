@@ -203,16 +203,18 @@ func (m *InputModel) pickOption(n int) (bool, tea.Cmd) {
 	switch o.Effect {
 	case report.EffectDispatch:
 		// The instruction is what the user read before choosing, so it is
-		// what gets sent, word for word.
-		m.cardAnswer.Prompt = o.Instruction
-		m.value = o.Instruction
+		// what gets sent, word for word. An answer to a question with no
+		// instruction sends its label, anchored to the question.
+		prompt := b.Prompt(o)
+		m.cardAnswer.Prompt = prompt
+		m.value = prompt
 		m.submitted = true
 		m.quitting = true
 		return true, tea.Quit
 	case report.EffectCollect:
 		// An answer in the user's own words, anchored to the block it
 		// answers so the next turn knows what is being replied to.
-		m.textarea.SetValue(fmt.Sprintf("[report %s] %s", b.ID, o.Label))
+		m.textarea.SetValue(report.Answer(b.ID, o.Label))
 		m.textarea.CursorEnd()
 		m.adjustHeight()
 		m.cardDismissed = true

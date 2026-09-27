@@ -295,6 +295,8 @@ func checkInteractive(b *Block, at func(string) string) []Problem {
 		case EffectDispatch:
 			dispatches++
 			switch {
+			case o.Instruction == "" && b.Type == BlockQuestion:
+				// Picking it sends the label as the answer.
 			case o.Instruction == "":
 				ps = append(ps, Problem{Path: oat("instruction"), Code: "option_instruction_required",
 					Message: "A dispatch option runs its instruction as the next prompt, and the user reads it before picking, so it cannot be empty."})

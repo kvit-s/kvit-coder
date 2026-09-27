@@ -216,6 +216,28 @@ type Report struct {
 	Blocks     []Block `json:"blocks"`
 }
 
+// Answer is the prompt that replies to a block with one of its options: the
+// block's id in brackets, so the next turn can tell which question is being
+// answered, then the option's label.
+func Answer(blockID, label string) string {
+	return fmt.Sprintf("[report %s] %s", blockID, label)
+}
+
+// Prompt is what picking o sends as the next turn's prompt, or "" when
+// picking it starts no turn. A dispatch option sends its instruction. On a
+// question a dispatch option may leave the instruction out, and then picking
+// it sends the option's label as the answer — which is what makes the answer
+// reach the model at all.
+func (b *Block) Prompt(o *Option) string {
+	if b == nil || o == nil || o.Effect != EffectDispatch {
+		return ""
+	}
+	if o.Instruction != "" {
+		return o.Instruction
+	}
+	return Answer(b.ID, o.Label)
+}
+
 // Interactive reports whether this block asks the user for something, which is
 // what makes it answerable from the card and what holds back an inbox-only
 // turn while it waits.
@@ -458,10 +480,12 @@ func JSONSchema(maxBlocks int) map[string]any {
 			"consequence": str(fmt.Sprintf("What follows from choosing it, at most %d characters.", TextMax)),
 			"preview":     str("Optional excerpt of what this option would produce."),
 			"effect": enum("What picking it does. 'dispatch' sends this option's instruction as the next prompt; "+
-				"'collect' puts an answer in the composer to edit and send; 'resolve' records a stop and starts no turn.",
+				"'collect' puts an answer in the composer to edit and send; 'resolve' records a stop, starts no turn, "+
+				"and tells you nothing. On a 'question', an option that answers it is 'dispatch'.",
 				Effects),
-			"instruction": str("For a 'dispatch' option only: the prompt picking it will send. It is shown in full " +
-				"before the choice is made, so write it as the instruction you want to receive."),
+			"instruction": str("For a 'dispatch' option only: the prompt picking it will send, written as the instruction " +
+				"you want to receive. Required, except on a 'question': there, leaving it out sends the option's label " +
+				"to you as the answer."),
 		},
 		"required": []string{"id", "label", "effect"},
 	}

@@ -557,3 +557,17 @@ func TestCutInstructionIsSentAndKeptInFull(t *testing.T) {
 		t.Errorf("the scrollback copy cut the instruction:\n%s", got)
 	}
 }
+
+// An answer to a question with no instruction of its own sends its label,
+// anchored to the question, so the model is told what was picked.
+func TestPickingAnAnswerSendsIt(t *testing.T) {
+	rep := decisionReport()
+	rep.Blocks[1].Options[0].Instruction = ""
+	m := press(withCard(rep), "1")
+	if !m.Submitted() {
+		t.Fatal("picking an answer started no turn")
+	}
+	if got := m.Value(); got != "[report filtered] Preserve hidden positions" {
+		t.Errorf("picking the answer sent %q", got)
+	}
+}

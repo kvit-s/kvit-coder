@@ -92,7 +92,10 @@ say that fits no other type; do not use it routinely, and say why.
 - An option's `effect` is `dispatch` (its `instruction` becomes the next prompt,
   and the user reads it before choosing, so write it as an instruction you want
   to receive), `collect` (the user writes an answer), or `resolve` (the user
-  stops here). Only a `dispatch` option has an `instruction`.
+  stops here, and you are told nothing). Only a `dispatch` option has an
+  `instruction`. On a `question`, each option that answers it is `dispatch`,
+  and its `instruction` may be left out: picking it then sends you its label as
+  the answer.
 - Each `next` needs one `dispatch` accept option and at least one `collect`
   or `resolve` alternative. Never put something the user must act on only in
   `details` — make it a `next` option.

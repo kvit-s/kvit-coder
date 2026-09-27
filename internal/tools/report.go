@@ -156,7 +156,10 @@ Rules the schema cannot enforce for you:
 - Use "question" when only the user can settle something: a choice between
   alternatives with no obvious default, or information only they have. Its
   summary is the question. Alternatives to one another go in one question as
-  its options, never in separate "next" blocks.
+  its options, never in separate "next" blocks. Each option that answers the
+  question is "dispatch"; leave out its instruction and picking it sends you
+  its label as the answer. "resolve" tells you nothing, so use it only for an
+  option that means stopping without an answer.
 - A "blocked" report says what stops the work in a warning or finding.
 - "unclassified" is an escape hatch for something you must say that fits no
   other type. Do not use it routinely.
