@@ -151,11 +151,12 @@ from any workspace the model can read, or thinkbench scores nothing.
 
 ## Documents
 
-`docs/` holds the reference published with the program: `cli.md` (every flag),
-`configuration.md` (every config key), `sessions.md` (sessions, steering,
-command permissions, background processes), `mcp.md` (Model Context Protocol
-servers, project instructions, the agent file) and `agents-ram.md` (measured
-memory cost per agent session).
+`docs/` holds the reference published with the program: `tools.md` (every
+tool the model can call), `architecture.md` (why the program is built the way
+it is), `cli.md` (every flag), `configuration.md` (every config key),
+`sessions.md` (sessions, steering, command permissions, background processes),
+`mcp.md` (Model Context Protocol servers, project instructions, the agent file)
+and `agents-ram.md` (measured memory cost per agent session).
 
 The design history is in `spec/notes/`, which is not tracked: the redesign
 document and its stage plan, proposals that were never built, reviews of other

@@ -83,91 +83,6 @@ A turn that fails exits non-zero and says why. On a terminal the final answer is
 rendered as styled markdown; piped output, `--json`, `NO_COLOR` and `TERM=dumb`
 stay raw. Every flag is in [`docs/cli.md`](docs/cli.md).
 
-## Why it is built this way
-
-### One process per turn
-
-`kvit-coder` starts, reads the session from disk, runs one instruction, appends
-what happened, and exits. If a turn gets stuck, ending its process ends the
-turn. The front end keeps no conversation in memory, and memory a turn used
-goes back to the operating system when the process exits.
-
-### A session is a directory
-
-Sessions live under `~/.kvit-coder/sessions/<name>/`:
-
-| Entry | Holds |
-|---|---|
-| `history.jsonl` | Append-only, one timestamped event per line |
-| `meta.json` | Created and last-touched times, workspace directory, model name, first prompt |
-| `checkpoints/` | A separate git repository that records file versions per turn |
-| `proc/` | Pidfiles and logs for background processes |
-| `inbox/` | A directory for incoming messages; files dropped here reach the model on the next iteration |
-| `tmp/` | Tool output too large to put in a message |
-
-It is plain files, so a session is also a record you can open months later and
-read.
-
-### Sending input to a running turn
-
-A line typed at the terminal, a file dropped by `kvit-coder steer` from another
-shell, or an event from a background process all go to the same inbox
-directory, which the loop checks once per iteration. Pressing Enter on an empty
-line asks the turn to pause at the next point where it can stop safely, which
-pauses it without ending it.
-
-### Shell permissions from the parsed command
-
-Each shell line is parsed into separate commands and each one is checked on its
-own against the built-in rules and the allow and deny lists in `tools.shell`.
-`git diff && rm -rf /` counts as two commands and is checked as two, the name
-of a program being run is treated differently from the same word appearing as a
-`grep` pattern, and a blocked command can be allowed for one call, one session,
-or permanently.
-
-### External tools stay hidden until used
-
-A tool group is one visible tool that stands in for a set the model cannot see
-until it opens the group. Playwright's 24 browser tools add about 7,400 tokens
-of schema and 43 tools to every request when advertised directly, while the
-same configuration behind a group adds about 3,400 tokens and 20 tools. Nothing
-behind the group starts until a call actually needs it.
-
-### PDF reading without external programs
-
-A PDF is read inside the agent process through PDFium compiled to WebAssembly
-and run by wazero, with page ranges and a fallback that renders a page as an
-image when the page holds only scanned images with no extractable text.
-
-### Support for small local models
-
-Three benchmark families ship with the program, and each measures something
-small local models get wrong: whether the model calls tools with the right
-arguments, whether it still retrieves a fact once the context is long, and
-whether it can finish a coding task scored by tests it never sees.
-
-## Tools
-
-| Tool | Description |
-|------|-------------|
-| **Read** | File contents or a directory listing, with partial reads for large files. A PDF is detected from its bytes and its text extracted a page range at a time. Other non-text files — images, archives, databases, compiled output — are named, with the tool or command that opens them, rather than read as bytes. |
-| **ReadImage** | Read an image (PNG, JPEG, GIF) so the model can see it. Large images are downscaled. |
-| **Edit** | Three modes: **lines** (line ranges), **searchreplace** (find and replace, tolerant of whitespace differences), **patch** (unified diffs). Optional preview mode with confirm or cancel. |
-| **Write** | Create a file or overwrite one. |
-| **Search** | Regular-expression search with glob filters, through ripgrep. |
-| **Shell** | Run a command, with timeouts, a working directory, and permission decided from the parsed command line. |
-| **Shell.start / Shell.output / Observe.wait** | Background processes that keep running while the turn continues: a dev server, a long test run, a build. |
-| **Batch** | Several independent tool calls in one request. |
-| **Question** | Ask the person a question rather than guessing, when there is somebody at the terminal. |
-| **Web.search / Web.fetch** | Search through the Brave API, and fetch one page as markdown. Both off by default; the search needs a key. |
-| **Web.browsing** | A real browser through a Playwright server, behind a tool group that hides its tools until opened. |
-| **Plan.\* / Checkpoint.\* / Tasks.\*** | Plan management, file versions per turn kept in a separate git repository, and shortening of old history to fit the context window. Plan and Checkpoint are one tool group and Tasks is the other; enable one or the other. |
-| **mcp.\*** | Tools from external [Model Context Protocol](https://modelcontextprotocol.io) servers, over stdio or HTTP. See [`docs/mcp.md`](docs/mcp.md). |
-
-Sending input mid-turn, grouping independent calls, shell command permissions,
-background processes and the question tool are covered in
-[`docs/sessions.md`](docs/sessions.md).
-
 ## Running commands on your machine
 
 This program executes shell commands and edits files. `workspace.path_safety_mode`
@@ -182,19 +97,24 @@ disables these prompts for a run.
 
 ## Benchmarks
 
-The three families run through `kvit-coder`: tool benchmarks for whether the
-model uses tools correctly on small checkable tasks, haystack for retrieval from
-a long context, and thinkbench for autonomous coding tasks scored by a held-out
+Three benchmark families ship with the program and run through `kvit-coder`,
+and each measures something small local models get wrong: tool benchmarks for
+whether the model calls tools with the right arguments on small checkable
+tasks, haystack for whether it still retrieves a fact once the context is long,
+and thinkbench for whether it can finish a coding task scored by a held-out
 grader, a test script the agent never sees, over 72 vendored tasks. The task
 inputs are checked into git and the run outputs are not. See
 [`benchmarks/README.md`](benchmarks/README.md).
 
 ## Documents
 
-[`docs/`](docs/) holds the reference documentation: every
+[`docs/`](docs/) holds the reference documentation: the
+[tools the model can call](docs/tools.md), every
 [command-line flag](docs/cli.md), every [configuration key](docs/configuration.md),
-[sessions and steering](docs/sessions.md), [external tools](docs/mcp.md), and the
-[memory measurements](docs/agents-ram.md) quoted above.
+[sessions and steering](docs/sessions.md), [external tools](docs/mcp.md), the
+[memory measurements](docs/agents-ram.md) quoted above, and
+[how the program is built](docs/architecture.md): one process per turn, sessions
+as directories, and the other design decisions behind it.
 
 ## License
 
