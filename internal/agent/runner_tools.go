@@ -37,6 +37,11 @@ func (r *Runner) executeTools(
 	state.totalToolCalls += len(toolCalls)
 	toolCalls = questionsLast(r.registry, toolCalls)
 
+	// Tell the Subagent tool how many iterations the parent has left, so
+	// child_max = min(cfg max, parent remaining). Set once per round of
+	// calls: Batch passes the same context through, so delegation through a
+	// Batch sees the same budget.
+	r.setSubagentBudget(state)
 	for idx, tc := range toolCalls {
 		// Check for context cancellation
 		select {
@@ -527,6 +532,10 @@ func (r *Runner) executeToolWithTimeout(
 		// Attachments travel beside the summary, never inside it: the
 		// summary marshals metadata only (pixels are json:"-").
 		images = toolImagesFromResult(toolResult)
+		// A Subagent child's tokens/cost are attributed, not lost: fold
+		// them into the parent totals, including delegation through a
+		// Batch (per-call results, same contract Batch already gives).
+		r.foldSubagentStats(state, toolResult)
 
 		{
 			var durationStr string
@@ -543,6 +552,63 @@ func (r *Runner) executeToolWithTimeout(
 	}
 
 	return
+}
+
+// setSubagentBudget tells the Subagent tool how many iterations the parent
+// has left. The child loop caps itself at min(cfg max, parent remaining).
+func (r *Runner) setSubagentBudget(state *runState) {
+	if r.registry == nil {
+		return
+	}
+	tool := r.registry.Get("Subagent")
+	if tool == nil {
+		return
+	}
+	setter, ok := tool.(tools.ParentBudgetSetter)
+	if !ok {
+		return
+	}
+	maxIters := r.cfg.Agent.MaxIterations
+	if maxIters == 0 {
+		maxIters = 10
+	}
+	remaining := maxIters - state.agentStats.Steps
+	if remaining < 0 {
+		remaining = 0
+	}
+	setter.SetParentRemaining(remaining)
+}
+
+// foldSubagentStats folds a child's ledger into the parent totals on return.
+// It handles both a direct Subagent result and Subagents nested in a Batch.
+func (r *Runner) foldSubagentStats(state *runState, toolResult any) {
+	if state == nil || state.agentStats == nil || toolResult == nil {
+		return
+	}
+	foldOne := func(v any) {
+		carrier, ok := v.(tools.StatsCarrier)
+		if !ok {
+			return
+		}
+		child := carrier.ChildStats()
+		if child == nil {
+			return
+		}
+		state.agentStats.TotalPromptTokens += child.TotalPromptTokens
+		state.agentStats.TotalCompletionTokens += child.TotalCompletionTokens
+		state.agentStats.TotalCost += child.TotalCost
+		state.agentStats.Steps += child.Steps
+	}
+	foldOne(toolResult)
+	// Delegation through a Batch: per-handle results, one child's failure
+	// never cancels its siblings.
+	if m, ok := toolResult.(map[string]any); ok {
+		if results, ok := m["results"].([]tools.BatchResult); ok {
+			for _, br := range results {
+				foldOne(br.Result)
+			}
+		}
+	}
 }
 
 // toolImagesFromResult collects image attachments from a tool result: either

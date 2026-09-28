@@ -80,6 +80,13 @@ type ToolContext struct {
 	reportRepairs  int
 	mutated        bool
 	changed        bool
+
+	// subagentChild marks a ToolContext that belongs to a Subagent child
+	// loop. A nested prompt has no UI and would wedge the turn, so every
+	// interactive path (ask_once/ask_always, /dev/tty, form asker,
+	// permission asker) resolves to deny inside the child.
+	subagentMu    sync.Mutex
+	subagentChild bool
 }
 
 // NewToolContext creates a new ToolContext with initialized state.
@@ -480,4 +487,25 @@ func (tc *ToolContext) ChangedThisTurn() bool {
 	tc.reportMu.Lock()
 	defer tc.reportMu.Unlock()
 	return tc.changed
+}
+
+// SetSubagentChild marks this context as belonging to a Subagent child loop.
+// A child has no UI: every interactive path resolves to deny.
+func (tc *ToolContext) SetSubagentChild(child bool) {
+	if tc == nil {
+		return
+	}
+	tc.subagentMu.Lock()
+	defer tc.subagentMu.Unlock()
+	tc.subagentChild = child
+}
+
+// IsSubagentChild reports whether this context belongs to a Subagent child.
+func (tc *ToolContext) IsSubagentChild() bool {
+	if tc == nil {
+		return false
+	}
+	tc.subagentMu.Lock()
+	defer tc.subagentMu.Unlock()
+	return tc.subagentChild
 }

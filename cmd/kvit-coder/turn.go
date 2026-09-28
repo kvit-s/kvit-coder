@@ -585,5 +585,14 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 		Inbox:     steering,
 		Procs:     procRegistry,
 	})
+
+	// The Subagent child loop is the parent Runner itself: rebind it now
+	// that both exist, breaking the tools->agent import cycle.
+	if sub := registry.Get("Subagent"); sub != nil {
+		if s, ok := sub.(interface{ SetRunner(tools.SubRunner) }); ok {
+			s.SetRunner(t.runner)
+		}
+	}
+
 	return t, nil
 }

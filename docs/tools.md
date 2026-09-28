@@ -15,6 +15,7 @@ is set under `tools:` in `config.yaml`; every key is in
 | **Shell** | Run a command, with timeouts, a working directory, and permission decided from the parsed command line. |
 | **Shell.start / Shell.output / Shell.status / Shell.list / Shell.kill / Shell.tune / Observe.wait / Observe.add** | Background processes that keep running while the turn continues: a dev server, a long test run, a build. |
 | **Batch** | Several independent tool calls in one request. |
+| **Subagent** | Delegate research to a child agent with its own context and a read-only tool set (research-only, sequential, fresh context — inline every path/symbol/constraint; the child sees no parent history). |
 | **Question** | Ask the person a question rather than guessing, when there is somebody at the terminal. |
 | **Web.search / Web.fetch** | Search through the Brave API, and fetch one page as markdown. Both off by default; the search needs a key. |
 | **Web.browsing** | A real browser through a Playwright server, behind a tool group that hides its tools until opened. |

@@ -689,6 +689,7 @@ type ToolsConfig struct {
 	Procs    ProcsToolsConfig   `yaml:"procs"`
 	Batch    BatchToolConfig    `yaml:"batch"`
 	Web      WebToolsConfig     `yaml:"web"`
+	Subagent SubagentToolConfig `yaml:"subagent"`
 
 	// Safety confirmations (runtime only, not persisted)
 	SafetyConfirmations map[string]SafetyConfirmation `yaml:"-"`
@@ -879,6 +880,61 @@ func (c ReportToolConfig) Required(usedTools, mutated bool) bool {
 // tool calls in one request.
 type BatchToolConfig struct {
 	Enabled bool `yaml:"enabled"`
+}
+
+// SubagentToolConfig configures the Subagent tool, which runs a child agent
+// loop in-process with its own history and a restricted tool set, returning
+// only the final summary text to the parent. Phase 1 is read-only delegation
+// (research); write-capable delegation (general) follows once the safety
+// story is settled.
+type SubagentToolConfig struct {
+	Enabled            bool `yaml:"enabled"`
+	MaxChildIterations int  `yaml:"max_child_iterations"`
+	TimeoutS           int  `yaml:"timeout_s"`
+	ResultMaxChars     int  `yaml:"result_max_chars"`
+	MaxConcurrent      int  `yaml:"max_concurrent"`
+}
+
+// Defaults for tools.subagent.*. Zero selects the default, never unbounded.
+const (
+	DefaultSubagentMaxChildIterations = 50
+	DefaultSubagentTimeoutS           = 300
+	DefaultSubagentResultMaxChars     = 8000
+	DefaultSubagentMaxConcurrent      = 8
+)
+
+// ResolvedMaxChildIterations returns max_child_iterations, defaulting to 50.
+// A child that needs 1000 iterations is a turn wearing a costume.
+func (c SubagentToolConfig) ResolvedMaxChildIterations() int {
+	if c.MaxChildIterations <= 0 {
+		return DefaultSubagentMaxChildIterations
+	}
+	return c.MaxChildIterations
+}
+
+// ResolvedTimeoutS returns timeout_s, defaulting to 300.
+func (c SubagentToolConfig) ResolvedTimeoutS() int {
+	if c.TimeoutS <= 0 {
+		return DefaultSubagentTimeoutS
+	}
+	return c.TimeoutS
+}
+
+// ResolvedResultMaxChars returns result_max_chars, defaulting to 8000.
+func (c SubagentToolConfig) ResolvedResultMaxChars() int {
+	if c.ResultMaxChars <= 0 {
+		return DefaultSubagentResultMaxChars
+	}
+	return c.ResultMaxChars
+}
+
+// ResolvedMaxConcurrent returns max_concurrent, defaulting to 8. Phase 3
+// only; the permit is per concurrent Subagent.
+func (c SubagentToolConfig) ResolvedMaxConcurrent() int {
+	if c.MaxConcurrent <= 0 {
+		return DefaultSubagentMaxConcurrent
+	}
+	return c.MaxConcurrent
 }
 
 // ProcsToolsConfig configures the tools for work that outlives a turn's

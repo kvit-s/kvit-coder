@@ -35,6 +35,12 @@ type SetupConfig struct {
 	// any built-in tool the configuration moved into a group is handed to it
 	// here instead of being registered on its own.
 	ToolGroups []*GroupTool
+
+	// SubRunner drives the Subagent child loop. It is the parent Runner,
+	// injected after both exist (turn setup rebinds it), breaking the
+	// tools->agent import cycle the same way MCPTools does. Nil disables
+	// child runs: Subagent validates args but fails at Call time.
+	SubRunner SubRunner
 }
 
 // SetupRegistry creates and configures the tool registry based on config.
@@ -203,6 +209,17 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		debug(fmt.Sprintf("Enabled tool: %s", reportTool.Name()))
 	}
 
+	// Subagent delegates to a child loop with a filtered registry. Like
+	// Batch it dispatches through the registry that holds it, so it is
+	// registered first and given the registry once everything else is in.
+	var subagentTool *SubagentTool
+	if cfg.Tools.Subagent.Enabled {
+		subagentTool = NewSubagentTool(cfg, toolCtx, sc.TempFileMgr)
+		subagentTool.SetRunner(sc.SubRunner)
+		registry.Enable(subagentTool)
+		debug(fmt.Sprintf("Enabled tool: %s", subagentTool.Name()))
+	}
+
 	// MCP tools (from configured external servers). Registered last; they are
 	// indistinguishable from built-in tools to the registry and agent loop.
 	for _, t := range sc.MCPTools {
@@ -252,6 +269,12 @@ func SetupRegistry(sc SetupConfig) *Registry {
 	if batchTool != nil {
 		batchTool.SetRegistry(registry)
 		batchTool.SetToolContext(toolCtx)
+	}
+
+	// Subagent filters the parent registry at Call time, so it needs the
+	// same late binding.
+	if subagentTool != nil {
+		subagentTool.SetRegistry(registry)
 	}
 
 	return registry

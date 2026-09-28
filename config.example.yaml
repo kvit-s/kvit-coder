@@ -51,6 +51,12 @@ tools:
     enabled: true          # several independent tool calls in one request
   question:
     enabled: true          # let the model ask rather than guess
+  subagent:
+    enabled: true             # delegate research to a child with its own context (research-only)
+    max_child_iterations: 50  # cap per child; child_max = min(this, parent remaining)
+    timeout_s: 300            # whole-Subagent.Call wall-clock
+    result_max_chars: 8000    # head kept inline; rest spills to tmp/
+    max_concurrent: 8         # phase 3 only; permit per concurrent Subagent
 
 # Release updates, kvit-coder-ui only. The UI checks GitHub at most once a
 # day, prints one line when a newer release exists, and :update installs it

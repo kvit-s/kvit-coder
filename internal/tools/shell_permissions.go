@@ -39,6 +39,15 @@ func (t *ShellAdvancedTool) checkPermissions(command string) error {
 		return fmt.Errorf("%s", worst.Reason())
 	}
 
+	// A subagent child has no UI and would wedge the turn waiting for a
+	// person. Fail closed with a semantic error the child can reason
+	// about, pushing authors toward pre-approving the commands a delegated
+	// task needs.
+	if t.toolCtx != nil && t.toolCtx.IsSubagentChild() {
+		return SemanticErrorf("subagents cannot prompt for permission (%s). The parent must pre-approve this command: add %q to tools.shell.allowed_commands, or work another way",
+			worst.Reason(), worst.Scope.Pattern())
+	}
+
 	grantor := t.grantor()
 	var granted bool
 	switch {
