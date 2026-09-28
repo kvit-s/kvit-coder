@@ -141,13 +141,6 @@ func TestBuildCapabilitiesList(t *testing.T) {
 			},
 			want: []string{"reading files", "editing files", "searching code", "running shell commands"},
 		},
-		{
-			name: "with tasks",
-			enabled: map[string]bool{
-				"Tasks.Start": true,
-			},
-			want: []string{"managing tasks"},
-		},
 	}
 
 	for _, tt := range tests {

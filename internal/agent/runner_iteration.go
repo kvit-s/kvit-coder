@@ -21,7 +21,6 @@ func (r *Runner) handleFinalAnswer(
 	assistantMsg *llm.Message,
 	state *runState,
 	rollbackPoint int,
-	tasksToolExecuted bool,
 	rcfg RunConfig,
 	llmDotCount int,
 ) bool {
@@ -87,14 +86,6 @@ func (r *Runner) handleFinalAnswer(
 
 	r.recordTurnTimes(state, totalTime)
 
-	// File-first mode: persist messages
-	if rcfg.UseFileFirst && r.contextMgr != nil && !tasksToolExecuted && len(state.messages) > rollbackPoint {
-		newMessages := state.messages[rollbackPoint:]
-		if err := r.contextMgr.AppendMessages(newMessages); err != nil {
-			r.writer.Error(fmt.Sprintf("cannot persist messages: %v", err))
-		}
-	}
-
 	return false // shouldBreak
 }
 
@@ -159,7 +150,7 @@ func (r *Runner) checkAndHandleLoops(ctx context.Context, state *runState) {
 }
 
 // handlePostIteration handles post-tool-execution processing including
-// backtracking, checkpoints, loop detection, cancelled tools, and plan injection.
+// backtracking, loop detection, cancelled tools, and plan injection.
 // Returns true if the main loop should break.
 func (r *Runner) handlePostIteration(
 	ctx context.Context,
@@ -190,13 +181,6 @@ func (r *Runner) handlePostIteration(
 		return false // continue loop
 	}
 
-	// End checkpoint turn
-	if len(assistantMsg.ToolCalls) > 0 && r.checkpointMgr != nil && r.checkpointMgr.Enabled() {
-		if err := r.checkpointMgr.EndTurn(); err != nil {
-			r.writer.Debug(fmt.Sprintf("Checkpoint error: %v", err))
-		}
-	}
-
 	// Check for loop detection
 	r.checkAndHandleLoops(ctx, state)
 
@@ -218,22 +202,7 @@ func (r *Runner) handlePostIteration(
 		state.agentStats.TotalLLMTime = state.totalLLMTime
 		state.agentStats.TotalToolTime = state.totalToolTime
 
-		if rcfg.UseFileFirst && r.contextMgr != nil && !toolResult.tasksToolExecuted && len(state.messages) > rollbackPoint {
-			newMessages := state.messages[rollbackPoint:]
-			if err := r.contextMgr.AppendMessages(newMessages); err != nil {
-				r.writer.Error(fmt.Sprintf("cannot persist messages: %v", err))
-			}
-		}
-
 		return true // break loop
-	}
-
-	// File-first mode: persist messages
-	if rcfg.UseFileFirst && r.contextMgr != nil && !toolResult.tasksToolExecuted && len(state.messages) > rollbackPoint {
-		newMessages := state.messages[rollbackPoint:]
-		if err := r.contextMgr.AppendMessages(newMessages); err != nil {
-			r.writer.Error(fmt.Sprintf("cannot persist messages: %v", err))
-		}
 	}
 
 	return false // continue loop

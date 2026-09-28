@@ -3,13 +3,14 @@ package agent
 
 import (
 	"context"
+
 	"errors"
+
 	"fmt"
+
 	"time"
 
-	"github.com/kvit-s/kvit-coder/internal/checkpoint"
 	"github.com/kvit-s/kvit-coder/internal/config"
-	ctxtools "github.com/kvit-s/kvit-coder/internal/context"
 	"github.com/kvit-s/kvit-coder/internal/inbox"
 	"github.com/kvit-s/kvit-coder/internal/llm"
 	"github.com/kvit-s/kvit-coder/internal/procs"
@@ -28,34 +29,28 @@ type LLMClient interface {
 
 // Runner executes the agent loop for LLM interactions
 type Runner struct {
-	cfg               *config.Config
-	llmClient         LLMClient
-	registry          *tools.Registry
-	writer            *ui.Writer
-	logger            *Logger
-	checkpointMgr     *checkpoint.Manager
-	contextMgr        *ctxtools.Manager
-	contextMiddleware *ctxtools.Middleware
-	toolCtx           *tools.ToolContext
-	interrogator      *Interrogator
-	inbox             *inbox.Inbox
-	procs             *procs.Registry
-	persist           func([]llm.Message) error
-	rollback          func(int) error
-	toolStart         func(internalName string, tc llm.ToolCall)
+	cfg          *config.Config
+	llmClient    LLMClient
+	registry     *tools.Registry
+	writer       *ui.Writer
+	logger       *Logger
+	toolCtx      *tools.ToolContext
+	interrogator *Interrogator
+	inbox        *inbox.Inbox
+	procs        *procs.Registry
+	persist      func([]llm.Message) error
+	rollback     func(int) error
+	toolStart    func(internalName string, tc llm.ToolCall)
 }
 
 // RunnerOptions contains all dependencies for creating a Runner
 type RunnerOptions struct {
-	Cfg               *config.Config
-	LLMClient         LLMClient
-	Registry          *tools.Registry
-	Writer            *ui.Writer
-	Logger            *Logger
-	CheckpointMgr     *checkpoint.Manager
-	ContextMgr        *ctxtools.Manager
-	ContextMiddleware *ctxtools.Middleware
-	ToolCtx           *tools.ToolContext
+	Cfg       *config.Config
+	LLMClient LLMClient
+	Registry  *tools.Registry
+	Writer    *ui.Writer
+	Logger    *Logger
+	ToolCtx   *tools.ToolContext
 	// Inbox is where anything that arrives mid-turn waits: a line typed at
 	// the terminal, a file dropped by "kvit-coder steer", a background
 	// process exiting. The loop drains it once per iteration. Optional.
@@ -76,9 +71,8 @@ type RunnerOptions struct {
 
 // RunConfig contains per-run configuration options
 type RunConfig struct {
-	Messages     []llm.Message
-	UseFileFirst bool
-	QuietMode    bool
+	Messages  []llm.Message
+	QuietMode bool
 }
 
 // RunResult contains the results of running the agent loop
@@ -107,19 +101,16 @@ type RunResult struct {
 func NewRunner(opts RunnerOptions) *Runner {
 	runID := fmt.Sprintf("run-%s", time.Now().UTC().Format("20060102-150405"))
 	r := &Runner{
-		cfg:               opts.Cfg,
-		llmClient:         opts.LLMClient,
-		registry:          opts.Registry,
-		writer:            opts.Writer,
-		logger:            opts.Logger,
-		checkpointMgr:     opts.CheckpointMgr,
-		contextMgr:        opts.ContextMgr,
-		contextMiddleware: opts.ContextMiddleware,
-		toolCtx:           opts.ToolCtx,
-		inbox:             opts.Inbox,
-		procs:             opts.Procs,
-		persist:           opts.Persist,
-		rollback:          opts.Rollback,
+		cfg:       opts.Cfg,
+		llmClient: opts.LLMClient,
+		registry:  opts.Registry,
+		writer:    opts.Writer,
+		logger:    opts.Logger,
+		toolCtx:   opts.ToolCtx,
+		inbox:     opts.Inbox,
+		procs:     opts.Procs,
+		persist:   opts.Persist,
+		rollback:  opts.Rollback,
 	}
 	// nil when diagnostics are disabled; all call sites are nil-safe.
 	r.interrogator = NewInterrogator(opts.Cfg, opts.LLMClient, opts.Writer, opts.Logger, runID)
@@ -205,7 +196,6 @@ type toolExecutionResult struct {
 	userMessageToInject string
 	toolsCancelled      bool
 	lastExecutedIdx     int
-	tasksToolExecuted   bool
 }
 
 // blanketToolTimeout bounds a tool that does not manage its own deadline.
@@ -269,22 +259,6 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 
 	for i := 0; i < maxIters; i++ {
 		r.logger.AgentIteration(i, 0)
-
-		// Tell the tasks middleware where the loop stands, so an open task
-		// warns with the real remaining budget (hard turn limit).
-		if r.contextMiddleware != nil {
-			r.contextMiddleware.SetIteration(i, maxIters)
-		}
-
-		// File-first mode: read messages from file at start of each iteration
-		if rcfg.UseFileFirst && r.contextMgr != nil {
-			fileMessages, err := r.contextMgr.ReadMessagesForLLM()
-			if err != nil {
-				r.writer.Error(fmt.Sprintf("cannot read messages file: %v", err))
-			} else {
-				state.messages = fileMessages
-			}
-		}
 
 		// Ask the background processes what has happened; whatever they say
 		// goes into the inbox, so an exit reaches the model the same way a
@@ -369,7 +343,7 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 
 		// No tool calls = final answer
 		if len(assistantMsg.ToolCalls) == 0 {
-			shouldContinue := r.handleFinalAnswer(llmResult.response, assistantMsg, state, rollbackPoint, false, rcfg, 0)
+			shouldContinue := r.handleFinalAnswer(llmResult.response, assistantMsg, state, rollbackPoint, rcfg, 0)
 			iterCancel()
 			if shouldContinue {
 				continue
@@ -393,11 +367,6 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 		ephemeral, persistent := r.runningProcsCounts()
 		contextStr := ui.FormatContextStrWithProcs2(state.totalTokens, r.cfg.LLM.Context, ephemeral, persistent)
 		r.writer.Thinking(contextStr, assistantMsg.Content)
-
-		// Start checkpoint turn
-		if len(assistantMsg.ToolCalls) > 0 && r.checkpointMgr != nil && r.checkpointMgr.Enabled() {
-			r.checkpointMgr.StartTurn()
-		}
 
 		// Execute tool calls
 		toolResult := r.executeTools(iterCtx, assistantMsg.ToolCalls, state, rollbackPoint, promptTokens, completionTokens, requestCost, contextStr)

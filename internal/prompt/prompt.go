@@ -294,9 +294,6 @@ func (g *Generator) buildCapabilities() []string {
 	if g.registry.IsEnabled("Shell") {
 		capabilities = append(capabilities, "running shell commands")
 	}
-	if g.registry.IsEnabled("Tasks.Start") {
-		capabilities = append(capabilities, "managing tasks")
-	}
 	return capabilities
 }
 

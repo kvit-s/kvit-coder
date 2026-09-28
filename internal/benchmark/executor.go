@@ -79,7 +79,6 @@ func (e *Executor) Execute(ctx context.Context, benchmark BenchmarkDef, runID in
 	// Run agent
 	agentResult, err := e.runner.Run(timeoutCtx, agent.RunConfig{
 		Messages:     messages,
-		UseFileFirst: false,
 		QuietMode:    false,
 	})
 
@@ -342,7 +341,6 @@ func (e *Executor) Warmup(ctx context.Context, task string) error {
 
 	_, err := e.runner.Run(ctx, agent.RunConfig{
 		Messages:     messages,
-		UseFileFirst: false,
 		QuietMode:    true,
 	})
 

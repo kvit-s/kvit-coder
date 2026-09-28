@@ -139,7 +139,6 @@ func (e *TBExecutor) runAgent(ctx context.Context, task TBTask, result *TBRunRes
 
 	agentResult, err := e.runner.Run(timeoutCtx, agent.RunConfig{
 		Messages:     messages,
-		UseFileFirst: false,
 		QuietMode:    false,
 	})
 

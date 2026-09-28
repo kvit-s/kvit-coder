@@ -44,8 +44,8 @@ type turnReporter struct {
 	// loop's first call.
 	title func() string
 
-	calls    map[string]*reportedCall
-	current  string // the tool call running now
+	calls   map[string]*reportedCall
+	current string // the tool call running now
 }
 
 // reportedCall is a tool call the client has been told about.
@@ -143,7 +143,7 @@ func toolKind(name string) string {
 	case n == "Search":
 		return "search"
 	case n == "Edit" || n == "Write" || n == "Edit.confirm" || n == "Write.confirm" ||
-		n == "DeleteLines" || n == "RestoreFile":
+		n == "DeleteLines":
 		return "edit"
 	case n == "Shell" || strings.HasPrefix(n, "Shell."):
 		return "execute"

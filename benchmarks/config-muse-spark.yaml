@@ -61,9 +61,6 @@ tools:
     # (the ""-blank flip lives in lines apply). Left for easy revert.
     explicit_delete: true
 
-  restore_file:
-    enabled: true
-
   search:
     enabled: true
     max_snippet_results: 20   # Full snippets up to this many matches
@@ -76,20 +73,6 @@ tools:
     disallowed_commands: []     # blocklist (checked after allowlist)
     allow_interpreters: true    # lift the default block on interpreter one-liners (python -c, node -e, perl -e, ...). Safe here: SWE-bench runs in a Docker container and uses python -c to introspect the codebase. Still blocks sudo/su/nc/curl/rm -rf etc.
 
-  checkpoint:
-    max_turns: 100
-    temp_dir: ""
-    max_file_size_kb: 1024
-    excluded_patterns: []
-
-  tasks:
-    enabled: false              # Enable Tasks.* tools
-    # Runtime notice thresholds
-    task_warn_turns: 5          # Warn after N turns in task
-    task_critical_turns: 10     # Critical warning after N turns
-    context_capacity_warn: 80   # Warn at N% context capacity
-    max_nested_depth: 2         # Max task nesting depth warning
-    notify_file_changes: true   # Notify about file changes in task
 
 # Enhanced safety mode configuration (all features disabled by default)
 safety:

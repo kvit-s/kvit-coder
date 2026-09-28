@@ -41,7 +41,7 @@ type ToolGroupConfig struct {
 	Description string `yaml:"description"`
 
 	// Category places the group's documentation in the system prompt:
-	// "filesystem", "shell", "web", "plan", "checkpoint" or "mcp".
+	// "filesystem", "shell", "web", "plan" or "mcp".
 	// Defaults to "mcp".
 	Category string `yaml:"category"`
 
@@ -77,7 +77,6 @@ var toolGroupCategories = map[string]bool{
 	"shell":      true,
 	"web":        true,
 	"plan":       true,
-	"checkpoint": true,
 	"mcp":        true,
 }
 

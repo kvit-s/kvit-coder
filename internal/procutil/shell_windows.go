@@ -10,8 +10,7 @@ import (
 )
 
 // ResolveShell finds the POSIX shell agent commands run through on Windows.
-// Git for Windows ships sh.exe (plus grep, find, and git itself, which
-// checkpoints already require), so: sh.exe on PATH first, else the standard
+// Git for Windows ships sh.exe (plus grep and find), so: sh.exe on PATH first, else the standard
 // Git install locations. When none is found it fails fast naming Git for
 // Windows rather than surfacing a bare exec "sh not found".
 func ResolveShell() (string, error) {

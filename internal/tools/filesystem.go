@@ -174,13 +174,6 @@ func CheckPendingEditBlockWithState(toolName string, state PendingEditState, cfg
 		return SemanticError(formatBlocked(""))
 	}
 
-	// Special message for RestoreFile - they likely want to cancel the pending edit
-	if toolName == "RestoreFile" {
-		if blockCount >= PendingEditEscalateThreshold {
-			return SemanticError(formatBlocked(fmt.Sprintf("You've been blocked %d times. Did you mean to call Edit.cancel?", blockCount)))
-		}
-		return SemanticError(formatBlocked("Did you mean to call Edit.cancel to discard the pending edit?"))
-	}
 
 	// Block all other tools with escalating messages
 	if blockCount >= PendingEditEscalateThreshold {
@@ -1208,8 +1201,7 @@ func (t *WriteFileTool) Call(ctx context.Context, args json.RawMessage) (any, er
 	// Overwriting an existing file is staged for confirmation only when
 	// preview_mode is on, the same switch that governs Edit's handshake. With
 	// it off — the default, and what the strong profile sets — Write writes,
-	// and the previous contents are in the turn's checkpoint if they are
-	// wanted back.
+	// and the previous contents are lost if they are wanted back.
 	if !isNewFile && t.config.Tools.Edit.PreviewMode {
 		// Count lines in existing file
 		oldContent, err := os.ReadFile(fullPath)
@@ -1470,7 +1462,7 @@ func (t *CancelEditTool) Name() string {
 }
 
 func (t *CancelEditTool) Description() string {
-	return "Discard a pending edit preview without applying it. ONLY use this tool immediately after edit returns status 'pending_confirmation'. This does NOT undo applied edits - use restore_file for that."
+	return "Discard a pending edit preview without applying it. ONLY use this tool immediately after edit returns status 'pending_confirmation'. This does NOT undo applied edits."
 }
 
 func (t *CancelEditTool) Check(ctx context.Context, args json.RawMessage) error {
@@ -1510,8 +1502,8 @@ func (t *CancelEditTool) Call(ctx context.Context, args json.RawMessage) (any, e
 			"success":      false,
 			"error":        "no_pending_operation",
 			"message":      "No pending operation to cancel. This tool is only used after Edit or Write returns status='pending_confirmation'.",
-			"did_you_mean": "RestoreFile",
-			"hint":         "To undo ALL changes already applied to a file, use restore_file with the file path.",
+			"did_you_mean": "Edit.cancel",
+			"hint":         "To discard a pending edit, use Edit.cancel.",
 		}, nil
 	}
 

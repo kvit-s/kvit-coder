@@ -17,9 +17,8 @@ is set under `tools:` in `config.yaml`; every key is in
 | **Question** | Ask the person a question rather than guessing, when there is somebody at the terminal. |
 | **Web.search / Web.fetch** | Search through the Brave API, and fetch one page as markdown. Both off by default; the search needs a key. |
 | **Web.browsing** | A real browser through a Playwright server, behind a tool group that hides its tools until opened. |
-| **Tasks.\*** | Start a task to compress intermediate work, then finish with a summary and accept or discard the file changes. See [`tasks.md`](tasks.md). |
 | **mcp.\*** | Tools from external [Model Context Protocol](https://modelcontextprotocol.io) servers, over stdio or HTTP. See [`docs/mcp.md`](mcp.md). |
 
 Sending input mid-turn, grouping independent calls, shell command permissions,
 background processes and the question tool are covered in
-[`docs/sessions.md`](sessions.md).
+[`sessions.md`](sessions.md).

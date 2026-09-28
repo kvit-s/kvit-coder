@@ -33,7 +33,7 @@ type Tool interface {
 	PromptSection() string
 
 	// PromptCategory returns the category for grouping in the system prompt.
-	// Valid categories: "filesystem", "shell", "plan", "checkpoint"
+	// Valid categories: "filesystem", "shell", "plan", "web", "mcp", "report"
 	PromptCategory() string
 
 	// PromptOrder returns the sort order within the category (lower numbers first).

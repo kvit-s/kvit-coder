@@ -172,7 +172,6 @@ func RunTurn(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 	// Run agent loop
 	result, err := runner.Run(ctx, agent.RunConfig{
 		Messages:     messages,
-		UseFileFirst: false,
 		QuietMode:    quietMode,
 	})
 

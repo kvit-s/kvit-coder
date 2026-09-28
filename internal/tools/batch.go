@@ -282,7 +282,7 @@ func isParallelSafe(tool Tool) bool {
 }
 
 // Mutates reports whether running this tool can change something outside the
-// conversation: the workspace, a background process, the checkpoint history.
+// conversation: the workspace or a background process.
 // It is the same question isParallelSafe asks for Batch, so the two answers
 // cannot drift — a tool safe to run beside another is one that only reads.
 //

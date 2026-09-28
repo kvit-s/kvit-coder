@@ -192,7 +192,7 @@ func TestSubdirectories(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	for _, dir := range []string{sess.CheckpointsDir(), sess.ProcDir(), sess.InboxDir(), sess.TmpDir()} {
+	for _, dir := range []string{sess.ProcDir(), sess.InboxDir(), sess.TmpDir()} {
 		fi, err := os.Stat(dir)
 		if err != nil {
 			t.Errorf("%s was not created: %v", dir, err)

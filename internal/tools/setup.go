@@ -5,9 +5,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/kvit-s/kvit-coder/internal/checkpoint"
 	"github.com/kvit-s/kvit-coder/internal/config"
-	ctxtools "github.com/kvit-s/kvit-coder/internal/context"
 	"github.com/kvit-s/kvit-coder/internal/procs"
 )
 
@@ -18,11 +16,9 @@ type DebugLogger interface {
 
 // SetupConfig contains all dependencies needed to set up the tool registry
 type SetupConfig struct {
-	Cfg           *config.Config
-	CheckpointMgr *checkpoint.Manager
-	ContextMgr    *ctxtools.Manager
-	Logger        DebugLogger // Optional debug logger (can be nil)
-	TempFileMgr   *TempFileManager
+	Cfg         *config.Config
+	Logger      DebugLogger // Optional debug logger (can be nil)
+	TempFileMgr *TempFileManager
 	// ProcRegistry owns the processes that outlive a turn. Nil disables the
 	// Shell.start / Observe.* tools.
 	ProcRegistry *procs.Registry
@@ -129,12 +125,6 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		}
 	}
 
-	if cfg.Tools.RestoreFile.Enabled && sc.CheckpointMgr != nil && sc.CheckpointMgr.Enabled() {
-		restoreFileTool := NewRestoreFileTool(cfg, sc.CheckpointMgr, toolCtx)
-		registry.Enable(restoreFileTool)
-		debug(fmt.Sprintf("Enabled tool: %s", restoreFileTool.Name()))
-	}
-
 	if cfg.Tools.Search.Enabled && sc.TempFileMgr != nil {
 		searchTool := NewSearchTool(cfg, sc.TempFileMgr)
 		registry.Enable(searchTool)
@@ -205,30 +195,6 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		reportTool := NewReportTool(cfg, toolCtx)
 		registry.Enable(reportTool)
 		debug(fmt.Sprintf("Enabled tool: %s", reportTool.Name()))
-	}
-
-	// Tasks.* tools
-	if cfg.Tools.Tasks.Enabled && sc.ContextMgr != nil {
-		tasksStartTool := NewTasksStartTool(sc.ContextMgr)
-		registry.Enable(tasksStartTool)
-		debug(fmt.Sprintf("Enabled tool: %s", tasksStartTool.Name()))
-
-		tasksFinishTool := NewTasksFinishTool(sc.ContextMgr, sc.TempFileMgr)
-		registry.Enable(tasksFinishTool)
-		debug(fmt.Sprintf("Enabled tool: %s", tasksFinishTool.Name()))
-
-		tasksAcceptDiffTool := NewTasksAcceptDiffTool(sc.ContextMgr)
-		registry.Enable(tasksAcceptDiffTool)
-		debug(fmt.Sprintf("Enabled tool: %s", tasksAcceptDiffTool.Name()))
-
-		tasksDeclineDiffTool := NewTasksDeclineDiffTool(sc.ContextMgr)
-		registry.Enable(tasksDeclineDiffTool)
-		debug(fmt.Sprintf("Enabled tool: %s", tasksDeclineDiffTool.Name()))
-
-		tasksRevertFileTool := NewTasksRevertFileTool(sc.ContextMgr)
-		registry.Enable(tasksRevertFileTool)
-		debug(fmt.Sprintf("Enabled tool: %s", tasksRevertFileTool.Name()))
-
 	}
 
 	// MCP tools (from configured external servers). Registered last; they are

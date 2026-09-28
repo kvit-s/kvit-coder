@@ -9,9 +9,7 @@ import (
 
 	"github.com/kvit-s/kvit-coder/internal/agent"
 	"github.com/kvit-s/kvit-coder/internal/benchmark"
-	"github.com/kvit-s/kvit-coder/internal/checkpoint"
 	"github.com/kvit-s/kvit-coder/internal/config"
-	ctxtools "github.com/kvit-s/kvit-coder/internal/context"
 	"github.com/kvit-s/kvit-coder/internal/inbox"
 	"github.com/kvit-s/kvit-coder/internal/llm"
 	"github.com/kvit-s/kvit-coder/internal/mcp"
@@ -222,7 +220,7 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 		cfg.Workspace.PathSafetyMode = "block"
 		cfg.Workspace.AllowOutsideWorkspace = false
 
-		// Create workspace directory (needed before checkpoint manager initializes)
+		// Create workspace directory
 		if err := os.MkdirAll(cfg.Workspace.Root, 0755); err != nil {
 			return nil, fmt.Errorf("Failed to create benchmark workspace: %v", err)
 		}
@@ -313,13 +311,12 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 		}))
 
 	// Resolve the session before anything that keeps state, because everything
-	// that outlives a turn now lives in the session directory: the checkpoint
-	// repository, spilled tool output, and (from here on) the steering inbox
-	// and background-process records.
+	// that outlives a turn now lives in the session directory: spilled tool
+	// output, and (from here on) the steering inbox and background-process
+	// records.
 	//
 	// A benchmark run has no session to continue, so it gets an ephemeral one
-	// in a fresh temp directory, removed on exit. That is the lifetime the
-	// checkpoint repository had before, and it keeps one code path.
+	// in a fresh temp directory, removed on exit.
 	var sess *session.Session
 	if benchmarkEnabled || opts.ThinkbenchEnabled || opts.HaystackEnabled {
 		runDir, err := os.MkdirTemp("", "kvit-coder-run-")
@@ -459,54 +456,6 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 		writer.Debug("MCP: " + summary)
 	}
 
-	// Initialize checkpoint manager. Its shadow git repository lives in the
-	// session, so a checkpoint made in one turn is still there in the next.
-	checkpointMgr, err := checkpoint.NewManager(
-		sess.CheckpointsDir(),
-		cfg.Workspace.Root,
-		cfg.Tools.Checkpoint.ExcludedPatterns,
-		cfg.Tools.Checkpoint.MaxFileSizeKB,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("Failed to create checkpoint manager: %v", err)
-	}
-
-	// Initialize checkpoint infrastructure
-	if err := checkpointMgr.Initialize(); err != nil {
-		writer.Warn(fmt.Sprintf("no checkpoints: %v", err))
-		checkpointMgr.SetEnabled(false)
-	} else {
-		writer.Debug("Checkpoint infrastructure initialized")
-	}
-
-	// Initialize Tasks tools manager (if enabled)
-	var contextMgr *ctxtools.Manager
-	var contextMiddleware *ctxtools.Middleware
-	if cfg.Tools.Tasks.Enabled {
-		var err error
-		contextMgr, err = ctxtools.NewManager(filepath.Join(sess.Dir(), "tasks"), checkpointMgr)
-		if err != nil {
-			writer.Warn(fmt.Sprintf("no tasks: %v", err))
-		} else {
-			if err := contextMgr.Initialize(); err != nil {
-				writer.Warn(fmt.Sprintf("no tasks: %v", err))
-				contextMgr = nil
-			} else {
-				writer.Debug("Tasks tools initialized")
-
-				// Initialize middleware for turn number injection
-				contextMiddleware = ctxtools.NewMiddleware(contextMgr, ctxtools.RuntimeNoticeConfig{
-					TaskWarnTurns:       cfg.Tools.Tasks.TaskWarnTurns,
-					TaskCriticalTurns:   cfg.Tools.Tasks.TaskCriticalTurns,
-					ContextCapacityWarn: cfg.Tools.Tasks.ContextCapacityWarn,
-					MaxNestedDepth:      cfg.Tools.Tasks.MaxNestedDepth,
-					NotifyFileChanges:   cfg.Tools.Tasks.NotifyFileChanges,
-					MaxIterations:       cfg.Agent.MaxIterations,
-				})
-			}
-		}
-	}
-
 	// Create shared tool context for this session
 	toolCtx := tools.NewToolContext()
 	t.toolCtx = toolCtx
@@ -594,15 +543,13 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 	}
 
 	registry := tools.SetupRegistry(tools.SetupConfig{
-		Cfg:           cfg,
-		CheckpointMgr: checkpointMgr,
-		ContextMgr:    contextMgr,
-		Logger:        writer, // Writer implements DebugLogger
-		TempFileMgr:   tempFileMgr,
-		ToolCtx:       toolCtx,
-		MCPTools:      mcpMgr.Tools(),
-		ToolGroups:    toolGroups,
-		ProcRegistry:  procRegistry,
+		Cfg:          cfg,
+		Logger:       writer, // Writer implements DebugLogger
+		TempFileMgr:  tempFileMgr,
+		ToolCtx:      toolCtx,
+		MCPTools:     mcpMgr.Tools(),
+		ToolGroups:   toolGroups,
+		ProcRegistry: procRegistry,
 	})
 	t.registry = registry
 
@@ -629,17 +576,14 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 
 	// Create agent runner
 	t.runner = agent.NewRunner(agent.RunnerOptions{
-		Cfg:               cfg,
-		LLMClient:         t.llmClient,
-		Registry:          registry,
-		Writer:            writer,
-		Logger:            logger,
-		CheckpointMgr:     checkpointMgr,
-		ContextMgr:        contextMgr,
-		ContextMiddleware: contextMiddleware,
-		ToolCtx:           toolCtx,
-		Inbox:             steering,
-		Procs:             procRegistry,
+		Cfg:       cfg,
+		LLMClient: t.llmClient,
+		Registry:  registry,
+		Writer:    writer,
+		Logger:    logger,
+		ToolCtx:   toolCtx,
+		Inbox:     steering,
+		Procs:     procRegistry,
 	})
 	return t, nil
 }

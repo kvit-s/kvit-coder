@@ -62,8 +62,8 @@ Every key is documented in
 [`docs/configuration.md`](docs/configuration.md), including the parts
 `config.example.yaml` leaves out: defining more than one model and switching
 between them, Model Context Protocol (MCP) servers that provide external tools,
-tool groups that hide tools until the model asks for them, checkpoints that
-record file versions per turn, and the path and shell safety rules.
+tool groups that hide tools until the model asks for them,
+and the path and shell safety rules.
 
 ## Run
 

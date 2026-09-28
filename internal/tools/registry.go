@@ -33,7 +33,6 @@ var CategoryHeaders = map[string]string{
 	"filesystem": "## File Tools Reference",
 	"shell":      "## Shell Tool",
 	"plan":       "## Plan Management Tools",
-	"checkpoint": "## Checkpoints and Undo",
 	"web":        "## Web Tools",
 	"mcp":        "## MCP Tools (external servers)",
 	"report":     "## Ending the Turn",
@@ -72,7 +71,7 @@ func (r *Registry) Get(name string) Tool {
 
 // ModelName returns the provider-facing alias for an internal tool name.
 // OpenAI-compatible function names must match ^[A-Za-z0-9_-]+$, while several
-// kvit-coder internal names use dots for grouping (Tasks.Start, Shell.advanced).
+// kvit-coder internal names use dots for grouping (Shell.advanced).
 func (r *Registry) ModelName(name string) string {
 	internalToModel, _ := r.toolNameAliases()
 	if modelName, ok := internalToModel[name]; ok {
@@ -525,7 +524,7 @@ func (r *Registry) GenerateToolPrompt() string {
 	var sb strings.Builder
 
 	// Generate in deterministic order
-	categories := []string{"filesystem", "shell", "plan", "checkpoint", "mcp", "report"}
+	categories := []string{"filesystem", "shell", "plan", "mcp", "report"}
 	for _, cat := range categories {
 		docs, ok := sections[cat]
 		if !ok || len(docs) == 0 {
@@ -585,7 +584,7 @@ func (r *Registry) ToolsInCategory(category string) []Tool {
 
 // EnabledCategories returns the list of categories that have enabled tools
 func (r *Registry) EnabledCategories() []string {
-	categoryOrder := []string{"filesystem", "shell", "web", "plan", "checkpoint", "mcp", "report"}
+	categoryOrder := []string{"filesystem", "shell", "web", "plan", "mcp", "report"}
 	var enabled []string
 	for _, cat := range categoryOrder {
 		if len(r.ToolsInCategory(cat)) > 0 {

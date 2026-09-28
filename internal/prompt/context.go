@@ -22,14 +22,12 @@ type PromptContext struct {
 	PreviewMode bool
 
 	// Enabled tools (for conditionals)
-	HasRead       bool
-	HasEdit       bool
-	HasWrite      bool
-	HasSearch     bool
+	HasRead   bool
+	HasEdit   bool
+	HasWrite  bool
+	HasSearch bool
 
-	HasShell      bool
-
-	HasTasks      bool
+	HasShell bool
 
 	// Derived
 	Capabilities  []string
@@ -66,8 +64,6 @@ func NewPromptContext(registry RegistryInterface, cfg *config.Config) PromptCont
 
 	ctx.HasShell = registry.IsEnabled("Shell")
 
-	ctx.HasTasks = registry.IsEnabled("Tasks.Start")
-
 	// Build capabilities list
 	ctx.Capabilities = buildCapabilitiesList(registry)
 
@@ -100,9 +96,6 @@ func buildCapabilitiesList(registry RegistryInterface) []string {
 		capabilities = append(capabilities, "running shell commands")
 	}
 
-	if registry.IsEnabled("Tasks.Start") {
-		capabilities = append(capabilities, "managing tasks")
-	}
 	return capabilities
 }
 

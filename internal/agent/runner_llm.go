@@ -249,11 +249,6 @@ func (r *Runner) processLLMResponse(ctx context.Context, resp *llm.ChatResponse,
 	// Prevent consecutive assistant messages
 	state.messages, _ = llm.PreventConsecutiveAssistant(state.messages)
 
-	// Inject turn number for context tools
-	if r.contextMiddleware != nil && assistantMsg.Content != "" {
-		assistantMsg.Content = r.contextMiddleware.ProcessAssistantMessage(assistantMsg.Content)
-	}
-
 	// Get token counts
 	promptTokens := resp.Usage.PromptTokens
 	completionTokens := resp.Usage.CompletionTokens

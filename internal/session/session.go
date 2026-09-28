@@ -17,28 +17,31 @@ import (
 // A session is a directory, not a file:
 //
 //	~/.kvit-coder/sessions/<name>/
+//
 //	    history.jsonl   append-only, one timestamped event per line
+//
 //	    meta.json       when it was created and last touched, which workspace
 //	                    and model, the first prompt, and the compaction chain
-//	    checkpoints/    the shadow git repo that records the workspace after every turn
+//
 //	    proc/           pidfiles and logs for background processes
+//
 //	    inbox/          files dropped here reach the model next iteration
+//
 //	    tmp/            tool output too large to put in a message
 //
 // Everything with a life longer than one turn lives here. That is what lets a
-// turn run in its own process without losing the checkpoint history, the temp
+// turn run in its own process without losing the temp
 // files whose paths the model was told, or anything else the next turn needs.
 const (
 	historyFile = "history.jsonl"
 	metaFile    = "meta.json"
 	lockFile    = ".lock"
 
-	// CheckpointsSubdir and friends are exported so callers can build the
+	// ProcSubdir and friends are exported so callers can build the
 	// paths they hand to other components.
-	CheckpointsSubdir = "checkpoints"
-	ProcSubdir        = "proc"
-	InboxSubdir       = "inbox"
-	TmpSubdir         = "tmp"
+	ProcSubdir  = "proc"
+	InboxSubdir = "inbox"
+	TmpSubdir   = "tmp"
 )
 
 // Kind names what a history line records.
@@ -180,7 +183,7 @@ func OpenDir(dir string) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve session directory: %w", err)
 	}
-	for _, sub := range []string{"", CheckpointsSubdir, ProcSubdir, InboxSubdir, TmpSubdir} {
+	for _, sub := range []string{"", ProcSubdir, InboxSubdir, TmpSubdir} {
 		if err := os.MkdirAll(filepath.Join(abs, sub), 0755); err != nil {
 			return nil, fmt.Errorf("failed to create session directory: %w", err)
 		}
@@ -198,9 +201,6 @@ func (s *Session) Name() string { return s.name }
 
 // Dir is the session directory.
 func (s *Session) Dir() string { return s.dir }
-
-// CheckpointsDir is the shadow git repository that records the workspace after every turn.
-func (s *Session) CheckpointsDir() string { return filepath.Join(s.dir, CheckpointsSubdir) }
 
 // ProcDir holds pidfiles and logs for processes that outlive a turn.
 func (s *Session) ProcDir() string { return filepath.Join(s.dir, ProcSubdir) }

@@ -18,7 +18,7 @@ therefore written to the session directory described next.
 ## A session is a directory
 
 Sessions live under `~/.kvit-coder/sessions/<name>/` (`%USERPROFILE%\.kvit-coder\sessions\<name>\` on Windows): the transcript, the
-session's metadata, the file versions recorded after every turn, background
+session's metadata, background
 process logs, the inbox, and tool output too large to put in a message. It is
 plain files, so a session is also a record you can open months later and read.
 The layout, entry by entry, is in [`sessions.md`](sessions.md).

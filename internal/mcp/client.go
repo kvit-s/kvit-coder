@@ -40,7 +40,7 @@ const (
 
 // Namespacing: MCP tools are registered as "mcp" + Separator + server +
 // Separator + tool, e.g. "mcp.filesystem.read_file". The dotted form matches
-// the convention already used for Tasks.* and Shell.advanced and is
+// the convention already used for Shell.advanced and is
 // rendered correctly by the agent's generic tool-call display. If a target
 // model rejects dots in function names, change Separator to "__"
 // ("mcp__filesystem__read_file", the convention Claude Code uses) here — it is

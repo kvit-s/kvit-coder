@@ -9,8 +9,7 @@ and `config.yaml` beside the binary with symlinks resolved;
 ## Windows
 
 Native Windows needs Git for Windows (https://git-scm.com/download/win): the
-agent's shell is Git's `sh.exe` (plus `grep`, `find`, and `git` itself, which
-checkpoints require), resolved from `PATH` else the standard install locations
+agent's shell is Git's `sh.exe` (plus `grep` and `find`), resolved from `PATH` else the standard install locations
 (`%ProgramFiles%\Git\usr\bin\sh.exe`). When none is found, Shell fails fast
 naming Git for Windows. `cmd.exe` is never the agent's shell, so `del`/`rmdir`
 /`copy` builtins are out of scope by design.
@@ -194,8 +193,7 @@ Each tool group has `enabled: true/false` plus tool-specific options:
 - **`edit.mode`** — `"lines"`, `"searchreplace"`, or `"patch"`
 - **`edit.preview_mode`** — Stage edits and overwrites for confirmation, which is
   what registers `Edit.confirm`/`Edit.cancel` and `Write.confirm`/`Write.cancel`.
-  Off under `agent.profile: strong`, where Write overwrites directly and the
-  previous contents are in the turn's checkpoint.
+  Off under `agent.profile: strong`, where Write overwrites directly.
 - **`edit.fuzzy_threshold`** — Fuzzy matching for searchreplace mode (0 = exact only)
 - **`edit.read_before_edit_msgs`** — Require a read within N messages before editing
 - **`shell.allowed_commands`** / **`shell.disallowed_commands`** — Command allow/blocklists
@@ -209,7 +207,6 @@ Each tool group has `enabled: true/false` plus tool-specific options:
 - **`web.search.max_attempts`** — Tries before giving up on a rate-limit refusal (default 4). The provider allows one request per second shared across everything using the key, and refuses the excess rather than queueing it; a refusal costs no quota, so retrying is cheap next to handing the model a failure
 - **`web.usage_log`** — JSONL record of what was searched and when. Not a counter: the quota is account-wide and only the provider can see what other machines spent, which is why the response's `x-ratelimit-*` headers are read instead
 - **`web.fetch.max_bytes`** / **`web.fetch.timeout`** — Ceiling on HTML read, and seconds for one page (defaults 5 MB and 30)
-- **`checkpoint.max_turns`** — Max turns kept in the shadow git repository before rotating (default: 100)
 
 ### Web search and page fetch
 

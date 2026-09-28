@@ -1,5 +1,5 @@
 // Package session stores a conversation and everything else that outlives one
-// turn: the checkpoint repository, spilled tool output, the steering inbox and
+// turn: spilled tool output, the steering inbox and
 // the record of background processes. See session.go for the directory layout.
 package session
 
@@ -227,7 +227,7 @@ func (m *Manager) MostRecent() (string, error) {
 }
 
 // DeleteSession removes a session and everything it holds: history, metadata,
-// checkpoints, and the temp files whose cleanup now happens here rather than
+// and the temp files whose cleanup now happens here rather than
 // at process exit.
 func (m *Manager) DeleteSession(name string) error {
 	if !m.SessionExists(name) {

@@ -270,7 +270,6 @@ type profileSnapshot struct {
 
 	previewMode bool
 
-
 	exactMatchOnly bool
 
 	fuzzyThreshold float64
@@ -650,19 +649,16 @@ type PromptsConfig struct {
 
 // ToolsConfig holds per-tool configuration with explicit enable/disable
 type ToolsConfig struct {
-	Read        ReadToolConfig        `yaml:"read"`
-	Images      ImagesConfig          `yaml:"images"`
-	Edit        EditToolConfig        `yaml:"edit"`
-	RestoreFile RestoreFileToolConfig `yaml:"restore_file"`
-	Search      SearchToolConfig      `yaml:"search"`
-	Shell       ShellToolConfig       `yaml:"shell"`
-	Question    QuestionToolConfig    `yaml:"question"`
-	Report      ReportToolConfig      `yaml:"report"`
-	Procs       ProcsToolsConfig      `yaml:"procs"`
-	Batch       BatchToolConfig       `yaml:"batch"`
-	Checkpoint  CheckpointToolsConfig `yaml:"checkpoint"`
-	Tasks       TasksToolsConfig      `yaml:"tasks"`
-	Web         WebToolsConfig        `yaml:"web"`
+	Read     ReadToolConfig     `yaml:"read"`
+	Images   ImagesConfig       `yaml:"images"`
+	Edit     EditToolConfig     `yaml:"edit"`
+	Search   SearchToolConfig   `yaml:"search"`
+	Shell    ShellToolConfig    `yaml:"shell"`
+	Question QuestionToolConfig `yaml:"question"`
+	Report   ReportToolConfig   `yaml:"report"`
+	Procs    ProcsToolsConfig   `yaml:"procs"`
+	Batch    BatchToolConfig    `yaml:"batch"`
+	Web      WebToolsConfig     `yaml:"web"`
 
 	// Safety confirmations (runtime only, not persisted)
 	SafetyConfirmations map[string]SafetyConfirmation `yaml:"-"`
@@ -759,11 +755,6 @@ type EditToolConfig struct {
 	// line(s) (keeps them) instead of deleting, and deletes go through DeleteLines.
 	// Default off = today's behavior exactly ("" deletes, no DeleteLines tool).
 	ExplicitDelete bool `yaml:"explicit_delete"`
-}
-
-// RestoreFileToolConfig configures the restore_file tool
-type RestoreFileToolConfig struct {
-	Enabled bool `yaml:"enabled"`
 }
 
 // SearchToolConfig configures the search tool
@@ -909,28 +900,6 @@ type ShellToolConfig struct {
 	DefaultTimeout int `yaml:"default_timeout"`
 	// MaxTimeout caps what a call may ask for, in seconds. Default 600.
 	MaxTimeout int `yaml:"max_timeout"`
-}
-
-// CheckpointToolsConfig configures the shadow git repository that records the
-// workspace after every turn with tool calls (sessions/<name>/checkpoints/).
-// There are no checkpoint tools; the repository is inspected with git.
-type CheckpointToolsConfig struct {
-	MaxTurns         int      `yaml:"max_turns"`         // max checkpoints before rotating (default: 100)
-	TempDir          string   `yaml:"temp_dir"`          // base directory for checkpoint storage
-	MaxFileSizeKB    int      `yaml:"max_file_size_kb"`  // skip files larger than this (default: 1024)
-	ExcludedPatterns []string `yaml:"excluded_patterns"` // don't track these files
-}
-
-// TasksToolsConfig configures Tasks.* tools for context compression
-type TasksToolsConfig struct {
-	Enabled bool `yaml:"enabled"` // Enable Tasks tools
-
-	// Runtime notice thresholds
-	TaskWarnTurns       int  `yaml:"task_warn_turns"`       // Warn after N turns in task (default: 5)
-	TaskCriticalTurns   int  `yaml:"task_critical_turns"`   // Critical warning after N turns (default: 10)
-	ContextCapacityWarn int  `yaml:"context_capacity_warn"` // Warn at N% context capacity (default: 80)
-	MaxNestedDepth      int  `yaml:"max_nested_depth"`      // Max task nesting depth (default: 2)
-	NotifyFileChanges   bool `yaml:"notify_file_changes"`   // Notify about file changes in task (default: true)
 }
 
 // BacktrackConfig configures the backtrack error handling mode
@@ -1109,14 +1078,6 @@ func Load(path string) (*Config, error) {
 		cfg.Tools.Edit.MaxFileSizeKB = 128
 	}
 
-	// Set default checkpoint settings
-	if cfg.Tools.Checkpoint.MaxFileSizeKB == 0 {
-		cfg.Tools.Checkpoint.MaxFileSizeKB = 1024
-	}
-	if cfg.Tools.Checkpoint.MaxTurns == 0 {
-		cfg.Tools.Checkpoint.MaxTurns = 100
-	}
-
 	// The profile turns off the machinery written to compensate for a weak
 	// model. Applying it here, once, rather than at each of the places that
 	// read these settings, means none of them can be missed — and it is why
@@ -1175,23 +1136,6 @@ func Load(path string) (*Config, error) {
 		cfg.Backtrack.MaxRetries = 5 // Default max retries if enabled
 	}
 
-	// Set default Tasks tools settings
-	if cfg.Tools.Tasks.TaskWarnTurns == 0 {
-		cfg.Tools.Tasks.TaskWarnTurns = 5
-	}
-	if cfg.Tools.Tasks.TaskCriticalTurns == 0 {
-		cfg.Tools.Tasks.TaskCriticalTurns = 10
-	}
-	if cfg.Tools.Tasks.ContextCapacityWarn == 0 {
-		cfg.Tools.Tasks.ContextCapacityWarn = 80
-	}
-	if cfg.Tools.Tasks.MaxNestedDepth == 0 {
-		cfg.Tools.Tasks.MaxNestedDepth = 2
-	}
-	// NotifyFileChanges defaults to true (Go zero value is false, so we check if unset)
-	// Since YAML unmarshals false as false, we need a different approach
-	// For now, we'll leave it as the struct default behavior
-
 	// Safety config defaults (all features disabled for backward compatibility)
 	if cfg.Safety.Audit.LogDir == "" {
 		cfg.Safety.Audit.LogDir = "~/.kvit-coder/safety-logs"
@@ -1247,7 +1191,7 @@ func (c *Config) CheckPathSafety(toolName, identifier string) error {
 
 	// For filesystem tools, check if path is outside workspace
 	if strings.HasPrefix(toolName, "read") || strings.HasPrefix(toolName, "edit") ||
-		strings.HasPrefix(toolName, "restore") || toolName == "glob" || toolName == "shell" ||
+		toolName == "glob" || toolName == "shell" ||
 		toolName == "search" {
 		absPath, outside, err := NormalizeAndValidatePath(c.Workspace.Root, identifier)
 		if err != nil || !outside {
