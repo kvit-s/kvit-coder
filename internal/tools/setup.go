@@ -213,7 +213,7 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		registry.Enable(tasksStartTool)
 		debug(fmt.Sprintf("Enabled tool: %s", tasksStartTool.Name()))
 
-		tasksFinishTool := NewTasksFinishTool(sc.ContextMgr)
+		tasksFinishTool := NewTasksFinishTool(sc.ContextMgr, sc.TempFileMgr)
 		registry.Enable(tasksFinishTool)
 		debug(fmt.Sprintf("Enabled tool: %s", tasksFinishTool.Name()))
 
@@ -230,8 +230,6 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		debug(fmt.Sprintf("Enabled tool: %s", tasksRevertFileTool.Name()))
 
 	}
-
-
 
 	// MCP tools (from configured external servers). Registered last; they are
 	// indistinguishable from built-in tools to the registry and agent loop.

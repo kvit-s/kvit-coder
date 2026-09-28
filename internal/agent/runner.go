@@ -270,6 +270,12 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 	for i := 0; i < maxIters; i++ {
 		r.logger.AgentIteration(i, 0)
 
+		// Tell the tasks middleware where the loop stands, so an open task
+		// warns with the real remaining budget (hard turn limit).
+		if r.contextMiddleware != nil {
+			r.contextMiddleware.SetIteration(i, maxIters)
+		}
+
 		// File-first mode: read messages from file at start of each iteration
 		if rcfg.UseFileFirst && r.contextMgr != nil {
 			fileMessages, err := r.contextMgr.ReadMessagesForLLM()

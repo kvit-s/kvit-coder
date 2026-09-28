@@ -68,8 +68,12 @@ You have tools for managing tasks and compressing context:
 
 ### File Changes:
 - Tasks.Finish shows a diff of all file changes made in the task
+- A large diff is truncated to a head+tail preview; the full diff is saved to a file named in the result (diff_file) — Read it before deciding when the preview is not enough
 - If there are changes, you MUST call Tasks.AcceptDiff or Tasks.DeclineDiff (other tools blocked)
-- If no changes, continue normally`
+- If no changes, continue normally
+
+### Turn budget:
+- A turn ends at the tool-iteration limit even mid-task. Runtime notices name the remaining budget as the task grows or the budget runs low — finish with Tasks.Finish before it runs out`
 }
 
 type tasksStartArgs struct {
@@ -176,10 +180,43 @@ func (t *TasksStartTool) Call(ctx context.Context, args json.RawMessage) (any, e
 
 type TasksFinishTool struct {
 	manager *ctxtools.Manager
+	// tempFileMgr spills a large Finish diff to session tmp/, following the
+	// same pattern as shell/search output. Nil disables spilling: the diff is
+	// still truncated for the LLM, just without a file to review.
+	tempFileMgr *TempFileManager
 }
 
-func NewTasksFinishTool(manager *ctxtools.Manager) *TasksFinishTool {
-	return &TasksFinishTool{manager: manager}
+func NewTasksFinishTool(manager *ctxtools.Manager, tempFileMgr *TempFileManager) *TasksFinishTool {
+	return &TasksFinishTool{manager: manager, tempFileMgr: tempFileMgr}
+}
+
+// prepareDiff truncates a Finish diff like other output tools: a head+tail
+// preview for the LLM, with the full output spilled to session tmp/ for
+// review via Read. Thresholds match TruncateContent defaults (150 lines /
+// 24KB shown in full, otherwise a ~75-line / 12KB preview). A nil
+// TempFileManager still truncates, just without a file to review.
+func (t *TasksFinishTool) prepareDiff(diffOutput string, hasChanges bool) (diffForLLM, diffFile string, diffTruncated bool, totalLines, totalBytes int) {
+	diffForLLM = diffOutput
+	if !hasChanges {
+		return diffForLLM, "", false, 0, 0
+	}
+	trunc := TruncateContent([]byte(diffOutput), DefaultMaxLines, DefaultMaxBytes, DefaultTruncatedLines, DefaultTruncatedBytes)
+	totalLines, totalBytes = trunc.TotalLines, trunc.TotalBytes
+	if !trunc.WasTruncated {
+		return diffForLLM, "", false, totalLines, totalBytes
+	}
+	diffForLLM = trunc.Content
+	diffTruncated = true
+	if t.tempFileMgr != nil {
+		if f, ferr := t.tempFileMgr.CreateTempFile(); ferr == nil {
+			diffFile = f.Name()
+			if _, werr := f.Write([]byte(diffOutput)); werr != nil {
+				diffFile = ""
+			}
+			_ = f.Close()
+		}
+	}
+	return diffForLLM, diffFile, diffTruncated, totalLines, totalBytes
 }
 
 func (t *TasksFinishTool) Name() string {
@@ -187,7 +224,7 @@ func (t *TasksFinishTool) Name() string {
 }
 
 func (t *TasksFinishTool) Description() string {
-	return "Complete the current task. Shows diff of all file changes. If changes exist, must call AcceptDiff or DeclineDiff next."
+	return "Complete the current task. Shows diff of all file changes (large diffs truncated to a preview with the full text saved to a file for review). If changes exist, must call AcceptDiff or DeclineDiff next."
 }
 
 func (t *TasksFinishTool) JSONSchema() map[string]any {
@@ -274,6 +311,10 @@ func (t *TasksFinishTool) Call(ctx context.Context, args json.RawMessage) (any, 
 	}
 	hasChanges := diffOutput != ""
 
+	// Truncate a large diff like other output tools: keep a head+tail preview
+	// for the LLM and spill the full output to session tmp/ for review.
+	diffForLLM, diffFile, diffTruncated, diffTotalLines, diffTotalBytes := t.prepareDiff(diffOutput, hasChanges)
+
 	// 2. Record Tasks.Finish on TASK branch (preserves detailed history)
 	assistantMsg := llm.Message{
 		Role:    llm.RoleAssistant,
@@ -296,11 +337,15 @@ func (t *TasksFinishTool) Call(ctx context.Context, args json.RawMessage) (any, 
 
 	finishedContent := ctxtools.ToolContent{
 		Result: summary,
-		Diff:   diffOutput,
+		Diff:   diffForLLM,
 		Internal: &ctxtools.InternalMeta{
 			CheckpointID: *preTaskCheckpoint,
 			HasChanges:   hasChanges,
 		},
+		DiffTruncated:  diffTruncated,
+		DiffFile:       diffFile,
+		DiffTotalLines: diffTotalLines,
+		DiffTotalBytes: diffTotalBytes,
 	}
 	if !success {
 		finishedContent.Success = &success
@@ -329,11 +374,15 @@ func (t *TasksFinishTool) Call(ctx context.Context, args json.RawMessage) (any, 
 	// 4. REPLACE the Tasks.Start tool result on parent branch with final result
 	replaceContent := ctxtools.ToolContent{
 		Result: summary,
-		Diff:   diffOutput,
+		Diff:   diffForLLM,
 		Internal: &ctxtools.InternalMeta{
 			CheckpointID: *preTaskCheckpoint,
 			HasChanges:   hasChanges,
 		},
+		DiffTruncated:  diffTruncated,
+		DiffFile:       diffFile,
+		DiffTotalLines: diffTotalLines,
+		DiffTotalBytes: diffTotalBytes,
 	}
 	if !success {
 		replaceContent.Success = &success
@@ -354,8 +403,19 @@ func (t *TasksFinishTool) Call(ctx context.Context, args json.RawMessage) (any, 
 	}
 
 	if hasChanges {
-		result["diff"] = diffOutput
+		result["diff"] = diffForLLM
 		result["next_action"] = "Call Tasks.AcceptDiff to keep changes or Tasks.DeclineDiff to discard them."
+		if diffTruncated {
+			result["diff_truncated"] = true
+			result["diff_total_lines"] = diffTotalLines
+			result["diff_total_bytes"] = diffTotalBytes
+			if diffFile != "" {
+				result["diff_file"] = diffFile
+				result["hint"] = fmt.Sprintf("Full diff (%d lines, %d bytes) saved to: %s. Use Read to investigate the full diff before Accept/Decline.", diffTotalLines, diffTotalBytes, diffFile)
+			} else {
+				result["hint"] = fmt.Sprintf("Diff truncated to preview (%d of %d lines).", DefaultTruncatedLines, diffTotalLines)
+			}
+		}
 	}
 
 	return result, nil
@@ -652,4 +712,3 @@ func (t *TasksRevertFileTool) Call(ctx context.Context, args json.RawMessage) (a
 		"content_size": len(content),
 	}, nil
 }
-

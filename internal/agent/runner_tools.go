@@ -387,6 +387,106 @@ func (r *Runner) displayToolCall(internalName string, tc llm.ToolCall) {
 	r.writer.ToolCall(internalName, argsDisplay, "")
 }
 
+// tasksTranscriptSummary returns a one-line transcript note for a successful
+// Tasks tool call, so the task lifecycle (branch, checkpoint, diff decision)
+// is visible in the terminal transcript. ToolResult stays silent on success
+// by design, which would otherwise leave a task start or finish as a call
+// line with no outcome. Returns "" for non-Tasks tools.
+func tasksTranscriptSummary(internalName string, toolResult any) string {
+	if !strings.HasPrefix(internalName, "Tasks.") {
+		return ""
+	}
+	result, ok := toolResult.(map[string]any)
+	if !ok {
+		return ""
+	}
+	str := func(key string) string {
+		s, _ := result[key].(string)
+		return s
+	}
+	switch internalName {
+	case "Tasks.Start":
+		task := ui.SingleLine(str("task"), 120)
+		branch, parent, checkpoint := str("branch"), str("parent_branch"), str("checkpoint_id")
+		switch {
+		case branch != "" && checkpoint != "" && parent != "":
+			return fmt.Sprintf("[tasks] started branch %s (parent %s, %s): %s", branch, parent, checkpoint, task)
+		case branch != "" && checkpoint != "":
+			return fmt.Sprintf("[tasks] started branch %s (%s): %s", branch, checkpoint, task)
+		case task != "":
+			return fmt.Sprintf("[tasks] started: %s", task)
+		default:
+			return "[tasks] started"
+		}
+	case "Tasks.Finish":
+		summary := ui.SingleLine(str("summary"), 160)
+		success := true
+		if s, ok := result["success"].(bool); ok {
+			success = s
+		}
+		hasChanges := false
+		if hc, ok := result["has_changes"].(bool); ok {
+			hasChanges = hc
+		}
+		note := ""
+		if d, ok := result["diff"].(string); ok && d != "" {
+			note = fmt.Sprintf(", diff %s chars", ui.FormatChars(len(d)))
+		}
+		if trunc, _ := result["diff_truncated"].(bool); trunc {
+			total := ""
+			switch {
+			case result["diff_total_lines"] != nil && result["diff_total_bytes"] != nil:
+				total = fmt.Sprintf("%v lines/%v bytes", result["diff_total_lines"], result["diff_total_bytes"])
+			case result["diff_total_lines"] != nil:
+				total = fmt.Sprintf("%v lines", result["diff_total_lines"])
+			}
+			if total != "" {
+				note += fmt.Sprintf(" (truncated, full %s", total)
+			} else {
+				note += " (truncated"
+			}
+			if f, _ := result["diff_file"].(string); f != "" {
+				note += fmt.Sprintf(" in %s", f)
+			}
+			note += ")"
+		} else if f, _ := result["diff_file"].(string); f != "" {
+			note += fmt.Sprintf(" (full in %s)", f)
+		}
+		status := "finished"
+		if !success {
+			status = "finished (success=false)"
+		}
+		if summary == "" {
+			return fmt.Sprintf("[tasks] %s (has_changes=%v%s)", status, hasChanges, note)
+		}
+		return fmt.Sprintf("[tasks] %s: %s (has_changes=%v%s)", status, summary, hasChanges, note)
+	case "Tasks.AcceptDiff":
+		return "[tasks] changes accepted"
+	case "Tasks.DeclineDiff":
+		return "[tasks] changes discarded, rolled back to pre-task checkpoint"
+	case "Tasks.RevertFile":
+		path := str("path")
+		if path == "" {
+			return "[tasks] file reverted"
+		}
+		switch size := result["content_size"].(type) {
+		case int:
+			return fmt.Sprintf("[tasks] reverted %s (%s chars)", path, ui.FormatChars(size))
+		case int64:
+			return fmt.Sprintf("[tasks] reverted %s (%s chars)", path, ui.FormatChars(int(size)))
+		case float64:
+			return fmt.Sprintf("[tasks] reverted %s (%s chars)", path, ui.FormatChars(int(size)))
+		default:
+			return fmt.Sprintf("[tasks] reverted %s", path)
+		}
+	default:
+		if s := ui.SingleLine(str("status"), 120); s != "" {
+			return fmt.Sprintf("[tasks] %s", s)
+		}
+		return ""
+	}
+}
+
 // executeToolWithTimeout executes a tool with appropriate timeout and progress display
 func (r *Runner) executeToolWithTimeout(
 	ctx context.Context,
@@ -492,6 +592,14 @@ func (r *Runner) executeToolWithTimeout(
 			if dotCount > 0 {
 				durationStr = fmt.Sprintf("...%.0fs", duration.Seconds())
 			}
+
+			// Tasks tools get a one-line outcome in the transcript: branch,
+			// checkpoint, diff decision. Everything else stays silent on
+			// success by design (see ToolResult).
+			if summary := tasksTranscriptSummary(internalName, toolResult); summary != "" {
+				r.writer.Info(summary)
+			}
+
 			// Summary empty: ToolResult prints the duration (if any) and
 			// nothing else.
 			r.writer.ToolResult("", durationStr)

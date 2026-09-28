@@ -34,9 +34,19 @@ type Manager struct {
 // ToolContent represents the parsed content of a tool result
 type ToolContent struct {
 	Result   string        `json:"result"`
-	Diff     string        `json:"diff,omitempty"`    // for completed task
+	Diff     string        `json:"diff,omitempty"`    // for completed task (truncated when large, see DiffTruncated)
 	Success  *bool         `json:"success,omitempty"` // for completed task (nil = true)
 	Internal *InternalMeta `json:"_internal,omitempty"`
+	// DiffFile holds the session-tmp path of the full diff when Diff was
+	// truncated (same spill-to-file pattern as shell/search output).
+	DiffFile string `json:"diff_file,omitempty"`
+	// DiffTruncated is true when Diff holds a truncated preview and DiffFile
+	// holds the complete output.
+	DiffTruncated bool `json:"diff_truncated,omitempty"`
+	// DiffTotalLines and DiffTotalBytes describe the full diff before
+	// truncation, so the model can judge whether opening DiffFile is worth it.
+	DiffTotalLines int `json:"diff_total_lines,omitempty"`
+	DiffTotalBytes int `json:"diff_total_bytes,omitempty"`
 }
 
 // InternalMeta contains metadata for context tool operations
@@ -619,7 +629,6 @@ func (m *Manager) RestoreFileToStart(path string) ([]byte, error) {
 
 	return m.checkpointMgr.RestoreFile(path)
 }
-
 
 // =============================================================================
 // Utility

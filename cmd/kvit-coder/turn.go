@@ -501,6 +501,7 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 					ContextCapacityWarn: cfg.Tools.Tasks.ContextCapacityWarn,
 					MaxNestedDepth:      cfg.Tools.Tasks.MaxNestedDepth,
 					NotifyFileChanges:   cfg.Tools.Tasks.NotifyFileChanges,
+					MaxIterations:       cfg.Agent.MaxIterations,
 				})
 			}
 		}
