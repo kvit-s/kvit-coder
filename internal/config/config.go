@@ -653,6 +653,7 @@ type ToolsConfig struct {
 	Images   ImagesConfig       `yaml:"images"`
 	Edit     EditToolConfig     `yaml:"edit"`
 	Search   SearchToolConfig   `yaml:"search"`
+	Glob     GlobToolConfig     `yaml:"glob"`
 	Shell    ShellToolConfig    `yaml:"shell"`
 	Question QuestionToolConfig `yaml:"question"`
 	Report   ReportToolConfig   `yaml:"report"`
@@ -763,6 +764,12 @@ type SearchToolConfig struct {
 	MaxSnippetResults int  `yaml:"max_snippet_results"` // Show full snippets up to this many (default: 20)
 	MaxCompactResults int  `yaml:"max_compact_results"` // Show file:line:char up to this many (default: 100)
 	// Above max_compact_results: save to temp file, show truncated
+}
+
+// GlobToolConfig configures the glob tool
+type GlobToolConfig struct {
+	Enabled    bool `yaml:"enabled"`
+	MaxResults int  `yaml:"max_results"` // Paths returned per call (default: 100); above truncates with a flag
 }
 
 // QuestionToolConfig configures the Question tool, which asks the person

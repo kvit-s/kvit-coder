@@ -12,9 +12,22 @@ func (t *ReadFileTool) ShortPromptSection() string {
 	return fmt.Sprintf(`### Read
 
 Truncates at %d lines or %dKB, whichever comes first; use start and limit to
-read a large file in pieces. A negative start counts from the end. A directory
-path lists the directory.`,
+read a large file in pieces. A negative start counts from the end. Files
+only: a directory path is refused, use Glob to list it.`,
 		t.maxLines, t.maxBytes/1024)
+}
+
+// ShortPromptSection says what Glob returns and where it stops.
+func (t *GlobTool) ShortPromptSection() string {
+	max := t.config.Tools.Glob.MaxResults
+	if max == 0 {
+		max = DefaultGlobMaxResults
+	}
+	return fmt.Sprintf(`### Glob
+
+Finds files by pattern ('**/*.go'), scoped to path (default: workspace).
+No pattern lists the directory at path. Sorted, capped at %d paths with a
+truncation flag past it; excluded dirs (.git, node_modules) never walked.`, max)
 }
 
 // ShortPromptSection gives the searchreplace Edit's one hard rule.

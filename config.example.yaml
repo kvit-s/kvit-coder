@@ -42,6 +42,8 @@ tools:
     mode: "lines"          # "lines", "searchreplace" or "patch"
   search:
     enabled: true
+  glob:
+    enabled: true
   shell:
     enabled: true
     default_timeout: 120   # seconds a command gets when the call names none

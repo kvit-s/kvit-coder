@@ -1,0 +1,17 @@
+### Glob - Find Files / List Directories
+
+**Usage:** `Glob {"pattern": "<glob>"}`
+
+Examples:
+- `Glob {"pattern": "**/*.go"}` - every Go file under the workspace
+- `Glob {"pattern": "src/**/*.ts", "path": "web/"}` - scoped to a directory
+- `Glob {"path": "src/"}` - list directory contents (no pattern)
+
+**Parameters:**
+- `pattern` (optional): Glob with `*` (within a directory), `**` (across directories), `?`, `[...]`. Empty lists the directory at `path`.
+- `path` (optional): Directory to search in (default: workspace root)
+
+Results are sorted alphabetically and capped; past the cap a truncation flag
+says to narrow the pattern. Excluded directories (.git, node_modules, ...) are
+never walked. To read what is inside a file, use Search or Read next.
+Always use Glob — not Read — to see what a directory contains.

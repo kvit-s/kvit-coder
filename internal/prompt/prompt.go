@@ -131,7 +131,7 @@ func (g *Generator) generateFromTemplates() (string, error) {
 	}
 
 	// Render workflow
-	if ctx.HasRead || ctx.HasEdit || ctx.HasSearch || ctx.HasShell {
+	if ctx.HasRead || ctx.HasEdit || ctx.HasSearch || ctx.HasGlob || ctx.HasShell {
 		workflow, err := g.engine.Render("prompts/sections/workflow.tmpl", &ctx)
 		if err != nil {
 			return "", fmt.Errorf("render workflow: %w", err)
@@ -282,6 +282,9 @@ func (g *Generator) generateHardcoded() string {
 // buildCapabilities returns list of enabled capabilities
 func (g *Generator) buildCapabilities() []string {
 	var capabilities []string
+	if g.registry.IsEnabled("Glob") {
+		capabilities = append(capabilities, "finding files")
+	}
 	if g.registry.IsEnabled("Read") {
 		capabilities = append(capabilities, "reading files")
 	}
@@ -300,7 +303,7 @@ func (g *Generator) buildCapabilities() []string {
 // buildMainTasks returns list of main tasks based on enabled tools
 func (g *Generator) buildMainTasks() []string {
 	var mainTasks []string
-	if g.registry.IsEnabled("Search") || g.registry.IsEnabled("Read") {
+	if g.registry.IsEnabled("Glob") || g.registry.IsEnabled("Search") || g.registry.IsEnabled("Read") {
 		mainTasks = append(mainTasks, "- Exploring codebase")
 	}
 	if g.registry.IsEnabled("Read") {
@@ -320,6 +323,15 @@ func (g *Generator) buildWorkflowSteps() []string {
 	hasShell := g.registry.IsEnabled("Shell")
 	var workflowSteps []string
 	stepNum := 1
+
+	// Glob step: discovery narrows everything after it
+	if g.registry.IsEnabled("Glob") {
+		workflowSteps = append(workflowSteps, fmt.Sprintf("%d. Find relevant files using Glob tool", stepNum))
+		stepNum++
+	} else if hasShell {
+		workflowSteps = append(workflowSteps, fmt.Sprintf("%d. Find relevant files using Shell tool (ls, find)", stepNum))
+		stepNum++
+	}
 
 	// Search step
 	if g.registry.IsEnabled("Search") {

@@ -22,10 +22,12 @@ type PromptContext struct {
 	PreviewMode bool
 
 	// Enabled tools (for conditionals)
+
 	HasRead   bool
 	HasEdit   bool
 	HasWrite  bool
 	HasSearch bool
+	HasGlob   bool
 
 	HasShell bool
 
@@ -61,6 +63,7 @@ func NewPromptContext(registry RegistryInterface, cfg *config.Config) PromptCont
 	ctx.HasWrite = registry.IsEnabled("Write")
 
 	ctx.HasSearch = registry.IsEnabled("Search")
+	ctx.HasGlob = registry.IsEnabled("Glob")
 
 	ctx.HasShell = registry.IsEnabled("Shell")
 
@@ -83,6 +86,9 @@ func NewPromptContext(registry RegistryInterface, cfg *config.Config) PromptCont
 // buildCapabilitiesList returns a list of capability descriptions based on enabled tools.
 func buildCapabilitiesList(registry RegistryInterface) []string {
 	var capabilities []string
+	if registry.IsEnabled("Glob") {
+		capabilities = append(capabilities, "finding files")
+	}
 	if registry.IsEnabled("Read") {
 		capabilities = append(capabilities, "reading files")
 	}
@@ -106,7 +112,7 @@ func determineEnabledCategories(registry RegistryInterface) []string {
 
 	// Check each category for any enabled tools
 	categoryTools := map[string][]string{
-		"filesystem": {"Read", "Write", "Edit", "Search"},
+		"filesystem": {"Read", "Write", "Edit", "Search", "Glob"},
 		"shell":      {"Shell", "Shell.advanced"},
 	}
 

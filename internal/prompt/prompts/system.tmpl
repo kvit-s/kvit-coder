@@ -5,7 +5,7 @@
 {{- template "prompts/sections/tasks.tmpl" . }}
 {{- end }}
 
-{{- if or .HasRead .HasEdit .HasSearch .HasShell }}
+{{- if or .HasRead .HasEdit .HasSearch .HasGlob .HasShell }}
 {{- template "prompts/sections/workflow.tmpl" . }}
 {{- end }}
 

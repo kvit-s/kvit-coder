@@ -318,7 +318,7 @@ func (t *ReadFileTool) Name() string {
 }
 
 func (t *ReadFileTool) Description() string {
-	return "Read file contents or list directory contents. Line mode (default) for normal files; char_mode=true for large files (uses seek, no memory limit). If path is a directory, lists its contents."
+	return "Read file contents. Line mode (default) for normal files; char_mode=true for large files (uses seek, no memory limit). Files only: use Glob to list directories or find files."
 }
 
 func (t *ReadFileTool) Check(ctx context.Context, args json.RawMessage) error {
@@ -332,7 +332,7 @@ func (t *ReadFileTool) JSONSchema() map[string]any {
 		"properties": map[string]any{
 			"path": map[string]any{
 				"type":        "string",
-				"description": "Path to file (relative to workspace or absolute)",
+				"description": "Path to a file (relative to workspace or absolute). Directories are refused: use Glob to list them.",
 			},
 			"char_mode": map[string]any{
 				"type":        "boolean",
@@ -359,23 +359,22 @@ func (t *ReadFileTool) PromptCategory() string     { return "filesystem" }
 func (t *ReadFileTool) PromptOrder() int           { return 10 }
 func (t *ReadFileTool) PromptTemplateName() string { return "read" }
 func (t *ReadFileTool) PromptSection() string {
-	return `### Read - Read Files/Directories
+	return `### Read - Read Files
 
-**Usage:** ` + "`" + `Read {"path": "<file or directory>"}` + "`" + `
+**Usage:** ` + "`" + `Read {"path": "<file>"}` + "`" + `
 
 Examples:
 - ` + "`" + `Read {"path": "file.py"}` + "`" + ` - read entire file
 - ` + "`" + `Read {"path": "file.py", "start": 10, "limit": 20}` + "`" + ` - read lines 10-29
 - ` + "`" + `Read {"path": "file.py", "start": -50}` + "`" + ` - read last 50 lines
-- ` + "`" + `Read {"path": "src/"}` + "`" + ` - list directory contents
 
 **Parameters:**
-- ` + "`path`" + ` (required): File or directory path
+- ` + "`path`" + ` (required): File path (directories are refused: use Glob to list them)
 - ` + "`start`" + ` (optional): Starting line (1-based, default: 1). Negative = from end (-50 = last 50 lines)
 - ` + "`limit`" + ` (optional): Maximum lines to read
 
 Output is truncated at 150 lines or 24KB. For large files, use start/limit to read in chunks.
-Always use Read before editing a file.
+Always use Read before editing a file. To find which files exist, use Glob first.
 
 **PDF files** are detected from their contents and their text is extracted for
 you, with a marker before each page. Use ` + "`pages`" + ` to choose which pages:
@@ -441,9 +440,15 @@ func (t *ReadFileTool) Call(ctx context.Context, args json.RawMessage) (any, err
 		return nil, fmt.Errorf("stat file: %w", err)
 	}
 
-	// Check if it's a directory - list contents instead of error
+	// Directories are Glob's job. Answer in-band, the way file_not_found
+	// does, so the model can act on it without losing the turn to an error.
 	if info.IsDir() {
-		return t.readDirectory(fullPath, params.Path)
+		return map[string]any{
+			"success": false,
+			"error":   "is_directory",
+			"path":    params.Path,
+			"message": fmt.Sprintf("%s is a directory. Use Glob to list it: Glob {\"path\": \"%s\"}", params.Path, params.Path),
+		}, nil
 	}
 
 	fileSize := info.Size()
@@ -1015,54 +1020,6 @@ func (t *ReadFileTool) readCharModeSeek(fullPath string, fileSize int64, start, 
 		// More bytes available
 		remaining := fileSize - lastReadByte
 		response["hint"] = fmt.Sprintf("%d bytes remaining. To continue, use char_mode (start is BYTE position, not line): Read {\"path\": \"%s\", \"char_mode\": true, \"start\": %d}", remaining, path, lastReadByte+1)
-	}
-
-	return response, nil
-}
-
-// readDirectory lists directory contents when read is called on a directory
-func (t *ReadFileTool) readDirectory(fullPath, displayPath string) (any, error) {
-	entries, err := os.ReadDir(fullPath)
-	if err != nil {
-		return nil, fmt.Errorf("read directory: %w", err)
-	}
-
-	var result []map[string]any
-	for _, entry := range entries {
-		item := map[string]any{
-			"name": entry.Name(),
-			"type": "file",
-		}
-		if entry.IsDir() {
-			item["name"] = entry.Name() + "/"
-			item["type"] = "dir"
-		} else {
-			if info, err := entry.Info(); err == nil {
-				item["size"] = info.Size()
-			}
-		}
-		result = append(result, item)
-	}
-
-	// Truncate if too many entries
-	total := len(result)
-	shown := len(result)
-	if shown > 50 {
-		result = result[:50]
-		shown = 50
-	}
-
-	response := map[string]any{
-		"success":       true,
-		"path":          displayPath,
-		"type":          "directory",
-		"entries":       result,
-		"shown_entries": shown,
-		"total_entries": total,
-	}
-
-	if shown < total {
-		response["hint"] = fmt.Sprintf("Showing %d of %d entries. Use Glob or Search for specific files.", shown, total)
 	}
 
 	return response, nil

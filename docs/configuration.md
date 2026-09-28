@@ -197,6 +197,7 @@ Each tool group has `enabled: true/false` plus tool-specific options:
 - **`edit.fuzzy_threshold`** — Fuzzy matching for searchreplace mode (0 = exact only)
 - **`edit.read_before_edit_msgs`** — Require a read within N messages before editing
 - **`shell.allowed_commands`** / **`shell.disallowed_commands`** — Command allow/blocklists
+- **`glob.max_results`** — Paths returned per Glob call (default 100); above truncates with a flag
 - **`shell.default_timeout`** / **`shell.max_timeout`** — Seconds a command gets, and the ceiling a call may ask for (default 120 and 600)
 - **`batch.enabled`** — Run several independent tool calls in one request
 - **`procs.enabled`** — Background processes that outlive a turn (`Shell.start`, `Observe.wait`, …)

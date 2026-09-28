@@ -131,6 +131,12 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		debug(fmt.Sprintf("Enabled tool: %s", searchTool.Name()))
 	}
 
+	if cfg.Tools.Glob.Enabled {
+		globTool := NewGlobTool(cfg)
+		registry.Enable(globTool)
+		debug(fmt.Sprintf("Enabled tool: %s", globTool.Name()))
+	}
+
 	if cfg.Tools.Shell.Enabled && sc.TempFileMgr != nil {
 		shellTimeout := time.Duration(cfg.Tools.Shell.DefaultTimeout) * time.Second
 		shellTool := NewShellTool(cfg, shellTimeout, sc.TempFileMgr)

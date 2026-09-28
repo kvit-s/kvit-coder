@@ -1,5 +1,5 @@
 # MAIN TASKS
-{{- if or .HasSearch .HasRead }}
+{{- if or .HasGlob .HasSearch .HasRead }}
 - Exploring codebase
 {{- end }}
 {{- if .HasRead }}
@@ -11,4 +11,3 @@
 {{- if .HasShell }}
 - Running commands
 {{- end }}
-
