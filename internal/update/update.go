@@ -519,7 +519,7 @@ func extractTarGz(archivePath, destDir string) (string, string, error) {
 		if err != nil {
 			return "", "", err
 		}
-		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
 		base := path.Base(hdr.Name)

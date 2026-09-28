@@ -23,7 +23,6 @@ func parseFlexibleIntString(s string) (val int, empty bool, ok bool) {
 			candidate := strings.TrimSpace(trimmed[:len(trimmed)-len(suffix)])
 			if candidate != "" {
 				trimmed = candidate
-				lower = strings.ToLower(trimmed)
 				break
 			}
 		}

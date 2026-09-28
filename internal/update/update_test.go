@@ -358,7 +358,9 @@ func TestFetchRelease(t *testing.T) {
 			fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(sum[:]), AssetName("v0.5.0", "darwin", "arm64"))
 			return
 		}
-		w.Write(archive)
+		if _, err := w.Write(archive); err != nil {
+			t.Errorf("test server write: %v", err)
+		}
 	}))
 	defer srv.Close()
 
