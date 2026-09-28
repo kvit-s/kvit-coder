@@ -9,7 +9,7 @@
 # from the bundled example when there is no configuration yet.
 #
 # WSL stays supported via install.sh; this script is for native Windows, which
-# needs Git for Windows (for sh.exe, grep, and git itself) — see
+# needs Git for Windows (for sh.exe, grep, and git itself) -- see
 # docs/configuration.md.
 #
 # Environment:

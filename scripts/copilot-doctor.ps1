@@ -1,4 +1,4 @@
-# copilot-doctor.ps1 — find out why `kvit-coder copilot models` says the
+# copilot-doctor.ps1 -- find out why `kvit-coder copilot models` says the
 # GitHub Copilot credentials were not found.
 #
 #   powershell -ExecutionPolicy Bypass -File copilot-doctor.ps1
@@ -8,9 +8,9 @@
 #   irm https://raw.githubusercontent.com/kvit-s/kvit-coder/main/scripts/copilot-doctor.ps1 | iex
 #
 # What it does: it walks the exact same credential sources kvit-coder walks,
-# in the same order — COPILOT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN,
+# in the same order -- COPILOT_GITHUB_TOKEN, GH_TOKEN, GITHUB_TOKEN,
 # %USERPROFILE%\.copilot\config.json, the OS keychain entry, `gh auth token`
-# — plus a few places kvit-coder does NOT look (the `copilot` binary itself,
+# -- plus a few places kvit-coder does NOT look (the `copilot` binary itself,
 # Windows Credential Manager, %APPDATA% leftovers) so the report can tell a
 # "nothing signed in anywhere" apart from a "signed in where kvit-coder does
 # not look".
@@ -43,7 +43,7 @@ function Redact([string]$s) {
 function Token-Shape([string]$s) {
   if ([string]::IsNullOrWhiteSpace($s)) { return "empty" }
   $t = $s.Trim()
-  if ($t.StartsWith("ghp_")) { return "classic PAT (ghp_ — refused by kvit-coder)" }
+  if ($t.StartsWith("ghp_")) { return "classic PAT (ghp_ -- refused by kvit-coder)" }
   if ($t.StartsWith("gho_")) { return "usable shape (gho_)" }
   if ($t.StartsWith("ghu_")) { return "usable shape (ghu_)" }
   if ($t.StartsWith("github_pat_")) { return "usable shape (github_pat_)" }
@@ -67,8 +67,8 @@ foreach ($name in @("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")) {
   $mach = [Environment]::GetEnvironmentVariable($name, "Machine")
   if ([string]::IsNullOrWhiteSpace($proc)) {
     $hint = "not set in this terminal"
-    if (-not [string]::IsNullOrWhiteSpace($user)) { $hint += " (but IS set for the User scope — open a NEW terminal so it arrives)" }
-    elseif (-not [string]::IsNullOrWhiteSpace($mach)) { $hint += " (but IS set for the Machine scope — open a NEW terminal so it arrives)" }
+    if (-not [string]::IsNullOrWhiteSpace($user)) { $hint += " (but IS set for the User scope -- open a NEW terminal so it arrives)" }
+    elseif (-not [string]::IsNullOrWhiteSpace($mach)) { $hint += " (but IS set for the Machine scope -- open a NEW terminal so it arrives)" }
     Say ("  $" + $name + " : " + $hint)
   } else {
     Say ("  $" + $name + " : set, " + (Redact $proc) + ", " + (Token-Shape $proc))
@@ -132,11 +132,11 @@ if (-not (Test-Path $cfgPath -PathType Leaf)) {
     } catch { }
     if ($script:found -eq 0) {
       Say "  no github_token/oauth_token/access_token/token string found anywhere kvit-coder looks"
-      Say "  (if the token lives under a differently-named key, that is the bug — paste the KEY NAMES, never values, in the issue)"
+      Say "  (if the token lives under a differently-named key, that is the bug -- paste the KEY NAMES, never values, in the issue)"
     }
     Remove-Variable -Name found -Scope Script -ErrorAction SilentlyContinue
   } catch {
-    Say ("  valid JSON: NO — " + $_.Exception.Message)
+    Say ("  valid JSON: NO -- " + $_.Exception.Message)
   }
 }
 
@@ -152,7 +152,7 @@ try {
     Say "  no credential targets mentioning copilot/github"
   } else {
     foreach ($t in $credTargets) { Say ("  " + $t.Trim()) }
-    Say "  (target NAMES only — Windows never shows the secrets, and neither does this script)"
+    Say "  (target NAMES only -- Windows never shows the secrets, and neither does this script)"
   }
 } catch {
   Say ("  could not list credentials: " + $_.Exception.Message)
@@ -182,7 +182,7 @@ if (-not $gh) {
       if (Is-Usable $tok) { $script:usableFound = $true }
     } elseif ($tok -ne "") {
       Say ("  gh auth token output is not a usable token shape: " + (Redact $tok))
-      Say "  (probably an error message — is 'gh auth login' done?)"
+      Say "  (probably an error message -- is 'gh auth login' done?)"
     } else {
       Say "  gh auth token: empty (not logged in?)"
     }
@@ -192,7 +192,7 @@ if (-not $gh) {
 }
 
 # --- 5. the copilot binary itself ------------------------------------------
-Head "5. copilot CLI binary (kvit-coder never calls it — sign-in reuse only)"
+Head "5. copilot CLI binary (kvit-coder never calls it -- sign-in reuse only)"
 $cop = Get-Command copilot -ErrorAction SilentlyContinue
 if (-not $cop) {
   Say "  copilot: not on PATH"
@@ -205,7 +205,7 @@ if (-not $cop) {
   } catch {
     Say ("  --version failed: " + $_.Exception.Message)
   }
-  Say "  note: being on PATH proves nothing about sign-in — see sections 2 and 3."
+  Say "  note: being on PATH proves nothing about sign-in -- see sections 2 and 3."
 }
 
 # --- 6. other Copilot leftovers --------------------------------------------
@@ -233,7 +233,7 @@ if (-not $kvit) {
   if ($k) { $kvit = $k.Source }
 }
 if (-not $kvit) {
-  Say "  kvit-coder not found beside this script or on PATH — skipping repro."
+  Say "  kvit-coder not found beside this script or on PATH -- skipping repro."
 } else {
   Say ("  running: " + $kvit + " copilot models")
   try {
@@ -258,7 +258,7 @@ if ($script:usableFound) {
 }
 if ($credTargets.Count -gt 0) {
   Say "LIKELY CAUSE: you are signed in, but only inside Windows Credential"
-  Say "Manager — which kvit-coder does not read on Windows yet."
+  Say "Manager -- which kvit-coder does not read on Windows yet."
   Say ""
   Say "Fastest workaround (current terminal only):"
   Say '  $env:COPILOT_GITHUB_TOKEN = (gh auth token)'

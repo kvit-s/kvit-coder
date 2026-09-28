@@ -24,7 +24,7 @@ function Die([string]$msg) { Write-Error "install: $msg"; exit 1 }
 
 # The folder this script runs from is the install location. $PSScriptRoot is
 # empty when the script arrives via irm|iex, which never happens for the
-# bundled copy — but say so rather than installing the wrong directory.
+# bundled copy -- but say so rather than installing the wrong directory.
 $InstallDir = $PSScriptRoot
 if (-not $InstallDir) { $InstallDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
 if (-not $InstallDir) { Die "cannot tell which folder this script runs from; run the install.ps1 inside the extracted portable zip" }
@@ -49,7 +49,7 @@ foreach ($exe in @('kvit-coder.exe', 'kvit-coder-ui.exe')) {
 # Shell tool itself fails fast with the same message when none is found.
 #
 # A default Git install puts only Git\cmd (git.exe) on PATH, not Git\usr\bin
-# (sh.exe) — so "git --version works but sh.exe is not on PATH" is the common
+# (sh.exe) -- so "git --version works but sh.exe is not on PATH" is the common
 # case, not a broken install. Resolve sh.exe the same way the agent does:
 # sh.exe on PATH, then derived from git.exe's location, then the registry's
 # install path, then the standard and per-user install locations.
