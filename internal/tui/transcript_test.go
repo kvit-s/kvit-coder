@@ -78,3 +78,21 @@ func TestTranscriptWithoutAReportIsEmpty(t *testing.T) {
 		t.Errorf("transcript without a report is %q, want empty", got)
 	}
 }
+
+// An empty submit with no answer keeps nothing: the live card is already the
+// copy the user reads, so a transcript would only double it. Anything typed,
+// staged, or picked still leaves the expanded copy behind.
+func TestKeepTranscriptSkipsAnEmptySubmitWithNoAnswer(t *testing.T) {
+	if keepTranscript("", nil, nil) {
+		t.Error("an empty submit with no answer keeps a transcript")
+	}
+	if !keepTranscript("go on", nil, nil) {
+		t.Error("a typed prompt drops its transcript")
+	}
+	if !keepTranscript("", []string{"shot.png"}, nil) {
+		t.Error("staged images drop their transcript")
+	}
+	if !keepTranscript("", nil, &ui.CardAnswer{BlockID: "filtered", OptionID: "preserve"}) {
+		t.Error("a picked answer drops its transcript")
+	}
+}

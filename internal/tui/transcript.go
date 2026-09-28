@@ -31,3 +31,12 @@ func printReportTranscript(card *report.Report, ans *ui.CardAnswer) {
 		fmt.Print(s)
 	}
 }
+
+// keepTranscript reports whether the scrollback copy is worth leaving: the
+// user typed something, staged images, or picked an answer, so the expanded
+// report plus what they did with it belongs in the history. An empty submit
+// with no answer restates the completed report the composer was already
+// showing, so it stays out and the live card is the only copy.
+func keepTranscript(input string, images []string, ans *ui.CardAnswer) bool {
+	return input != "" || len(images) > 0 || ans != nil
+}

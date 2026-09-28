@@ -322,18 +322,26 @@ func (u *UI) readInput(card *report.Report) (string, []string, bool, bool, error
 
 	// A wake submit carries no text to echo: the inbox is the prompt.
 	if finalModel.WakeFired() {
+		ans := finalModel.CardAnswerPicked()
+		images := finalModel.PastedImages()
+		// A wake fires on its own while the user idles, so an empty one with
+		// no answer leaves no transcript: it would restate the completed
+		// report the composer was already showing. Anything picked or staged
+		// is still recorded.
+		if card != nil && keepTranscript("", images, ans) {
+			printReportTranscript(card, ans)
+		}
 		if card != nil {
-			printReportTranscript(card, finalModel.CardAnswerPicked())
 			fmt.Println("[wake: processing inbox]")
 			fmt.Println()
 		}
-		return "", finalModel.PastedImages(), true, false, nil
+		return "", images, true, false, nil
 	}
 
 	input := strings.TrimSpace(finalModel.Value())
 	images := finalModel.PastedImages()
 	ans := finalModel.CardAnswerPicked()
-	if card != nil && (input != "" || len(images) > 0 || ans != nil) {
+	if card != nil && keepTranscript(input, images, ans) {
 		// The composer frame that showed this report is cleared on submit,
 		// so leave the expanded report plus what the user did with it in the
 		// scrollback before the next turn runs. The prompt echo below follows
