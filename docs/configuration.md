@@ -9,8 +9,10 @@ and `config.yaml` beside the binary with symlinks resolved;
 ## Windows
 
 Native Windows needs Git for Windows (https://git-scm.com/download/win): the
-agent's shell is Git's `sh.exe` (plus `grep` and `find`), resolved from `PATH` else the standard install locations
-(`%ProgramFiles%\Git\usr\bin\sh.exe`). When none is found, Shell fails fast
+agent's shell is Git's `sh.exe` (plus `grep` and `find`), resolved from `sh.exe` on
+`PATH`, else derived from `git.exe`'s location (a default install puts only `Git\cmd`
+on `PATH`), else the registry's install path, else the standard and per-user install
+locations (`%ProgramFiles%\Git`, `%LocalAppData%\Programs\Git`). When none is found, Shell fails fast
 naming Git for Windows. `cmd.exe` is never the agent's shell, so `del`/`rmdir`
 /`copy` builtins are out of scope by design.
 

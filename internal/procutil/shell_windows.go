@@ -6,13 +6,18 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
+
+	"golang.org/x/sys/windows/registry"
 )
 
 // ResolveShell finds the POSIX shell agent commands run through on Windows.
-// Git for Windows ships sh.exe (plus grep and find), so: sh.exe on PATH first, else the standard
-// Git install locations. When none is found it fails fast naming Git for
-// Windows rather than surfacing a bare exec "sh not found".
+// Git for Windows ships sh.exe (plus grep and find), so: sh.exe on PATH
+// first, then sh.exe derived from git.exe's location — a default install
+// puts only Git\cmd (git.exe) on PATH, not Git\usr\bin (sh.exe), so "git
+// works but sh.exe is not on PATH" is the common case, not a broken
+// install — then the registry's install path, then the standard and
+// per-user install locations. When none is found it fails fast naming Git
+// for Windows rather than surfacing a bare exec "sh not found".
 func ResolveShell() (string, error) {
 	if path, err := exec.LookPath("sh.exe"); err == nil {
 		return path, nil
@@ -21,22 +26,15 @@ func ResolveShell() (string, error) {
 		return path, nil
 	}
 	candidates := []string{}
-	for _, env := range []string{"ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"} {
-		base := os.Getenv(env)
-		if base == "" {
-			continue
-		}
-		candidates = append(candidates, filepath.Join(base, "Git", "usr", "bin", "sh.exe"))
-		candidates = append(candidates, filepath.Join(base, "Git", "bin", "sh.exe"))
+	if git, err := exec.LookPath("git.exe"); err == nil {
+		candidates = append(candidates, gitShCandidates(git)...)
 	}
-	// Also try the default install roots directly in case the env vars are
-	// missing (e.g. 32-bit process on 64-bit Windows).
-	candidates = append(candidates,
-		`C:\Program Files\Git\usr\bin\sh.exe`,
-		`C:\Program Files\Git\bin\sh.exe`,
-		`C:\Program Files (x86)\Git\usr\bin\sh.exe`,
-		`C:\Program Files (x86)\Git\bin\sh.exe`,
-	)
+	if root := gitInstallPathFromRegistry(); root != "" {
+		candidates = append(candidates, root+"\\usr\\bin\\sh.exe", root+"\\bin\\sh.exe")
+	}
+	for _, base := range shellSearchBases(os.Getenv) {
+		candidates = append(candidates, base+"\\Git\\usr\\bin\\sh.exe", base+"\\Git\\bin\\sh.exe")
+	}
 	seen := map[string]bool{}
 	for _, c := range candidates {
 		if seen[c] {
@@ -48,6 +46,24 @@ func ResolveShell() (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no POSIX shell found: install Git for Windows (https://git-scm.com/download/win) so sh.exe is on PATH or under %%ProgramFiles%%\\Git")
+}
+
+// gitInstallPathFromRegistry reads the install root Git for Windows records
+// at setup time. Per-user installs land under HKCU, machine-wide under
+// HKLM; either may be absent, in which case this returns "".
+func gitInstallPathFromRegistry() string {
+	for _, hive := range []registry.Key{registry.CURRENT_USER, registry.LOCAL_MACHINE} {
+		k, err := registry.OpenKey(hive, `SOFTWARE\GitForWindows`, registry.QUERY_VALUE)
+		if err != nil {
+			continue
+		}
+		path, _, err := k.GetStringValue("InstallPath")
+		k.Close()
+		if err == nil && path != "" {
+			return path
+		}
+	}
+	return ""
 }
 
 // ShellNameForPrompt reports the resolved shell for the environment prompt

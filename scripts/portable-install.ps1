@@ -47,11 +47,61 @@ foreach ($exe in @('kvit-coder.exe', 'kvit-coder-ui.exe')) {
 
 # The agent's shell is Git for Windows' sh.exe, never cmd.exe. Warn here; the
 # Shell tool itself fails fast with the same message when none is found.
-$shFound = (Get-Command sh.exe -ErrorAction SilentlyContinue) -or `
-  (Test-Path (Join-Path $env:ProgramFiles 'Git\usr\bin\sh.exe')) -or `
-  (Test-Path (Join-Path ${env:ProgramFiles(x86)} 'Git\usr\bin\sh.exe'))
-if (-not $shFound) {
-  Say "NOTE: Git for Windows not found (https://git-scm.com/download/win). The agent needs its sh.exe, grep, and git."
+#
+# A default Git install puts only Git\cmd (git.exe) on PATH, not Git\usr\bin
+# (sh.exe) — so "git --version works but sh.exe is not on PATH" is the common
+# case, not a broken install. Resolve sh.exe the same way the agent does:
+# sh.exe on PATH, then derived from git.exe's location, then the registry's
+# install path, then the standard and per-user install locations.
+function Find-GitSh {
+  $found = Get-Command sh.exe -ErrorAction SilentlyContinue
+  if ($found) { return $found.Source }
+  $sh = Get-Command sh -ErrorAction SilentlyContinue
+  if ($sh) { return $sh.Source }
+
+  $candidates = @()
+  $git = Get-Command git.exe -ErrorAction SilentlyContinue
+  if ($git) {
+    $dir = Split-Path -Parent $git.Source
+    for ($i = 0; $i -lt 3 -and $dir; $i++) {
+      $candidates += (Join-Path $dir 'usr\bin\sh.exe')
+      $candidates += (Join-Path $dir 'bin\sh.exe')
+      $candidates += (Join-Path $dir 'sh.exe')
+      $dir = Split-Path -Parent $dir
+    }
+  }
+
+  foreach ($key in @('HKCU:\SOFTWARE\GitForWindows', 'HKLM:\SOFTWARE\GitForWindows')) {
+    try {
+      $root = (Get-ItemProperty -Path $key -Name InstallPath -ErrorAction Stop).InstallPath
+      if ($root) {
+        $candidates += (Join-Path $root 'usr\bin\sh.exe')
+        $candidates += (Join-Path $root 'bin\sh.exe')
+      }
+    } catch { }
+  }
+
+  $bases = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramW6432)
+  if ($env:LocalAppData) { $bases += (Join-Path $env:LocalAppData 'Programs') }
+  elseif ($env:USERPROFILE) { $bases += (Join-Path $env:USERPROFILE 'AppData\Local\Programs') }
+  $bases += 'C:\Program Files', 'C:\Program Files (x86)'
+  foreach ($base in $bases) {
+    if (-not $base) { continue }
+    $candidates += (Join-Path $base 'Git\usr\bin\sh.exe')
+    $candidates += (Join-Path $base 'Git\bin\sh.exe')
+  }
+
+  foreach ($c in $candidates) {
+    if ($c -and (Test-Path $c -PathType Leaf)) { return $c }
+  }
+  return $null
+}
+
+$gitSh = Find-GitSh
+if ($gitSh) {
+  Say "found Git shell: $gitSh"
+} else {
+  Say "NOTE: Git for Windows not found (https://git-scm.com/download/win). The agent needs its sh.exe: install Git and keep the default 'Git from the command line' PATH option."
 }
 
 $path = [Environment]::GetEnvironmentVariable('PATH', 'User')
