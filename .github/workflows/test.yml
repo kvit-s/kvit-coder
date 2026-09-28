@@ -28,6 +28,10 @@ jobs:
         # build passing while Windows fails is how every port phase starts.
         run: GOOS=windows go build ./...
 
+      - name: Build portable Windows zips
+        # Same script the release job uploads; keeps packaging green on every push.
+        run: scripts/package-portable.sh
+
       - name: Test
         run: go test -v -race -coverprofile=coverage.out ./...
 

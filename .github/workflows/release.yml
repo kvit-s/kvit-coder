@@ -31,3 +31,13 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build portable Windows zips
+        # scripts/package-portable.sh names the files with the tag's number
+        # (0.3.0, not v0.3.0), matching goreleaser's convention.
+        run: scripts/package-portable.sh "${{ github.ref_name }}"
+
+      - name: Upload portable zips to the release
+        run: gh release upload "${{ github.ref_name }}" dist/portable/*.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

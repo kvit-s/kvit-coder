@@ -64,9 +64,8 @@ New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 
 $tmp = New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) ("kvit-" + [IO.Path]::GetRandomFileName()))
 try {
-  $zipName = "kvit-coder_${version}_${platform}.zip"
-  # goreleaser names archives <project>_<version>_<os>_<arch>.zip; fall back to
-  # the version without v when the tag form 404s.
+  $zipName = "kvit-coder_${number}_${platform}.zip"
+  # Archive names follow goreleaser's number without the v (kvit-coder_0.2.0_windows_amd64.zip).
   $base = "https://github.com/$Repo/releases/download/$version"
   $zipUrl = "$base/$zipName"
   $zipPath = Join-Path $tmp $zipName

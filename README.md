@@ -22,11 +22,28 @@ curl -fsSL https://raw.githubusercontent.com/kvit-s/kvit-coder/main/install.sh |
 
 To build from source, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
+**Windows (native, 10/11).** Download the portable zip for your machine
+(`kvit-coder_<version>_windows_amd64_portable.zip`, or `arm64`) from the
+[latest release](https://github.com/kvit-s/kvit-coder/releases/latest),
+extract it where you want to keep it (e.g. `C:\apps\kvit-coder`), then run the
+`install.ps1` inside that folder — it adds the folder to your user PATH and
+seeds `%USERPROFILE%\.kvit-coder\config.yaml`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+Or install a published release straight into `%USERPROFILE%\bin`:
+
+```powershell
+irm https://raw.githubusercontent.com/kvit-s/kvit-coder/main/install.ps1 | iex
+```
+
 **Platforms.** Linux is where this is developed and used daily, including under
 Windows Subsystem for Linux (WSL). The macOS builds compile and are published,
-but never tested. Native Windows (10/11, amd64) builds, runs, and passes tests;
+but never tested. Native Windows (10/11, amd64 and arm64) builds, runs, and passes tests;
 it needs Git for Windows (for `sh.exe`, `grep`, and `git` itself) and installs
-via `install.ps1` (see below). WSL stays supported regardless; benchmarks stay
+via the portable zip or `install.ps1` (see above). WSL stays supported regardless; benchmarks stay
 WSL/unix-only (see `spec/windows.md`).
 
 ## Configure
