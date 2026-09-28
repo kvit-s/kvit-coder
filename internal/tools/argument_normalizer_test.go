@@ -144,6 +144,76 @@ func TestNormalizeToolCallArgumentsWithNoSchema(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolCallArgumentsLenient(t *testing.T) {
+	tool := &MockTool{}
+
+	cases := []struct {
+		name  string
+		input string
+		check func(t *testing.T, m map[string]any)
+	}{
+		{
+			"seconds suffix",
+			`{"int_param": "42s"}`,
+			func(t *testing.T, m map[string]any) {
+				if v, ok := m["int_param"].(float64); !ok || int(v) != 42 {
+					t.Errorf("int_param = %v (%T), want 42", m["int_param"], m["int_param"])
+				}
+			},
+		},
+		{
+			"float for integer",
+			`{"int_param": 42.0}`,
+			func(t *testing.T, m map[string]any) {
+				if v, ok := m["int_param"].(float64); !ok || int(v) != 42 {
+					t.Errorf("int_param = %v (%T), want 42", m["int_param"], m["int_param"])
+				}
+			},
+		},
+		{
+			"float string for integer",
+			`{"int_param": "42.0"}`,
+			func(t *testing.T, m map[string]any) {
+				if v, ok := m["int_param"].(float64); !ok || int(v) != 42 {
+					t.Errorf("int_param = %v (%T), want 42", m["int_param"], m["int_param"])
+				}
+			},
+		},
+		{
+			"empty string dropped",
+			`{"int_param": ""}`,
+			func(t *testing.T, m map[string]any) {
+				if _, ok := m["int_param"]; ok {
+					t.Errorf("int_param should be dropped, got %v", m["int_param"])
+				}
+			},
+		},
+		{
+			"bool string",
+			`{"bool_param": "true", "int_param": 1}`,
+			func(t *testing.T, m map[string]any) {
+				if v, ok := m["bool_param"].(bool); !ok || !v {
+					t.Errorf("bool_param = %v (%T), want true", m["bool_param"], m["bool_param"])
+				}
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			normalized, err := NormalizeToolCallArguments(tool, json.RawMessage(tc.input))
+			if err != nil {
+				t.Fatalf("NormalizeToolCallArguments failed: %v", err)
+			}
+			var m map[string]any
+			if err := json.Unmarshal(normalized, &m); err != nil {
+				t.Fatalf("normalized is not JSON: %v", err)
+			}
+			tc.check(t, m)
+		})
+	}
+}
+
 // MockToolNoSchema is a tool without a schema for testing
 type MockToolNoSchema struct{}
 

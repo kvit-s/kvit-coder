@@ -358,6 +358,40 @@ func toolImageMessage(toolName string, images []llm.ImagePart) llm.Message {
 	}
 }
 
+// displayTimeout extracts a timeout in seconds from raw tool args, accepting
+// the same loose forms the tools do (120, 120.0, "120", "120s").
+func displayTimeout(args map[string]any) (int, bool) {
+	raw, ok := args["timeout"]
+	if !ok || raw == nil {
+		return 0, false
+	}
+	switch v := raw.(type) {
+	case float64:
+		if v > 0 {
+			return int(v), true
+		}
+	case string:
+		// Mirror the tool-side parsing without importing its internals:
+		// trim spaces and a trailing seconds suffix, then parse.
+		s := strings.TrimSpace(v)
+		if s == "" {
+			return 0, false
+		}
+		lower := strings.ToLower(s)
+		for _, suffix := range []string{"seconds", "second", "secs", "sec", "s"} {
+			if strings.HasSuffix(lower, suffix) && len(lower) > len(suffix) {
+				s = strings.TrimSpace(s[:len(s)-len(suffix)])
+				break
+			}
+		}
+		var n float64
+		if _, err := fmt.Sscanf(s, "%g", &n); err == nil && n > 0 {
+			return int(n), true
+		}
+	}
+	return 0, false
+}
+
 // displayToolCall formats and displays a tool call to the user.
 // The step header already showed the context share, so only the call itself
 // is printed here, indented and gray.
@@ -367,15 +401,25 @@ func (r *Runner) displayToolCall(internalName string, tc llm.ToolCall) {
 
 	if internalName == "Shell" {
 		cmdStr, _ := args["command"].(string)
-		r.writer.ToolCall("Shell", cmdStr, "")
+		// Shell now accepts working_dir/timeout like Shell.advanced: show
+		// them when present so the operator sees what actually runs.
+		wdStr, _ := args["working_dir"].(string)
+		argsDisplay := cmdStr
+		if wdStr != "" {
+			argsDisplay = ui.FormatShellDisplay(cmdStr, wdStr, r.cfg.Workspace.Root)
+		}
+		if timeout, ok := displayTimeout(args); ok && timeout != 30 {
+			argsDisplay += fmt.Sprintf(", timeout=%ds", timeout)
+		}
+		r.writer.ToolCall("Shell", argsDisplay, "")
 		return
 	}
 	if internalName == "Shell.advanced" {
 		cmdStr, _ := args["command"].(string)
 		wdStr, _ := args["working_dir"].(string)
 		argsDisplay := ui.FormatShellDisplay(cmdStr, wdStr, r.cfg.Workspace.Root)
-		if timeoutVal, ok := args["timeout"].(float64); ok && timeoutVal > 0 && int(timeoutVal) != 30 {
-			argsDisplay += fmt.Sprintf(", timeout=%ds", int(timeoutVal))
+		if timeout, ok := displayTimeout(args); ok && timeout != 30 {
+			argsDisplay += fmt.Sprintf(", timeout=%ds", timeout)
 		}
 		r.writer.ToolCall("Shell.advanced", argsDisplay, "")
 		return

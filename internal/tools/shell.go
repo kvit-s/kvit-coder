@@ -34,17 +34,27 @@ func (t *ShellTool) Name() string {
 }
 
 func (t *ShellTool) Description() string {
-	return "Execute a shell command. Takes a command string directly. For working_dir or timeout options, use Shell.advanced."
+	return "Execute a shell command. Takes a command string; working_dir and timeout are also accepted and behave exactly like Shell.advanced."
 }
 
 func (t *ShellTool) JSONSchema() map[string]any {
-	// Same schema as Shell.advanced - accepts object, but ignores working_dir/timeout
+	// Shell accepts the same options as Shell.advanced so a model sending
+	// {"command": ..., "timeout": ...} to Shell does not fail and retry.
+	// The prompt still steers timeout/working_dir use toward Shell.advanced.
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
 			"command": map[string]any{
 				"type":        "string",
 				"description": "The shell command to execute",
+			},
+			"working_dir": map[string]any{
+				"type":        "string",
+				"description": "Working directory (relative to workspace root or absolute)",
+			},
+			"timeout": map[string]any{
+				"type":        "integer",
+				"description": "Timeout in seconds (default: 30, max: 600)",
 			},
 		},
 		"required": []string{"command"},
@@ -153,6 +163,7 @@ func (t *ShellTool) PromptSection() string {
 	if t.advanced.cfg.Tools.Read.Enabled {
 		warnings = append(warnings, "Do NOT use cat/head/tail - use Read tool")
 	}
+
 	if t.advanced.cfg.Tools.Edit.Enabled {
 		warnings = append(warnings, "Do NOT use sed/awk - use Edit tool")
 	}
@@ -168,7 +179,8 @@ Shell({"command": "pytest -q"})
 
 Examples: "go build ./...", "npm test", "git status", "ls -la"
 
-Runs in workspace root (%s). For different directory or custom timeout, use Shell.advanced.%s`, t.advanced.workspaceRoot, warningLine)
+Runs in workspace root (%s). working_dir and timeout are also accepted here
+and behave like Shell.advanced, e.g. Shell({"command": "make build", "timeout": 120}).%s`, t.advanced.workspaceRoot, warningLine)
 }
 
 func (t *ShellAdvancedTool) PromptCategory() string     { return "shell" }
@@ -190,16 +202,143 @@ Parameters:
 		t.workspaceRoot, int(t.timeout.Seconds()), int(t.maxTimeout().Seconds()))
 }
 
+// shellParsedArgs is the tolerant result of parsing Shell/Shell.advanced
+// arguments: bare strings, numeric strings and "120s" timeouts all land here
+// so the model gets an actionable message instead of a Go type error.
+type shellParsedArgs struct {
+	Command    string
+	WorkingDir string
+	Timeout    int
+}
+
+const shellArgsExample = `Example: {"command": "go vet ./...", "timeout": 120}`
+
+// shellArgsError formats a field-level error the model can act on.
+func shellArgsError(toolName, msg string) error {
+	return fmt.Errorf("Invalid arguments for %s: %s %s", toolName, msg, shellArgsExample)
+}
+
+// parseShellArgs accepts what LLMs actually send:
+//   - {"command": "..."} plus optional working_dir/timeout,
+//   - a bare JSON string "ls -la" meaning {"command": "ls -la"},
+//   - timeout as 120, 120.0, "120" or "120s" ("" and null mean default).
+func parseShellArgs(toolName string, args json.RawMessage) (shellParsedArgs, error) {
+	trimmed := strings.TrimSpace(string(args))
+	if trimmed == "" || trimmed == "{}" || trimmed == "null" {
+		return shellParsedArgs{}, shellArgsError(toolName, `"command" is required (a shell command string).`)
+	}
+	// Bare string: Shell("go vet ./...") instead of Shell({"command": "..."}).
+	var bare string
+	if err := json.Unmarshal(args, &bare); err == nil {
+		if strings.TrimSpace(bare) == "" {
+			return shellParsedArgs{}, shellArgsError(toolName, `"command" must not be empty.`)
+		}
+		return shellParsedArgs{Command: bare}, nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(args, &raw); err != nil {
+		// Covers arrays, numbers, and malformed JSON: tell the model the
+		// shape instead of leaking "cannot unmarshal array into Go value".
+		return shellParsedArgs{}, shellArgsError(toolName,
+			`arguments must be a JSON object with a "command" string.`)
+	}
+	var out shellParsedArgs
+	// command (required)
+	cmdRaw, ok := raw["command"]
+	if !ok {
+		return shellParsedArgs{}, shellArgsError(toolName, `"command" is required (a shell command string).`)
+	}
+	// Null command is missing, not empty.
+	if strings.TrimSpace(string(cmdRaw)) == "null" {
+		return shellParsedArgs{}, shellArgsError(toolName, `"command" is required (a shell command string).`)
+	}
+	var cmd string
+	if err := json.Unmarshal(cmdRaw, &cmd); err != nil {
+		// Be lenient when the normalizer did not run (a bare number/bool):
+		// numbers become their string form, anything else is an error.
+		var generic any
+		if gerr := json.Unmarshal(cmdRaw, &generic); gerr == nil {
+			if coerced, ok := coerceToString(generic); ok && strings.TrimSpace(coerced) != "" {
+				cmd = coerced
+			} else {
+				return shellParsedArgs{}, shellArgsError(toolName,
+					fmt.Sprintf(`"command" must be a string, got %s.`, strings.TrimSpace(string(cmdRaw))))
+			}
+		} else {
+			return shellParsedArgs{}, shellArgsError(toolName,
+				fmt.Sprintf(`"command" must be a string, got %s.`, strings.TrimSpace(string(cmdRaw))))
+		}
+	}
+	if strings.TrimSpace(cmd) == "" {
+		return shellParsedArgs{}, shellArgsError(toolName, `"command" must not be empty.`)
+	}
+	out.Command = cmd
+	// working_dir (optional)
+	if wdRaw, ok := raw["working_dir"]; ok && strings.TrimSpace(string(wdRaw)) != "" && strings.TrimSpace(string(wdRaw)) != "null" {
+		var wd string
+		if err := json.Unmarshal(wdRaw, &wd); err != nil {
+			var generic any
+			if gerr := json.Unmarshal(wdRaw, &generic); gerr == nil {
+				if coerced, ok := coerceToString(generic); ok {
+					wd = coerced
+				} else {
+					return shellParsedArgs{}, shellArgsError(toolName,
+						fmt.Sprintf(`"working_dir" must be a directory path string, got %s.`, strings.TrimSpace(string(wdRaw))))
+				}
+			} else {
+				return shellParsedArgs{}, shellArgsError(toolName,
+					fmt.Sprintf(`"working_dir" must be a directory path string, got %s.`, strings.TrimSpace(string(wdRaw))))
+			}
+		}
+		out.WorkingDir = wd
+	}
+	// timeout (optional): 120, 120.0, "120", "120s" all mean 120 seconds.
+	if tRaw, ok := raw["timeout"]; ok && strings.TrimSpace(string(tRaw)) != "" && strings.TrimSpace(string(tRaw)) != "null" {
+		var generic any
+		if err := json.Unmarshal(tRaw, &generic); err != nil {
+			return shellParsedArgs{}, shellArgsError(toolName,
+				fmt.Sprintf(`"timeout" must be seconds as a number (e.g. 120), got %s.`, strings.TrimSpace(string(tRaw))))
+		}
+		switch v := generic.(type) {
+		case float64:
+			out.Timeout = int(v)
+		case string:
+			coerced, empty, ok := parseFlexibleIntString(v)
+			if empty {
+				out.Timeout = 0
+			} else if !ok {
+				return shellParsedArgs{}, shellArgsError(toolName,
+					fmt.Sprintf(`"timeout" must be seconds as a number (e.g. 120), got %q.`, v))
+			} else {
+				out.Timeout = coerced
+			}
+		case bool:
+			return shellParsedArgs{}, shellArgsError(toolName,
+				fmt.Sprintf(`"timeout" must be seconds as a number (e.g. 120), got %s.`, strings.TrimSpace(string(tRaw))))
+		default:
+			return shellParsedArgs{}, shellArgsError(toolName,
+				fmt.Sprintf(`"timeout" must be seconds as a number (e.g. 120), got %s.`, strings.TrimSpace(string(tRaw))))
+		}
+	}
+	return out, nil
+}
+
 // Check performs validation - delegates to Shell.advanced
 func (t *ShellTool) Check(ctx context.Context, args json.RawMessage) error {
-	var params struct {
-		Command string `json:"command"`
+	params, err := parseShellArgs("Shell", args)
+	if err != nil {
+		return err
 	}
-	if err := json.Unmarshal(args, &params); err != nil {
-		return fmt.Errorf("invalid arguments: %w", err)
+	workDir := t.advanced.workspaceRoot
+	if params.WorkingDir != "" {
+		resolvedDir, err := t.advanced.validateWorkingDir(params.WorkingDir)
+		if err != nil {
+			return fmt.Errorf("invalid working_dir: %w", err)
+		}
+		workDir = resolvedDir
 	}
 	// Use workspace root as effective working directory
-	return t.advanced.validateCommand(params.Command, t.advanced.workspaceRoot)
+	return t.advanced.validateCommand(params.Command, workDir)
 }
 
 // ReadOnlyCall reports whether the command only reads, so a turn that ran
@@ -211,30 +350,24 @@ func (t *ShellTool) ReadOnlyCall(args json.RawMessage) bool {
 // ReadOnlyCall reports whether the command only reads. The working directory
 // and timeout do not change the answer.
 func (t *ShellAdvancedTool) ReadOnlyCall(args json.RawMessage) bool {
-	var params struct {
-		Command string `json:"command"`
-	}
-	if err := json.Unmarshal(args, &params); err != nil {
+	params, err := parseShellArgs("Shell", args)
+	if err != nil {
 		return false
 	}
 	return permissions.ReadOnly(params.Command)
 }
 
-// Call executes command - delegates to Shell.advanced (ignores working_dir/timeout)
+// Call executes command - delegates to Shell.advanced (working_dir/timeout behave the same)
 func (t *ShellTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
-	// Pass through to advanced - it will use defaults for working_dir and timeout
+	// Pass through to advanced - it parses the same tolerant arguments
 	return t.advanced.Call(ctx, args)
 }
 
 // Check performs validation for ShellAdvancedTool
 func (t *ShellAdvancedTool) Check(ctx context.Context, args json.RawMessage) error {
-	var params struct {
-		Command    string `json:"command"`
-		WorkingDir string `json:"working_dir,omitempty"`
-	}
-
-	if err := json.Unmarshal(args, &params); err != nil {
-		return fmt.Errorf("invalid arguments: %w", err)
+	params, err := parseShellArgs("Shell.advanced", args)
+	if err != nil {
+		return err
 	}
 
 	// Determine effective working directory for path safety checks
@@ -252,14 +385,9 @@ func (t *ShellAdvancedTool) Check(ctx context.Context, args json.RawMessage) err
 }
 
 func (t *ShellAdvancedTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
-	var params struct {
-		Command    string `json:"command"`
-		WorkingDir string `json:"working_dir,omitempty"`
-		Timeout    int    `json:"timeout,omitempty"`
-	}
-
-	if err := json.Unmarshal(args, &params); err != nil {
-		return nil, fmt.Errorf("invalid arguments: %w", err)
+	params, err := parseShellArgs("Shell.advanced", args)
+	if err != nil {
+		return nil, err
 	}
 
 	// Determine working directory
