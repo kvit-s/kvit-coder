@@ -9,8 +9,10 @@ package tools
 //
 // Research is read-only delegation; general (phase 2a,
 // spec/subagents-phase2.md) may edit files under the staleness handoff.
-// output_schema enforcement is phase 2b; spawn/collect parallelism is
-// phase 3. See spec/subagents.md.
+// output_schema enforcement is phase 2b (same amendment, section 6):
+// a schema-carrying child must file its result through the session-local
+// structured_output tool. Spawn/collect parallelism is phase 3.
+// See spec/subagents.md.
 
 import (
 	"context"
@@ -41,6 +43,29 @@ const (
 // delegated task needs.
 const subagentPromptDenyHint = "subagents cannot prompt"
 
+// SubagentSession is an opaque, in-process handle to a child loop whose
+// history persists across ContinueSubagent calls. It carries the messages,
+// registry and tool context one Subagent.Call needs for its follow-ups. It
+// never reaches the session directory, history.jsonl, or the parent
+// registry: it is built per Call and dies with the turn.
+type SubagentSession struct {
+	impl any
+}
+
+// NewSubagentSession wraps the driver's private session state. The agent
+// package fills impl; the tool package only carries it back to Continue.
+func NewSubagentSession(impl any) *SubagentSession {
+	return &SubagentSession{impl: impl}
+}
+
+// Unwrap returns the driver's private session state.
+func (s *SubagentSession) Unwrap() any {
+	if s == nil {
+		return nil
+	}
+	return s.impl
+}
+
 // SubagentRunParams is what the tool hands the child loop.
 type SubagentRunParams struct {
 	System      string
@@ -69,6 +94,13 @@ type SubagentRunResult struct {
 // The interface lives in tools so tools never imports agent.
 type SubRunner interface {
 	RunSubagent(ctx context.Context, params SubagentRunParams) (SubagentRunResult, error)
+	// StartSubagent runs the child loop to completion and returns a
+	// session handle for follow-ups alongside the result.
+	StartSubagent(ctx context.Context, params SubagentRunParams) (*SubagentSession, SubagentRunResult, error)
+	// ContinueSubagent re-enters the session's loop with one more user
+	// prompt (a structured_output or summary nudge) and runs it to
+	// completion again.
+	ContinueSubagent(ctx context.Context, sess *SubagentSession, prompt string) (SubagentRunResult, error)
 }
 
 // ParentBudgetSetter lets the parent loop tell the tool how many iterations
@@ -200,7 +232,7 @@ func (t *SubagentTool) JSONSchema() map[string]any {
 			},
 			"output_schema": map[string]any{
 				"type":        "object",
-				"description": "Optional JSON Schema (type object) the child's final result must match. Phase 1 accepts and ignores it with a note; enforcement is phase 2.",
+				"description": "Optional JSON Schema (type object) the child's final result must match. When set, the child gets a structured_output tool it must call with the result, and the result comes back as a validated JSON string.",
 			},
 		},
 	}
@@ -233,7 +265,8 @@ no nesting, no background processes, no questions.
 
 Independent subagents still save context tokens sequentially; wall-clock
 parallelism is a later change. Several Subagents in one Batch run their spawn
-calls in order. output_schema is accepted but ignored with a note.`
+calls in order. With output_schema set, the child must file its result through
+structured_output and the result comes back as validated JSON.`
 }
 
 type subagentArgs struct {
@@ -264,6 +297,9 @@ func (t *SubagentTool) parse(args json.RawMessage) (*subagentArgs, error) {
 		return nil, SemanticErrorf("Subagent: unknown subagent_type %q. Use \"research\" (read-only, default) or \"general\" (may edit files).", parsed.SubagentType)
 	}
 	parsed.SubagentType = typ
+	if err := checkOutputSchemaShape(parsed.OutputSchema); err != nil {
+		return nil, err
+	}
 	return &parsed, nil
 }
 
@@ -304,13 +340,40 @@ func (t *SubagentTool) Call(ctx context.Context, args json.RawMessage) (any, err
 		defer cancel()
 	}
 
+	// A schema that does not compile is the model's fault: fail before
+	// any spawn, never a spawned run.
+	wantSchema := hasOutputSchema(parsed.OutputSchema)
+	if wantSchema {
+		if _, err := compileOutputSchema(parsed.OutputSchema); err != nil {
+			return nil, err
+		}
+	}
+
 	childCfg := FloorChildConfig(t.cfg, maxChild)
 	childCtx := t.newChildContext(maxChild)
 	childReg := t.childScope(parentReg, childCfg, childCtx, parsed.SubagentType)
 
-	system := BuildSubagentSystemPrompt(t.cfg.Workspace.Root, parsed.SubagentType)
+	// The session-local tool the child must file its result through. It
+	// lives only in this child handle (and the child's Batch, which
+	// dispatches through the same handle) and dies with the turn.
+	var capture *StructuredOutputCapture
+	if wantSchema {
+		capture = &StructuredOutputCapture{}
+		so, err := NewStructuredOutputTool(parsed.OutputSchema, capture)
+		if err != nil {
+			return nil, err
+		}
+		// Enabled directly, not via enableChildTool: the MCP/group
+		// exclusion does not apply to a tool born in the child.
+		childReg.Enable(so)
+	}
 
-	result, err := runner.RunSubagent(callCtx, SubagentRunParams{
+	system := BuildSubagentSystemPrompt(t.cfg.Workspace.Root, parsed.SubagentType)
+	if wantSchema {
+		system += "\n# STRUCTURED RESULT\nYou must call the structured_output tool with your complete final result, matching the required schema, instead of ending your turn with prose.\n"
+	}
+
+	sess, result, err := runner.StartSubagent(callCtx, SubagentRunParams{
 		System:      system,
 		Prompt:      parsed.Prompt,
 		Description: parsed.Description,
@@ -324,6 +387,12 @@ func (t *SubagentTool) Call(ctx context.Context, args json.RawMessage) (any, err
 		// transcript beats a bare error. Only a failure to run at all is
 		// an error here.
 		return nil, WrapAsRuntime(err)
+	}
+
+	if wantSchema {
+		result = t.enforceSchema(callCtx, runner, sess, capture, result)
+	} else {
+		result = t.nudgeEmptySummary(callCtx, runner, sess, result)
 	}
 
 	// Coarser-grain change reporting, mirroring Batch: if the child changed
@@ -342,6 +411,46 @@ func (t *SubagentTool) Call(ctx context.Context, args json.RawMessage) (any, err
 
 	out := t.shapeResult(result, parsed)
 	return out, nil
+}
+
+// enforceSchema runs the structured_output follow-up loop: up to maxNudges
+// continuations demanding the missing call, carrying the previous
+// attempt's failures. A filed value becomes the canonical JSON result;
+// still missing afterwards, a labeled result with the partial summary.
+func (t *SubagentTool) enforceSchema(ctx context.Context, runner SubRunner, sess *SubagentSession, capture *StructuredOutputCapture, result SubagentRunResult) SubagentRunResult {
+	for i := 0; i < maxNudges; i++ {
+		if called, _, _ := capture.Snapshot(); called {
+			break
+		}
+		_, _, lastErrors := capture.Snapshot()
+		cont, err := runner.ContinueSubagent(ctx, sess, schemaNudgePrompt(lastErrors))
+		if err != nil {
+			break
+		}
+		accumulateSubagentResult(&result, cont)
+	}
+	if called, value, _ := capture.Snapshot(); called {
+		result.Text = string(value)
+	} else {
+		result.Text = fmt.Sprintf(schemaUnsatisfiedLabel, maxNudges) + "\n" + result.Text
+	}
+	return result
+}
+
+// nudgeEmptySummary re-prompts a silent child for the summary it owes, up
+// to maxNudges times. Still empty afterwards, a labeled result.
+func (t *SubagentTool) nudgeEmptySummary(ctx context.Context, runner SubRunner, sess *SubagentSession, result SubagentRunResult) SubagentRunResult {
+	for i := 0; i < maxNudges && strings.TrimSpace(result.Text) == ""; i++ {
+		cont, err := runner.ContinueSubagent(ctx, sess, emptyNudgePrompt)
+		if err != nil {
+			break
+		}
+		accumulateSubagentResult(&result, cont)
+	}
+	if strings.TrimSpace(result.Text) == "" {
+		result.Text = fmt.Sprintf(summaryMissingLabel, maxNudges)
+	}
+	return result
 }
 
 // shapeResult truncates like other tools: keep the head N chars inline,
@@ -369,12 +478,6 @@ func (t *SubagentTool) shapeResult(result SubagentRunResult, parsed *subagentArg
 	}
 	if result.TimedOut {
 		text = "[timed_out: the child ran out of wall-clock; what follows is its partial summary]\n" + text
-	}
-	if len(parsed.OutputSchema) > 0 && strings.TrimSpace(string(parsed.OutputSchema)) != "" &&
-		strings.TrimSpace(string(parsed.OutputSchema)) != "null" {
-		// Phase 1 accepts output_schema but ignores it: the validator +
-		// structured_output local tool + nudge loop is phase 2.
-		text += "\n\n[note: output_schema was accepted but ignored (phase 1 has no schema enforcement).]"
 	}
 	if maxChars > 0 && len(text) > maxChars {
 		head := text[:maxChars]

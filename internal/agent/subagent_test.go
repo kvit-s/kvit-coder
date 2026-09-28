@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/kvit-s/kvit-coder/internal/llm"
@@ -126,5 +128,101 @@ func TestShallowSubagentConfigFloors(t *testing.T) {
 	}
 	if cfg.Tools.Edit.ReadBeforeEditMsgs != 0 || !cfg.Tools.Edit.PreviewMode {
 		t.Error("parent config mutated")
+	}
+}
+
+func TestStructuredOutputInlineErrorFixedInRun(t *testing.T) {
+	schema := `{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}`
+	capture := &tools.StructuredOutputCapture{}
+	so, err := tools.NewStructuredOutputTool(json.RawMessage(schema), capture)
+	if err != nil {
+		t.Fatalf("NewStructuredOutputTool: %v", err)
+	}
+	childReg := tools.NewRegistry()
+	childReg.Enable(so)
+	// The first attempt omits the required property (the runner's
+	// argument normalizer coerces scalar mismatches like 123 to "123",
+	// so only a missing property deterministically fails validation).
+	client := newFakeClient(
+		calls(toolCall("c1", "structured_output", map[string]any{})),
+		calls(toolCall("c2", "structured_output", map[string]any{"name": "auth"})),
+		answer("filed"),
+	)
+	parent, _ := newTestRunner(t, testConfig(), client)
+	sess, res, err := parent.StartSubagent(context.Background(), tools.SubagentRunParams{
+		System:   "sys",
+		Prompt:   "file the result",
+		MaxIters: 10,
+		Registry: childReg,
+		ToolCtx:  tools.NewToolContext(),
+	})
+	if err != nil {
+		t.Fatalf("StartSubagent: %v", err)
+	}
+	_ = sess
+	called, value, _ := capture.Snapshot()
+	if !called || string(value) != `{"name":"auth"}` {
+		t.Errorf("captured %q, want the fixed value", value)
+	}
+	// The rejection reached the child as an inline tool error it could
+	// fix in the same run: the follow-up request carries the tool result.
+	var sawRejection bool
+	for _, req := range client.requests {
+		for _, m := range req.Messages {
+			if m.Role == llm.RoleTool && m.Name == "structured_output" &&
+				strings.Contains(m.Content, "does not match the required schema") {
+				sawRejection = true
+			}
+		}
+	}
+	if !sawRejection {
+		t.Error("child transcript has no inline validation error to fix")
+	}
+	if res.Text != "filed" {
+		t.Errorf("Text %q, want the final answer", res.Text)
+	}
+}
+
+func TestContinueSubagentPersistsHistory(t *testing.T) {
+	client := newFakeClient(answer("first"), answer("second"))
+	parent, _ := newTestRunner(t, testConfig(), client)
+	sess, first, err := parent.StartSubagent(context.Background(), tools.SubagentRunParams{
+		System:   "sys",
+		Prompt:   "go",
+		MaxIters: 5,
+		Registry: tools.NewRegistry(),
+		ToolCtx:  tools.NewToolContext(),
+	})
+	if err != nil {
+		t.Fatalf("StartSubagent: %v", err)
+	}
+	if first.Text != "first" {
+		t.Fatalf("first Text %q", first.Text)
+	}
+	second, err := parent.ContinueSubagent(context.Background(), sess, "and then?")
+	if err != nil {
+		t.Fatalf("ContinueSubagent: %v", err)
+	}
+	if second.Text != "second" {
+		t.Errorf("second Text %q", second.Text)
+	}
+	// The continuation re-entered the same history: the follow-up request
+	// carries the first answer.
+	if len(client.requests) != 2 {
+		t.Fatalf("got %d requests, want 2", len(client.requests))
+	}
+	joined := ""
+	for _, m := range client.requests[1].Messages {
+		joined += m.Content + "\n"
+	}
+	if !strings.Contains(joined, "first") || !strings.Contains(joined, "and then?") {
+		t.Errorf("follow-up request lacks history: %q", joined)
+	}
+	// A session that is not ours fails closed, never a bare panic.
+	if _, err := parent.ContinueSubagent(context.Background(), tools.NewSubagentSession(nil), "x"); err == nil {
+		t.Error("ContinueSubagent(nil) = nil, want error")
+	}
+	if _, err := parent.ContinueSubagent(context.Background(), nil, "x"); err == nil {
+		t.Error("ContinueSubagent(nil session) = nil, want error")
 	}
 }

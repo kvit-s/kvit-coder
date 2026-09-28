@@ -15,9 +15,14 @@ import (
 // stubSubRunner is a scripted child loop for tests: it records calls in order
 // and answers from a function, without touching the network.
 type stubSubRunner struct {
-	mu    sync.Mutex
-	calls []SubagentRunParams
-	fn    func(SubagentRunParams) (SubagentRunResult, error)
+	mu        sync.Mutex
+	calls     []SubagentRunParams
+	fn        func(SubagentRunParams) (SubagentRunResult, error)
+	startFn   func(SubagentRunParams) (*SubagentSession, SubagentRunResult, error)
+	contFn    func(*SubagentSession, string) (SubagentRunResult, error)
+	starts    int
+	continues int
+	nudges    []string
 }
 
 func (s *stubSubRunner) RunSubagent(_ context.Context, p SubagentRunParams) (SubagentRunResult, error) {
@@ -28,6 +33,32 @@ func (s *stubSubRunner) RunSubagent(_ context.Context, p SubagentRunParams) (Sub
 		return s.fn(p)
 	}
 	return SubagentRunResult{Text: "stub summary", Model: "test"}, nil
+}
+
+func (s *stubSubRunner) StartSubagent(_ context.Context, p SubagentRunParams) (*SubagentSession, SubagentRunResult, error) {
+	s.mu.Lock()
+	s.starts++
+	s.calls = append(s.calls, p)
+	s.mu.Unlock()
+	if s.startFn != nil {
+		return s.startFn(p)
+	}
+	if s.fn != nil {
+		res, err := s.fn(p)
+		return NewSubagentSession(nil), res, err
+	}
+	return NewSubagentSession(nil), SubagentRunResult{Text: "stub summary", Model: "test"}, nil
+}
+
+func (s *stubSubRunner) ContinueSubagent(_ context.Context, sess *SubagentSession, prompt string) (SubagentRunResult, error) {
+	s.mu.Lock()
+	s.continues++
+	s.nudges = append(s.nudges, prompt)
+	s.mu.Unlock()
+	if s.contFn != nil {
+		return s.contFn(sess, prompt)
+	}
+	return SubagentRunResult{Text: "", Model: "test"}, nil
 }
 
 func (s *stubSubRunner) orderedDescriptions() []string {
@@ -129,23 +160,28 @@ func TestSubagentSchema(t *testing.T) {
 	if err := sub.Check(ctx, json.RawMessage(`{"description":"x","prompt":"y","subagent_type":"general"}`)); err != nil {
 		t.Errorf("general rejected: %v (phase 2a enables write-capable delegation)", err)
 	}
-	// output_schema is accepted but ignored with a note until phase 2.
-	stub := &stubSubRunner{fn: func(p SubagentRunParams) (SubagentRunResult, error) {
-		return SubagentRunResult{Text: "done", Model: "m"}, nil
-	}}
-	parentCtx := NewToolContext()
-	parentReg := NewRegistry()
-	sub2, _ := newSubagentUnderTest(t, &config.Config{}, parentCtx, parentReg, stub)
-	res, err := sub2.Call(ctx, json.RawMessage(`{"description":"find auth","prompt":"how does login work?","output_schema":{"type":"object"}}`))
-	if err != nil {
-		t.Fatalf("output_schema Call: %v", err)
+	for _, bad := range []string{
+		`{"description":"x","prompt":"y","output_schema":[]}`,
+		`{"description":"x","prompt":"y","output_schema":"object"}`,
+		`{"description":"x","prompt":"y","output_schema":42}`,
+		`{"description":"x","prompt":"y","output_schema":true}`,
+	} {
+		if err := sub.Check(ctx, json.RawMessage(bad)); err == nil {
+			t.Errorf("Check(%s) = nil, want schema-must-be-object error", bad)
+		} else if !IsBacktrackable(err) {
+			t.Errorf("Check(%s) error %v is not backtrackable (semantic)", bad, err)
+		}
 	}
-	got, ok := res.(*SubagentCallResult)
-	if !ok {
-		t.Fatalf("result type %T, want *SubagentCallResult", res)
+	if err := sub.Check(ctx, json.RawMessage(`{"description":"x","prompt":"y","output_schema":{"type":"object"}}`)); err != nil {
+		t.Errorf("valid object schema rejected: %v", err)
 	}
-	if !strings.Contains(got.Result, "output_schema was accepted but ignored") {
-		t.Errorf("output_schema note missing in %q", got.Result)
+	for _, absent := range []string{
+		`{"description":"x","prompt":"y"}`,
+		`{"description":"x","prompt":"y","output_schema":null}`,
+	} {
+		if err := sub.Check(ctx, json.RawMessage(absent)); err != nil {
+			t.Errorf("Check(%s) = %v, want nil", absent, err)
+		}
 	}
 }
 
