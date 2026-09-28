@@ -150,6 +150,9 @@ func expandable(b *report.Block) bool {
 // handleCardKey gives the card first refusal on a keypress. It takes only
 // digits and esc, and the digits only while the text is empty, so the composer
 // never traps a message: start typing and every key is the textarea's again.
+// An empty Enter picks the primary recommendation too, but through Update's
+// enter case rather than here, so staged images still submit as an image-only
+// turn instead of picking.
 //
 // Digits are the whole keyboard interface deliberately. A bare letter would
 // make every message starting with it unwritable for as long as a card is up,
@@ -191,9 +194,34 @@ func (m *InputModel) pickOption(n int) (bool, tea.Cmd) {
 	if c == nil {
 		return false, nil
 	}
-	b := &m.card.Blocks[c.Block]
-	o := &b.Options[c.Option]
-	m.cardAnswer = &CardAnswer{BlockID: b.ID, OptionID: o.ID, Effect: o.Effect, Number: n, Label: o.Label}
+	return m.applyPick(c.Block, c.Option, n, false)
+}
+
+// pickRecommended acts on the report's primary recommendation: the option the
+// card highlights as the pick. It is what an empty Enter takes, so a
+// recommended action needs no digit. A dispatch submits its instruction, a
+// collect stages its draft for editing, and a resolve records the pick and
+// submits empty so the driver leaves the transcript and starts no turn.
+func (m *InputModel) pickRecommended() (bool, tea.Cmd) {
+	if !m.cardShowing() || m.card == nil {
+		return false, nil
+	}
+	c := m.card.PrimaryChoice()
+	if c == nil {
+		return false, nil
+	}
+	return m.applyPick(c.Block, c.Option, c.Number, true)
+}
+
+// applyPick acts on one option by its block and option indices. number is the
+// digit the card shows for it (0 past the ninth) and is recorded for the
+// scrollback. fromEnter says the pick came from an empty Enter: a resolve
+// then submits empty at once, instead of waiting for the second Enter a digit
+// pick needs, because there is no follow-up to type.
+func (m *InputModel) applyPick(blockIdx, optIdx, number int, fromEnter bool) (bool, tea.Cmd) {
+	b := &m.card.Blocks[blockIdx]
+	o := &b.Options[optIdx]
+	m.cardAnswer = &CardAnswer{BlockID: b.ID, OptionID: o.ID, Effect: o.Effect, Number: number, Label: o.Label}
 
 	switch o.Effect {
 	case report.EffectDispatch:
@@ -217,6 +245,12 @@ func (m *InputModel) pickOption(n int) (bool, tea.Cmd) {
 	default:
 		// resolve: recorded, and no turn starts.
 		m.cardDismissed = true
+		if fromEnter {
+			m.value = ""
+			m.submitted = true
+			m.quitting = true
+			return true, tea.Quit
+		}
 		return true, nil
 	}
 }
@@ -524,6 +558,9 @@ func (m InputModel) cardHint() string {
 		} else {
 			parts = append(parts, fmt.Sprintf("1-%d pick an option", n))
 		}
+	}
+	if m.card.PrimaryChoice() != nil {
+		parts = append(parts, "Enter picks recommended")
 	}
 	if m.anyDetails() {
 		parts = append(parts, "0 open or close details")

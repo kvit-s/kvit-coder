@@ -763,8 +763,15 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.String() {
-		// Submit on Enter
+		// Submit on Enter. On an empty line with no staged images, Enter
+		// picks the report's primary recommendation instead of submitting
+		// empty, so the highlighted action needs no digit.
 		case "enter":
+			if strings.TrimSpace(m.textarea.Value()) == "" && len(m.pastedImages) == 0 {
+				if handled, cmd := m.pickRecommended(); handled {
+					return m, cmd
+				}
+			}
 			m.value = m.textarea.Value()
 			m.submitted = true
 			m.quitting = true

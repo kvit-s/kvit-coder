@@ -330,6 +330,39 @@ func (r *Report) PrimaryInteractive() int {
 	return -1
 }
 
+// PrimaryChoice returns the choice the primary recommendation names, or nil
+// when nothing recommends anything. It is what an empty Enter picks: the
+// same option a digit would pick, without needing its number. Options past
+// the ninth have no digit (Number 0) but are still pickable this way, so the
+// number is recorded for the scrollback rather than used as a key.
+func (r *Report) PrimaryChoice() *Choice {
+	if r == nil {
+		return nil
+	}
+	pi := r.PrimaryInteractive()
+	if pi < 0 {
+		return nil
+	}
+	b := &r.Blocks[pi]
+	oi := -1
+	for i := range b.Options {
+		if b.Options[i].ID == b.Recommendation {
+			oi = i
+			break
+		}
+	}
+	if oi < 0 {
+		return nil
+	}
+	for _, c := range r.Choices() {
+		if c.Block == pi && c.Option == oi {
+			cc := c
+			return &cc
+		}
+	}
+	return nil
+}
+
 // Block returns the block with the given id, or nil.
 func (r *Report) Block(id string) *Block {
 	if r == nil {

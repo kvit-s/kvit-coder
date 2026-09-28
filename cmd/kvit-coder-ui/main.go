@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 
 	"github.com/kvit-s/kvit-coder/internal/config"
 	"github.com/kvit-s/kvit-coder/internal/session"
@@ -117,19 +119,38 @@ func main() {
 	// Auto-detect kvit-coder path if not specified
 	agentBinary := *agentPath
 	if agentBinary == "" {
-		// Try to find kvit-coder in same directory as this binary
-		execPath, err := os.Executable()
-		if err == nil {
+		// Try to find kvit-coder in same directory as this binary. On
+		// Windows the sibling is kvit-coder.exe, so both names are tried;
+		// without this the lookup falls through to the bare name below,
+		// which Go refuses to run from the current directory (ErrDot).
+		if execPath, err := os.Executable(); err == nil {
 			dir := filepath.Dir(execPath)
-			candidate := filepath.Join(dir, "kvit-coder")
-			if _, err := os.Stat(candidate); err == nil {
-				agentBinary = candidate
+			names := []string{"kvit-coder"}
+			if runtime.GOOS == "windows" {
+				names = []string{"kvit-coder.exe", "kvit-coder"}
+			}
+			for _, name := range names {
+				candidate := filepath.Join(dir, name)
+				if st, err := os.Stat(candidate); err == nil && !st.IsDir() {
+					agentBinary = candidate
+					break
+				}
 			}
 		}
-		// Fallback to PATH lookup
+		// Fallback to PATH lookup so a clear "not found" surfaces when
+		// neither the flag nor a sibling binary says where the agent is.
+		// A bare name is kept only as a last resort: on Windows it
+		// carries the .exe suffix Go's LookPath needs.
 		if agentBinary == "" {
-			agentBinary = "kvit-coder"
+			if resolved, err := exec.LookPath("kvit-coder"); err == nil {
+				agentBinary = resolved
+			} else if runtime.GOOS == "windows" {
+				agentBinary = "kvit-coder.exe"
+			} else {
+				agentBinary = "kvit-coder"
+			}
 		}
+
 	}
 
 	// Initialize session manager
