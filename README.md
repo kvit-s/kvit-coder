@@ -83,6 +83,7 @@ skills of weak models. See [`benchmarks/README.md`](benchmarks/README.md).
 [`docs/`](docs/) holds the reference documentation: the
 [tools the model can call](docs/tools.md), every
 [command-line flag](docs/cli.md), every [configuration key](docs/configuration.md),
+[how to add a Copilot or OpenCode model](docs/models.md),
 [sessions and steering](docs/sessions.md), [external tools](docs/mcp.md), the
 [memory measurements](docs/agents-ram.md) quoted above, and
 [how the program is built](docs/architecture.md): one process per turn, sessions

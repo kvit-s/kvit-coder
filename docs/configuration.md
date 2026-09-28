@@ -64,6 +64,9 @@ cache. Setting `KVIT_RUN_ID` in the environment pins a value instead.
 
 ### GitHub Copilot
 
+How to add a model from a Copilot seat, from OpenCode Zen, or from the
+OpenCode Go subscription is in [models.md](models.md).
+
 A model with `provider: github-copilot` calls that model through the GitHub
 Copilot subscription already signed in on the machine, the same subscription
 Copilot CLI uses. No Anthropic, OpenAI, or Gemini key is involved. Usage is
