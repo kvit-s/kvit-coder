@@ -12,14 +12,20 @@ import (
 	"github.com/kvit-s/kvit-coder/internal/config"
 	"github.com/kvit-s/kvit-coder/internal/session"
 	"github.com/kvit-s/kvit-coder/internal/tui"
+	"github.com/kvit-s/kvit-coder/internal/update"
 )
 
-// Version info set by ldflags at build time
+// Version info set by ldflags at build time. buildDate is stamped by
+// goreleaser's ldflags like the rest; it is unused here but must exist for
+// the link to succeed.
 var (
 	version    = "dev"
 	commitHash = "dev"
 	commitDate = "unknown"
+	buildDate  = "unknown"
 )
+
+var _ = buildDate
 
 func main() {
 	// Parse flags
@@ -203,9 +209,15 @@ func main() {
 		}
 	}
 
+	// A previous Windows :update leaves the old binaries as .old after the
+	// swap; remove them now that nothing holds them.
+	update.CleanupForPaths(agentBinary)
+
 	// Create and run UI
 	ui := tui.New(tui.Options{
 		Version:          version,
+		CommitHash:       commitHash,
+		CommitDate:       commitDate,
 		AgentPath:        agentBinary,
 		ConfigPath:       resolvedConfig,
 		SessionName:      currentSession,

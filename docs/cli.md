@@ -107,6 +107,15 @@ and writes its output into its tool result.
 | `--yolo` | Read and write anywhere, and run anything that would have asked (passed to each turn) | false |
 | `--structured` | End each turn with a structured report, drawn as a card at the prompt (`--structured=false` for prose) | true |
 
+#### Update commands
+
+At most once a day the front end asks GitHub for the latest release and
+prints one line when a newer one exists (`:version` shows the current build,
+the agent it spawns, and the newest known release). `:update` installs the
+latest release after asking, `:update --check` only reports it, and
+`:update <tag> --apply` installs a specific release without asking. See
+[`updates`](configuration.md#updates) for the check interval and opt-outs.
+
 #### Window title
 
 While it runs, `kvit-coder-ui` keeps the terminal's window title — which a

@@ -16,6 +16,7 @@ import (
 	"github.com/kvit-s/kvit-coder/internal/report"
 	"github.com/kvit-s/kvit-coder/internal/session"
 	"github.com/kvit-s/kvit-coder/internal/ui"
+	"github.com/kvit-s/kvit-coder/internal/update"
 )
 
 // Options contains configuration for the UI
@@ -23,6 +24,8 @@ type Options struct {
 	// Version is the build stamped into the binary by scripts/build.sh, shown
 	// in the banner so a session says which build produced it.
 	Version     string
+	CommitHash  string
+	CommitDate  string
 	AgentPath   string
 	ConfigPath  string
 	SessionName string
@@ -51,6 +54,8 @@ type Options struct {
 // UI manages the interactive terminal interface
 type UI struct {
 	version        string
+	commitHash     string
+	commitDate     string
 	agentPath      string
 	configPath     string
 	currentSession string
@@ -60,6 +65,10 @@ type UI struct {
 	structured     bool
 	history        []string
 	historyFile    string
+	// updateCh carries the background release check; updateNoted keeps the
+	// notice to one line per session.
+	updateCh    chan update.Result
+	updateNoted bool
 	// pendingImages are image files staged by :image and :paste for the next
 	// turn. They are consumed (and cleared) when a prompt is sent.
 	pendingImages []string
@@ -96,6 +105,8 @@ func New(opts Options) *UI {
 
 	u := &UI{
 		version:        opts.Version,
+		commitHash:     opts.CommitHash,
+		commitDate:     opts.CommitDate,
 		agentPath:      opts.AgentPath,
 		configPath:     opts.ConfigPath,
 		currentSession: opts.SessionName,
@@ -195,7 +206,20 @@ func (u *UI) Run() error {
 	fmt.Println("\033[38;5;136mPress Ctrl+C to exit, ':help' for commands\033[0m")
 	fmt.Println()
 
+	// A previous Windows :update may have staged binaries it could not move;
+	// say so once, then replay the last known release and start the daily
+	// background check. None of this touches the network synchronously.
+	u.finishStagedUpdates()
+	if note := u.cachedUpdateNotice(); note != "" {
+		fmt.Println(note)
+		fmt.Println()
+		u.updateNoted = true
+	}
+	u.maybeStartUpdateCheck()
+
 	for {
+		// The background check reports here, never inside the composer.
+		u.pollUpdateCheck()
 		// Nothing is running at the top of the loop: whatever happens
 		// below either leaves it that way or sets the title itself.
 		// Writing the same title twice writes nothing, so this costs
@@ -543,6 +567,7 @@ func (u *UI) handleCommand(input string) bool {
 		fmt.Printf("Model: %s\n", u.activeDisplay())
 		fmt.Printf("Base URL: %s\n", u.activeBaseURL())
 		fmt.Printf("Agent: %s\n", u.agentPath)
+		fmt.Printf("%s\n", u.updateConfigLine())
 		if u.currentSession != "" {
 			fmt.Printf("Session: %s\n", u.currentSession)
 		}
@@ -587,6 +612,12 @@ func (u *UI) handleCommand(input string) bool {
 		}
 		u.pendingImages = append(u.pendingImages, path)
 		fmt.Printf("Staged for next turn: [image%d: %s]\n\n", len(u.pendingImages), path)
+
+	case "version":
+		u.showVersion()
+
+	case "update":
+		u.handleUpdate(parts[1:])
 
 	default:
 		fmt.Printf("Unknown command: %s. Type :help for available commands.\n\n", parts[0])
@@ -799,6 +830,9 @@ func (u *UI) showHelp() {
 	fmt.Println("  :paste           Stage the clipboard image for the next turn")
 	fmt.Println("  :mN              Switch model (e.g. :m1; the list follows)")
 	fmt.Println("  :eN, :e <level>  Set reasoning effort for the current model")
+	fmt.Println("  :version         Show build versions and the latest release")
+	fmt.Println("  :update [--check | <tag>] [--apply]")
+	fmt.Println("                   Check for updates and install the latest release")
 	fmt.Println()
 	u.showModels()
 	fmt.Println()

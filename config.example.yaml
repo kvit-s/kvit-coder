@@ -51,6 +51,13 @@ tools:
     enabled: true          # several independent tool calls in one request
   question:
     enabled: true          # let the model ask rather than guess
+
+# Release updates, kvit-coder-ui only. The UI checks GitHub at most once a
+# day, prints one line when a newer release exists, and :update installs it
+# (verified against the release checksums). The headless agent never checks.
+#updates:
+#  enabled: true          # false turns the background check off; :update --check still works
+#  interval_hours: 24     # minimum time between automatic checks
   # Web search and page fetching, both off unless enabled. Web.search queries
   # the Brave Search API and needs an API key; Web.fetch reads one page as
   # markdown and needs no key.

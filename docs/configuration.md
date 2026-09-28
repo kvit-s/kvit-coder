@@ -292,3 +292,29 @@ ui:
     asking: "💬"            # icon while a prompt waits for your answer
     waiting: "💤"           # icon while nothing is running and the composer is open
 ```
+
+## `updates`
+
+Release checks and self-install, `kvit-coder-ui` only. The front end asks
+GitHub for the latest release at most once per interval (through the
+`/releases/latest` redirect, no token), prints one line when a newer release
+exists, and `:update` downloads that release's archive for the running
+platform, verifies it against the release's `checksums.txt`, and replaces
+both binaries beside it. The headless agent never checks, and the model is
+never offered it as a tool. Development builds (`dev`, `-dirty`) never
+auto-check; `:update --check` still works on demand.
+
+| Key | Description |
+|-----|-------------|
+| `enabled` | Background check on/off (default on). `false` leaves `:update --check` working |
+| `interval_hours` | Minimum time between automatic checks (default 24) |
+
+`KVIT_NO_UPDATE_CHECK=1` in the environment turns the background check off
+without a config edit. The last check is recorded in
+`~/.kvit-coder/update-check.json`.
+
+On Windows a running `.exe` cannot be overwritten, so the current files are
+renamed aside to `.old` and the staged `.new` files take their names; the
+`.old` files are removed on the next start. When even that fails, the
+verified `.new` files stay staged and `:update` prints the `move /Y` commands
+to run after quitting.

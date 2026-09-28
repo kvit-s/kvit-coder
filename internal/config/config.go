@@ -116,6 +116,12 @@ type Config struct {
 
 	UI UIConfig `yaml:"ui"`
 
+	// Updates controls the release check in kvit-coder-ui: at most one
+	// GitHub query per interval, a one-line notice when a newer release
+	// exists, and the :update command that installs it. The headless agent
+	// never checks.
+	Updates UpdatesConfig `yaml:"updates"`
+
 	// Models is the optional multi-model catalog (docs/model-selection.md).
 	// Order is stable: :m1 is the first entry, :m2 the second. When absent,
 	// ModelList synthesizes a one-entry catalog from the llm: block, so old
@@ -222,6 +228,29 @@ func (t TerminalTitleConfig) Icons(defRunning, defWaiting, defAsking string) (st
 		asking = *t.Asking
 	}
 	return running, waiting, asking
+}
+
+// UpdatesConfig controls the release check in kvit-coder-ui.
+type UpdatesConfig struct {
+	// Enabled gates the automatic check. Nil (unset) means on, so existing
+	// configs check daily; false turns the background query off while
+	// :update --check still works on demand. KVIT_NO_UPDATE_CHECK=1 does
+	// the same without a config edit.
+	Enabled *bool `yaml:"enabled"`
+	// IntervalHours is the minimum time between automatic checks (default
+	// 24). Zero or negative means the default.
+	IntervalHours int `yaml:"interval_hours"`
+}
+
+// AutoCheckEnabled reports whether the background check may run.
+func (u UpdatesConfig) AutoCheckEnabled() bool { return u.Enabled == nil || *u.Enabled }
+
+// Interval is the minimum time between automatic checks.
+func (u UpdatesConfig) Interval() time.Duration {
+	if u.IntervalHours <= 0 {
+		return 24 * time.Hour
+	}
+	return time.Duration(u.IntervalHours) * time.Hour
 }
 
 // AgentConfig configures the agent loop and startup instruction sources.
