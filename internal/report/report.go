@@ -312,6 +312,24 @@ func (r *Report) FirstInteractive() int {
 	return -1
 }
 
+// PrimaryInteractive returns the index of the report's primary recommendation:
+// the first block, in display order, whose recommendation names one of its
+// options. The card highlights only this option as the pick and the plain
+// rendering introduces it with "Recommended because:"; further recommended
+// blocks are secondary. It returns -1 when nothing recommends anything,
+// which is valid for a question with no safe default.
+func (r *Report) PrimaryInteractive() int {
+	if r == nil {
+		return -1
+	}
+	for _, i := range r.Order() {
+		if b := &r.Blocks[i]; b.Interactive() && b.Option(b.Recommendation) != nil {
+			return i
+		}
+	}
+	return -1
+}
+
 // Block returns the block with the given id, or nil.
 func (r *Report) Block(id string) *Block {
 	if r == nil {
@@ -505,7 +523,7 @@ func JSONSchema(maxBlocks int) map[string]any {
 
 			"impact": str("Required on 'finding' (why it matters) and 'warning' (what breaks if ignored). Optional elsewhere: what changed for the user, in one line."),
 
-			"recommendation": str("On 'next': the id of the option you recommend, and required there. On 'question': the same, when a safe default exists. On 'finding' and 'warning': free text saying what to do."),
+			"recommendation": str("On 'next': the id of the option you recommend. Required on the primary proposal only — one recommended block per report; further 'next' blocks omit it and are secondary. On 'question': the same, when a safe default exists. On 'finding' and 'warning': free text saying what to do."),
 
 			"details": str(fmt.Sprintf("Markdown evidence, logs and file-by-file notes, at most %d bytes. Hidden until the user opens it, so nothing here is needed to understand the summary — and nothing the user must act on lives only here; propose continuations as 'next' blocks instead.", DetailsMax)),
 
@@ -522,7 +540,7 @@ func JSONSchema(maxBlocks int) map[string]any {
 			"severity":              enum("Required on 'warning': how bad it is.", Levels),
 			"options":               map[string]any{"type": "array", "description": fmt.Sprintf("Required on 'question' and 'next': %d to %d ways forward. A 'next' block needs one 'dispatch' accept option and at least one 'collect' or 'resolve' alternative.", MinOptions, MaxOptions), "items": option},
 			"response_type":         enum("Required on any block with options. Free text is always allowed alongside them.", []string{ResponseSingle}),
-			"recommendation_reason": str("Required on any block with options: why you recommend what you recommend, or why no safe default can be inferred, in one short sentence. The card shows it as 'Recommended because: ...'."),
+			"recommendation_reason": str("Required on any block with options: why you recommend what you recommend, or why no safe default can be inferred, in one short sentence. The card shows the primary block's reason as 'Recommended because: ...' and any further recommended block as 'Suggested for this block because: ...'. The card lets the user pick one option per turn, so recommend one block per report."),
 			"reason_unclassified":   str("Required on 'unclassified': why no other block type fits."),
 			"suggested_type":        str("On 'unclassified': the type that came closest."),
 		},

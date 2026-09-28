@@ -239,8 +239,9 @@ func (m *InputModel) toggleAllDetails() {
 }
 
 // Card colors. What the turn did is drawn in grey, because it is there to be
-// skimmed; what it asks is drawn bright, with the recommended option picked
-// out, because it is what gets answered.
+// skimmed; what it asks is drawn bright, with the primary recommendation picked
+// out, because it is what gets answered. A secondary recommendation keeps an
+// outline chip so two blocks never show two equal picks.
 var (
 	cardDim         = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 	cardRow         = lipgloss.NewStyle().Foreground(lipgloss.Color("246"))
@@ -249,6 +250,7 @@ var (
 	cardAccent      = lipgloss.NewStyle().Foreground(lipgloss.Color("78"))
 	cardFailed      = lipgloss.NewStyle().Foreground(lipgloss.Color("167"))
 	cardPick        = lipgloss.NewStyle().Foreground(lipgloss.Color("16")).Background(lipgloss.Color("78"))
+	cardSecondary   = lipgloss.NewStyle().Foreground(lipgloss.Color("78")).Background(lipgloss.Color("235"))
 	cardInstruction = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
 )
 
@@ -371,8 +373,10 @@ func cardRows(card *report.Report, opts report.Options, width int, shortInstruct
 }
 
 // choiceRows lays a block's options out side by side, wrapping to another row
-// when the next one would not fit. The recommended option is drawn as a
-// highlighted chip so the likeliest answer is found without reading.
+// when the next one would not fit. The primary recommendation is drawn as a
+// highlighted chip so the likeliest answer is found without reading; a
+// secondary recommendation keeps an outline chip so two blocks never show two
+// equal picks.
 func choiceRows(line report.Line, width int) []string {
 	pad := strings.Repeat(" ", line.Indent)
 	const gap = "    "
@@ -381,10 +385,14 @@ func choiceRows(line report.Line, width int) []string {
 	for _, c := range line.Choices {
 		plain := c.Marker() + " " + c.Label
 		painted := cardDim.Render(c.Marker()) + " " + cardText.Render(c.Label)
-		if c.Recommended {
+		if c.Primary {
 			plain = " " + plain + " "
 			painted = cardPick.Render(plain)
+		} else if c.Recommended {
+			plain = " " + plain + " "
+			painted = cardSecondary.Render(plain)
 		}
+
 		n := visibleLen(plain)
 		if rowLen > line.Indent {
 			if rowLen+len(gap)+n > width {
@@ -394,10 +402,13 @@ func choiceRows(line report.Line, width int) []string {
 				row += gap
 				rowLen += len(gap)
 			}
+
 		}
+
 		row += painted
 		rowLen += n
 	}
+
 	return append(rows, row)
 }
 

@@ -230,18 +230,34 @@ func checkBlock(r *Report, i int, seen map[string]int) []Problem {
 	}
 
 	if b.Interactive() {
-		ps = append(ps, checkInteractive(b, at)...)
+		ps = append(ps, checkInteractive(r, b, i, at)...)
 	} else if len(b.Options) > 0 {
 		ps = append(ps, Problem{Path: at("options"), Code: "options_not_allowed",
 			Message: fmt.Sprintf("A %s block has no options. Use \"question\" or \"next\" to ask for something.", b.Type)})
 	}
+
 	return ps
+}
+
+// otherRecommends reports whether any interactive block besides skip carries a
+// recommendation, which is what lets a secondary next block omit its own: one
+// recommended block per report is the primary proposal, the rest are secondary.
+func otherRecommends(r *Report, skip int) bool {
+	for j := range r.Blocks {
+		if j == skip {
+			continue
+		}
+		if r.Blocks[j].Interactive() && r.Blocks[j].Recommendation != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // checkInteractive covers the block types that ask the user for something.
 // They share one option list, one response type and one recommendation, so
 // they share one check.
-func checkInteractive(b *Block, at func(string) string) []Problem {
+func checkInteractive(r *Report, b *Block, index int, at func(string) string) []Problem {
 	var ps []Problem
 
 	if n := len(b.Options); n < MinOptions || n > MaxOptions {
@@ -326,12 +342,15 @@ func checkInteractive(b *Block, at func(string) string) []Problem {
 			Message: "Say why you recommend what you recommend, or why no safe default can be inferred."})
 	}
 
-	// A question may have no safe default; a next block must recommend one.
+	// A question may have no safe default. One next block per report recommends
+	// the primary proposal; further next blocks omit it and are secondary, since
+	// the card lets the user pick one option per turn.
 	if b.Recommendation == "" {
-		if b.Type == BlockNext {
+		if b.Type == BlockNext && !otherRecommends(r, index) {
 			ps = append(ps, Problem{Path: at("recommendation"), Code: "field_required",
-				Message: fmt.Sprintf("A %s block recommends one of its options by id.", b.Type)})
+				Message: "A next block recommends one of its options by id. Recommend one block per report: set recommendation on the primary proposal; further next blocks omit it."})
 		}
+
 	} else if b.Option(b.Recommendation) == nil {
 		ps = append(ps, Problem{Path: at("recommendation"), Code: "recommendation_unknown",
 			Message: fmt.Sprintf("The recommendation %q is not one of this block's option ids.", b.Recommendation)})

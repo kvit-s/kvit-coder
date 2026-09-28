@@ -139,12 +139,14 @@ A report is a status, a one-sentence headline, and typed blocks. The card
 the user sees shows the headline, then "What happened": one row per change,
 finding, warning and check, showing only its summary, with every other field
 and the details folded away until the user opens them. Then "Your call": each
-question and next shows its summary, "Recommended because:" with your reason,
-the option labels side by side, and what the recommended option sends. So the
-headline carries the material fact on its own, each summary is about one line
-(90 characters) and states its fact without the folded fields, option labels
-are two to four words, the reason and each instruction are one sentence, and
-nothing the user must act on lives only in details.
+question and next shows its summary, "Recommended because:" with your reason on
+the primary proposal (further recommended blocks show "Suggested for this block
+because:"), the option labels side by side, and what the primary option sends.
+The card lets the user pick one option per turn, so recommend one block per
+report. So the headline carries the material fact on its own, each summary is
+about one line (90 characters) and states its fact without the folded fields,
+option labels are two to four words, the reason and each instruction are one
+sentence, and nothing the user must act on lives only in details.
 
 Rules the schema cannot enforce for you:
 
@@ -156,8 +158,10 @@ Rules the schema cannot enforce for you:
   as ls, grep or git diff, are reading.
 - Any block that asks the user something — question or next — makes the
   report "needs_action" or "blocked", offers %d to %d options, and says why you
-  recommend the one you recommend. A "dispatch" option's instruction is shown
-  to the user and sent verbatim as the next prompt if they pick it.
+  recommend the one you recommend. Recommend one block per report: set
+  "recommendation" on the primary proposal only; further "next" blocks omit it
+  and are secondary. A "dispatch" option's instruction is shown to the user and
+  sent verbatim as the next prompt if they pick it.
 - Use "question" when only the user can settle something: a choice between
   alternatives with no obvious default, or information only they have. Its
   summary is the question. Alternatives to one another go in one question as
@@ -175,7 +179,8 @@ Rules the schema cannot enforce for you:
   (apply the fix, commit the change, debug the failed test), add a "next"
   block for EACH proposal — there are often several, so emit several
   "next" blocks, one per proposal. Each has one "dispatch" accept option
-  and at least one "collect" or "resolve" alternative. The options inside one
+  and at least one "collect" or "resolve" alternative. Only the primary "next"
+  sets "recommendation"; further "next" blocks omit it. The options inside one
   block are ways to answer that proposal, not different proposals. Never bury
   "say the word and I will ..." in details prose — make it the accept option's
   instruction.
@@ -237,8 +242,7 @@ const reportExample = "```json\n" + `{
         "instruction": "Commit the reordering change."},
        {"id": "later", "label": "I will commit myself", "effect": "resolve"}
      ],
-     "recommendation": "commit",
-     "recommendation_reason": "The change is tested and ready.",
+     "recommendation_reason": "Commit follows the fix, so decide after applying it.",
      "response_type": "single"}
   ]
 }` + "\n```"

@@ -69,10 +69,17 @@ type Line struct {
 
 // LineChoice is one option on a LineChoices line.
 type LineChoice struct {
+
 	// Number is the key that picks it, or 0 past the ninth.
-	Number      int
-	Label       string
+
+	Number int
+	Label  string
+	// Recommended says this option is the block's pick. Primary says it is
+	// also the report's primary recommendation — the one the card highlights
+	// as the pick. A secondary recommended block keeps Recommended without
+	// Primary, so the card can paint it as an outline chip.
 	Recommended bool
+	Primary     bool
 }
 
 // Marker is how the choice is written: "[1]", or "[-]" when no key picks it.
@@ -198,12 +205,19 @@ func Lines(r *Report, opts Options) []Line {
 	if len(asking) > 0 {
 		section(SectionAsks)
 	}
+
+	// Only the primary recommendation gets the highlighted chip and the
+	// "Recommended because:" line: the card lets the user pick one option per
+	// turn, so further recommended blocks read as secondary.
+	primary := r.PrimaryInteractive()
+
 	for k, i := range asking {
 		b := &r.Blocks[i]
 		expanded := opts.ExpandAll || opts.Expanded[b.ID]
 		if k > 0 {
 			blank()
 		}
+
 		add := func(l Line) {
 			l.Block, l.BlockID = i, b.ID
 			if l.Text == "" {
@@ -215,8 +229,13 @@ func Lines(r *Report, opts Options) []Line {
 		tag := "? " + string(b.Type)
 		add(Line{Kind: LineBlock, Tag: tag, Body: b.Summary, Text: tag + "  " + b.Summary})
 
+		isPrimary := i == primary
 		if rec := b.Option(b.Recommendation); rec != nil {
-			add(Line{Kind: LineReason, Indent: 2, Body: "# Recommended because: " + b.RecommendationReason})
+			if isPrimary {
+				add(Line{Kind: LineReason, Indent: 2, Body: "# Recommended because: " + b.RecommendationReason})
+			} else {
+				add(Line{Kind: LineReason, Indent: 2, Body: "# Suggested for this block because: " + b.RecommendationReason})
+			}
 		} else if b.RecommendationReason != "" {
 			add(Line{Kind: LineReason, Indent: 2, Body: "# No recommendation: " + b.RecommendationReason})
 		}
@@ -224,11 +243,13 @@ func Lines(r *Report, opts Options) []Line {
 		var choices []LineChoice
 		var marks []string
 		for j := range b.Options {
+			recommended := b.Option(b.Recommendation) != nil && b.Options[j].ID == b.Recommendation
 			c := LineChoice{Number: numbers[[2]int{i, j}], Label: b.Options[j].Label,
-				Recommended: b.Options[j].ID == b.Recommendation}
+				Recommended: recommended, Primary: isPrimary && recommended}
 			choices = append(choices, c)
 			marks = append(marks, c.Marker()+" "+c.Label)
 		}
+
 		add(Line{Kind: LineChoices, Indent: 2, Choices: choices, Body: strings.Join(marks, "    ")})
 
 		if !expanded {

@@ -21,8 +21,11 @@ The card the user sees shows the headline, then "What happened": one row per
 `change`, `finding`, `warning` and `check`, showing only its `summary`, with
 every other field and the `details` folded away until the user opens them.
 Then "Your call": each `question` and `next` shows its `summary`,
-"Recommended because:" with your `recommendation_reason`, the option labels
-side by side, and the `instruction` of the recommended option. So the headline
+"Recommended because:" with your `recommendation_reason` on the primary
+proposal (further recommended blocks show "Suggested for this block because:"),
+the option labels side by side, and the `instruction` of the primary option.
+The card lets the user pick one option per turn, so recommend one block per
+report. So the headline
 carries the material fact on its own, each summary is about one line (90
 characters) and states its fact without the folded fields, option labels are
 two to four words, the reason and each instruction are one sentence, and
@@ -64,8 +67,7 @@ block.
         "instruction": "Commit the reordering change."},
        {"id": "later", "label": "I will commit myself", "effect": "resolve"}
      ],
-     "recommendation": "commit",
-     "recommendation_reason": "The change is tested and ready.",
+     "recommendation_reason": "Commit follows the fix, so decide after applying it.",
      "response_type": "single"}
   ]
 }
@@ -96,9 +98,11 @@ say that fits no other type; do not use it routinely, and say why.
   or `blocked`. A `blocked` report says what stops the work in a `warning` or
   `finding`.
 - An interactive block needs 2 to 6 options, a `recommendation_reason`, and
-  `response_type: "single"`. `next` also needs a `recommendation` naming
-  one option id; `question` may omit it when there is no safe default, and then
-  the reason says why.
+  `response_type: "single"`. Recommend one block per report: set
+  `recommendation` naming one option id on the primary proposal only; further
+  `next` blocks omit it and are secondary. `question` may omit it when there
+  is no safe default, and then the reason says why. The card lets the user
+  pick one option per turn.
 - An option's `effect` is `dispatch` (its `instruction` becomes the next prompt,
   and the user reads it before choosing, so write it as an instruction you want
   to receive), `collect` (the user writes an answer), or `resolve` (the user
@@ -107,7 +111,8 @@ say that fits no other type; do not use it routinely, and say why.
   and its `instruction` may be left out: picking it then sends you its label as
   the answer.
 - Each `next` needs one `dispatch` accept option and at least one `collect`
-  or `resolve` alternative. Never put something the user must act on only in
+  or `resolve` alternative. Only the primary `next` sets `recommendation`;
+  further `next` blocks omit it. Never put something the user must act on only in
   `details` — make it a `next` option.
 
 A report that does not fit comes back as `REPORT_REJECTED` with every problem
