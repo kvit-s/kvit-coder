@@ -5,8 +5,12 @@ package prompt
 // everything aimed at the driver.
 
 import (
+	"os"
+	"runtime"
 	"strings"
 	"testing"
+	"text/template"
+	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/tools"
 )
@@ -65,5 +69,38 @@ func TestResearchDropsConventionsButKeepsEfficientExtras(t *testing.T) {
 	}
 	if !strings.Contains(tools.BuildSubagentSystemPrompt(".", "general"), "Only touch files") {
 		t.Error("general child prompt should scope edits to the task")
+	}
+}
+
+// TestSubagentTemplatesMatchBuilder: the canonical templates render to
+// exactly what the tools-side builder produces (modulo the template
+// variables), so the two copies cannot drift.
+func TestSubagentTemplatesMatchBuilder(t *testing.T) {
+	vars := map[string]string{
+		"WorkspaceRoot": "/repo",
+		"Platform":      "linux/amd64",
+		"Today":         "2026-09-28",
+	}
+	for _, typ := range []string{"research", "general"} {
+		raw, err := os.ReadFile("prompts/subagents/" + typ + ".tmpl")
+		if err != nil {
+			t.Fatalf("read %s tmpl: %v", typ, err)
+		}
+		tmpl, err := template.New(typ).Parse(string(raw))
+		if err != nil {
+			t.Fatalf("parse %s tmpl: %v", typ, err)
+		}
+		var sb strings.Builder
+		if err := tmpl.Execute(&sb, vars); err != nil {
+			t.Fatalf("render %s tmpl: %v", typ, err)
+		}
+		got := tools.BuildSubagentSystemPrompt("/repo", typ)
+		// The builder stamps the live platform and date; pin those for the
+		// comparison so the test asserts the words, not the clock.
+		got = strings.Replace(got, "Platform: "+runtime.GOOS+"/"+runtime.GOARCH, "Platform: linux/amd64", 1)
+		got = strings.Replace(got, "Today: "+time.Now().Format("2006-01-02"), "Today: 2026-09-28", 1)
+		if sb.String() != got {
+			t.Errorf("%s tmpl does not match builder:\ntmpl:\n%s\nbuilder:\n%s", typ, sb.String(), got)
+		}
 	}
 }

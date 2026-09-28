@@ -404,6 +404,13 @@ func (t *PatchEditTool) applyFilePatch(ctx context.Context, fp FilePatch) (map[s
 		return nil, "", err
 	}
 
+	// Patch context is anchored in the patch text, so the read-recency gate
+	// is waived by design — but a file another loop edited since this
+	// context read it still fails closed here at Call time.
+	if err := t.CheckStaleOnly(fullPath); err != nil {
+		return nil, "", err
+	}
+
 	switch fp.Action {
 	case PatchDelete:
 		return t.deleteFile(fp.Path, fullPath)
@@ -425,6 +432,8 @@ func (t *PatchEditTool) deleteFile(path, fullPath string) (map[string]any, strin
 	if err := os.Remove(fullPath); err != nil {
 		return nil, "", fmt.Errorf("delete failed: %w", err)
 	}
+
+	t.ToolCtx.RecordEditedPath(fullPath)
 
 	return map[string]any{
 		"action":  "deleted",

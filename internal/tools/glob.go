@@ -25,6 +25,9 @@ const DefaultGlobMaxResults = 100
 type GlobTool struct {
 	config        *config.Config
 	workspaceRoot string
+	// toolCtx carries the subagent-child mark for the path-prompt deny.
+	// Nil in a test, which leaves only the config rules in force.
+	toolCtx *ToolContext
 }
 
 func NewGlobTool(cfg *config.Config) *GlobTool {
@@ -33,6 +36,10 @@ func NewGlobTool(cfg *config.Config) *GlobTool {
 		workspaceRoot: cfg.Workspace.Root,
 	}
 }
+
+// SetToolContext gives the tool the context it needs to deny prompts inside
+// a subagent child.
+func (t *GlobTool) SetToolContext(toolCtx *ToolContext) { t.toolCtx = toolCtx }
 
 // ParallelSafe says Glob can run alongside other reads in a Batch: it changes
 // nothing, so nothing else in the batch can be affected by when it runs.
@@ -130,6 +137,9 @@ func (t *GlobTool) Call(ctx context.Context, args json.RawMessage) (any, error) 
 		}
 
 		if outside {
+			if err := subagentPathPromptDeny(t.toolCtx, t.config, "glob", params.Path); err != nil {
+				return nil, err
+			}
 			if err := t.config.CheckPathSafety("glob", params.Path); err != nil {
 				return map[string]any{
 					"success": false,

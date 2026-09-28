@@ -60,8 +60,12 @@ func (b *BaseEditTool) ValidateAndResolvePath(path string) (fullPath string, out
 		return "", false, fmt.Errorf("invalid path: %w", err)
 	}
 
-	// For outside-workspace paths, use CheckPathSafety which respects path_safety_mode
+	// For outside-workspace paths, use CheckPathSafety which respects path_safety_mode.
+	// A subagent child has no one to answer a prompt: fail closed first.
 	if outside {
+		if err := subagentPathPromptDeny(b.ToolCtx, b.Config, "edit", path); err != nil {
+			return "", outside, err
+		}
 		if err := b.Config.CheckPathSafety("edit", path); err != nil {
 			return "", outside, err
 		}
@@ -122,11 +126,33 @@ func (b *BaseEditTool) WriteFileAtomic(fullPath, content string, isNewFile bool)
 		return fmt.Errorf("atomic rename failed: %w", err)
 	}
 
+	// Record the mutation: refreshes this context's own tracker entry to the
+	// post-write stat (so a follow-up edit is not flagged by its own first
+	// edit) and feeds the subagent handoff set.
+	b.ToolCtx.RecordEditedPath(fullPath)
+
 	return nil
 }
 
 // CheckReadBeforeEdit validates that the file was read recently if configured
 func (b *BaseEditTool) CheckReadBeforeEdit(path string) error {
+	// Normalize path to check against tracked reads and the stale set.
+	fullPath, _, err := NormalizeAndValidatePath(b.WorkspaceRoot, path)
+	if err != nil {
+		if b.Config.Tools.Edit.ReadBeforeEditMsgs <= 0 {
+			return nil
+		}
+		return SemanticErrorf("invalid path: %v", err)
+	}
+
+	// A file a subagent child edited since this context last read it fails
+	// closed even when the read-before-edit gate is off: the stale set only
+	// ever contains child-edited files (see RequireReRead), so no global
+	// parent behavior changes.
+	if err := b.CheckStaleOnly(fullPath); err != nil {
+		return err
+	}
+
 	if b.Config.Tools.Edit.ReadBeforeEditMsgs <= 0 {
 		return nil
 	}
@@ -135,12 +161,6 @@ func (b *BaseEditTool) CheckReadBeforeEdit(path string) error {
 	pendingPath := b.ToolCtx.GetPendingEditPath()
 	if pendingPath != "" && pendingPath == path {
 		return nil
-	}
-
-	// Normalize path to check against tracked reads
-	fullPath, _, err := NormalizeAndValidatePath(b.WorkspaceRoot, path)
-	if err != nil {
-		return SemanticErrorf("invalid path: %v", err)
 	}
 
 	// Skip check for new files
@@ -160,6 +180,38 @@ func (b *BaseEditTool) CheckReadBeforeEdit(path string) error {
 		)
 	}
 
+	// The file was read recently but changed afterwards — another process,
+	// a shell command, or another loop. Editing would clobber unseen
+	// content, so fail the same way a missing read does.
+	if changed, found := tracker.StatChangedSinceRead(fullPath); found && changed {
+		return SemanticErrorWithDetails(
+			fmt.Sprintf("file changed since read: '%s' was modified after you read it; read it again before editing", path),
+			map[string]any{
+				"error":     "file_changed_since_read",
+				"path":      path,
+				"next_step": fmt.Sprintf("read {\"path\": \"%s\"}", path),
+			},
+		)
+	}
+
+	return nil
+}
+
+// CheckStaleOnly fails closed when another loop (a subagent child) edited
+// this absolute path since this context last read it. Patch-mode edits,
+// which skip the read-recency check by design (their context is anchored in
+// the patch text), still go through this at Call time via applyFilePatch.
+func (b *BaseEditTool) CheckStaleOnly(fullPath string) error {
+	if b.ToolCtx != nil && b.ToolCtx.IsStalePath(fullPath) {
+		return SemanticErrorWithDetails(
+			fmt.Sprintf("file changed by subagent: '%s' was edited by a subagent since you last read it; read it again before editing", fullPath),
+			map[string]any{
+				"error":     "file_changed_by_subagent",
+				"path":      fullPath,
+				"next_step": fmt.Sprintf("read {\"path\": \"%s\"}", fullPath),
+			},
+		)
+	}
 	return nil
 }
 
@@ -493,6 +545,8 @@ func (b *BaseEditTool) StreamingLineReplace(fullPath string, startLine, endLine 
 	if err := os.Rename(tempPath, fullPath); err != nil {
 		return fmt.Errorf("atomic rename: %w", err)
 	}
+
+	b.ToolCtx.RecordEditedPath(fullPath)
 
 	return nil
 }

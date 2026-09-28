@@ -133,12 +133,14 @@ func SetupRegistry(sc SetupConfig) *Registry {
 
 	if cfg.Tools.Search.Enabled && sc.TempFileMgr != nil {
 		searchTool := NewSearchTool(cfg, sc.TempFileMgr)
+		searchTool.SetToolContext(toolCtx)
 		registry.Enable(searchTool)
 		debug(fmt.Sprintf("Enabled tool: %s", searchTool.Name()))
 	}
 
 	if cfg.Tools.Glob.Enabled {
 		globTool := NewGlobTool(cfg)
+		globTool.SetToolContext(toolCtx)
 		registry.Enable(globTool)
 		debug(fmt.Sprintf("Enabled tool: %s", globTool.Name()))
 	}

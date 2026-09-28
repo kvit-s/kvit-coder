@@ -66,6 +66,8 @@ type SearchTool struct {
 	config        *config.Config
 	workspaceRoot string
 	tempFileMgr   *TempFileManager
+	// toolCtx carries the subagent-child mark for the path-prompt deny.
+	toolCtx *ToolContext
 }
 
 func NewSearchTool(cfg *config.Config, tempFileMgr *TempFileManager) *SearchTool {
@@ -92,6 +94,10 @@ func (t *SearchTool) Description() string {
 func (t *SearchTool) Check(ctx context.Context, args json.RawMessage) error {
 	return nil
 }
+
+// SetToolContext gives the tool the context it needs to deny prompts inside
+// a subagent child.
+func (t *SearchTool) SetToolContext(toolCtx *ToolContext) { t.toolCtx = toolCtx }
 
 func (t *SearchTool) JSONSchema() map[string]any {
 	return map[string]any{
@@ -193,8 +199,12 @@ func (t *SearchTool) Call(ctx context.Context, args json.RawMessage) (any, error
 			}, nil
 		}
 
-		// For outside-workspace paths, use CheckPathSafety which respects path_safety_mode
+		// For outside-workspace paths, use CheckPathSafety which respects path_safety_mode.
+		// A subagent child has no one to answer a prompt: fail closed first.
 		if outside {
+			if err := subagentPathPromptDeny(t.toolCtx, t.config, "search", params.Path); err != nil {
+				return nil, err
+			}
 			if err := t.config.CheckPathSafety("search", params.Path); err != nil {
 				return map[string]any{
 					"success": false,

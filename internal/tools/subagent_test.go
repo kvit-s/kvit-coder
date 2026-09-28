@@ -126,8 +126,8 @@ func TestSubagentSchema(t *testing.T) {
 	if err := sub.Check(ctx, json.RawMessage(`{"description":"x","prompt":"y","subagent_type":"bogus"}`)); err == nil {
 		t.Error("unknown subagent_type accepted, want rejection")
 	}
-	if err := sub.Check(ctx, json.RawMessage(`{"description":"x","prompt":"y","subagent_type":"general"}`)); err == nil {
-		t.Error("general accepted in phase 1, want rejection until phase 2")
+	if err := sub.Check(ctx, json.RawMessage(`{"description":"x","prompt":"y","subagent_type":"general"}`)); err != nil {
+		t.Errorf("general rejected: %v (phase 2a enables write-capable delegation)", err)
 	}
 	// output_schema is accepted but ignored with a note until phase 2.
 	stub := &stubSubRunner{fn: func(p SubagentRunParams) (SubagentRunResult, error) {

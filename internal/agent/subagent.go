@@ -87,23 +87,14 @@ func (r *Runner) RunSubagent(ctx context.Context, p tools.SubagentRunParams) (to
 }
 
 // shallowSubagentConfig copies the turn's config with the child's iteration
-// budget. Maps that the child must not share are re-made; everything else
-// (workspace root, path-safety lists, shell allowlists, model/endpoint) is
-// shared so containment stays identical.
+// budget. It delegates to tools.FloorChildConfig so the child tools and the
+// child loop see the same config: maps the child must not share are re-made
+// while workspace root, path-safety lists, shell allowlists and
+// model/endpoint stay shared for identical containment; read-before-edit is
+// floored to the budget and the preview handshake is forced off (confirm
+// tools are structurally absent from the child handle).
 func shallowSubagentConfig(cfg *config.Config, maxIters int) *config.Config {
-	if cfg == nil {
-		return &config.Config{}
-	}
-	cp := *cfg
-	cp.Agent.MaxIterations = maxIters
-	if cfg.Tools.SafetyConfirmations != nil {
-		m := make(map[string]config.SafetyConfirmation, len(cfg.Tools.SafetyConfirmations))
-		for k, v := range cfg.Tools.SafetyConfirmations {
-			m[k] = v
-		}
-		cp.Tools.SafetyConfirmations = m
-	}
-	return &cp
+	return tools.FloorChildConfig(cfg, maxIters)
 }
 
 // finalAnswerText is the child's summary: the last assistant message with

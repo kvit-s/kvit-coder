@@ -2,6 +2,8 @@ package tools
 
 import (
 	"context"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -87,12 +89,40 @@ type ToolContext struct {
 	// permission asker) resolves to deny inside the child.
 	subagentMu    sync.Mutex
 	subagentChild bool
+
+	// editedPaths are the absolute paths this context successfully mutated
+	// this turn (every Edit/Write/DeleteLines application records here and
+	// refreshes its own tracker entry). It is the handoff payload:
+	// Subagent.Call passes the child's set to the parent's RequireReRead.
+	editedMu    sync.Mutex
+	editedPaths map[string]bool
+
+	// stalePaths are absolute paths another loop edited since this context
+	// last read them. Populated only by RequireReRead (a subagent child
+	// handing edits back to its parent), cleared by Read. Edits to a
+	// stale path fail closed even when read_before_edit_msgs is 0, so the
+	// guarantee is structural under the default config.
+	staleMu    sync.Mutex
+	stalePaths map[string]bool
 }
 
 // NewToolContext creates a new ToolContext with initialized state.
 func NewToolContext() *ToolContext {
 	return &ToolContext{
 		ReadTracker: &FileReadTracker{maxEntries: 10},
+	}
+}
+
+// NewToolContextWithReadWindow creates a ToolContext whose read tracker
+// keeps a window of n messages (trimmed at n*5 entries). Subagent children
+// use max(10, MaxIters) so the floored read-before-edit window (section 1 of
+// spec/subagents-phase2.md) can never be trimmed away inside budget.
+func NewToolContextWithReadWindow(n int) *ToolContext {
+	if n < 10 {
+		n = 10
+	}
+	return &ToolContext{
+		ReadTracker: &FileReadTracker{maxEntries: n},
 	}
 }
 
@@ -508,4 +538,89 @@ func (tc *ToolContext) IsSubagentChild() bool {
 	tc.subagentMu.Lock()
 	defer tc.subagentMu.Unlock()
 	return tc.subagentChild
+}
+
+// absClean normalizes a path the way the read tracker does, so edited,
+// stale and tracker entries compare equal for the same file.
+func absClean(p string) string {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return p
+	}
+	return filepath.Clean(abs)
+}
+
+// RecordEditedPath notes that this context successfully mutated absPath
+// (already absolute from the caller). It refreshes this context's own
+// tracker entry to the post-write stat — so a second edit in the same loop
+// is not flagged by its own first edit — and appends to this context's
+// edited set, the handoff payload RequireReRead consumes.
+func (tc *ToolContext) RecordEditedPath(absPath string) {
+	if tc == nil {
+		return
+	}
+	abs := absClean(absPath)
+	if tc.ReadTracker != nil {
+		tc.ReadTracker.RecordRead(abs, tc.ReadTracker.CurrentMessageID())
+	}
+	tc.editedMu.Lock()
+	defer tc.editedMu.Unlock()
+	if tc.editedPaths == nil {
+		tc.editedPaths = map[string]bool{}
+	}
+	tc.editedPaths[abs] = true
+}
+
+// EditedPaths returns the absolute paths this context mutated, sorted for
+// deterministic results. It is what Subagent.Call hands to the parent.
+func (tc *ToolContext) EditedPaths() []string {
+	if tc == nil {
+		return nil
+	}
+	tc.editedMu.Lock()
+	defer tc.editedMu.Unlock()
+	out := make([]string, 0, len(tc.editedPaths))
+	for p := range tc.editedPaths {
+		out = append(out, p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// RequireReRead marks paths as requiring a fresh Read before this context
+// may edit them. Only Subagent.Call adds to it, with files a child edited
+// this turn — so the stale set never contains anything else, and no global
+// parent behavior changes.
+func (tc *ToolContext) RequireReRead(paths []string) {
+	if tc == nil || len(paths) == 0 {
+		return
+	}
+	tc.staleMu.Lock()
+	defer tc.staleMu.Unlock()
+	if tc.stalePaths == nil {
+		tc.stalePaths = map[string]bool{}
+	}
+	for _, p := range paths {
+		tc.stalePaths[absClean(p)] = true
+	}
+}
+
+// IsStalePath reports whether the path needs a fresh Read before editing.
+func (tc *ToolContext) IsStalePath(path string) bool {
+	if tc == nil {
+		return false
+	}
+	tc.staleMu.Lock()
+	defer tc.staleMu.Unlock()
+	return tc.stalePaths[absClean(path)]
+}
+
+// ClearStalePath clears the re-read requirement, called by Read on success.
+func (tc *ToolContext) ClearStalePath(path string) {
+	if tc == nil {
+		return
+	}
+	tc.staleMu.Lock()
+	defer tc.staleMu.Unlock()
+	delete(tc.stalePaths, absClean(path))
 }

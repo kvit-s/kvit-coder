@@ -7,9 +7,10 @@ package tools
 // this file owns the mechanism (schema, allowlists, result shaping) while
 // internal/agent/subagent.go owns loop setup/teardown.
 //
-// Phase 1 is read-only delegation (research). Write-capable delegation
-// (general) and output_schema enforcement are phase 2; spawn/collect
-// parallelism is phase 3. See spec/subagents.md.
+// Research is read-only delegation; general (phase 2a,
+// spec/subagents-phase2.md) may edit files under the staleness handoff.
+// output_schema enforcement is phase 2b; spawn/collect parallelism is
+// phase 3. See spec/subagents.md.
 
 import (
 	"context"
@@ -28,8 +29,8 @@ import (
 // Policy knobs. Defaults come from tools.subagent.* in the config; zero
 // selects the default, never unbounded.
 const (
-	// maxNudges and maxSchemaErrors belong to the phase-2 output_schema
-	// path. They are recorded here so phase 2 does not relitigate them.
+	// maxNudges and maxSchemaErrors belong to the phase-2b output_schema
+	// path. They are recorded here so phase 2b does not relitigate them.
 	maxNudges       = 2
 	maxSchemaErrors = 3
 )
@@ -174,8 +175,9 @@ func (t *SubagentTool) getParentRemaining() (int, bool) {
 func (t *SubagentTool) Name() string { return "Subagent" }
 
 func (t *SubagentTool) Description() string {
-	return "Delegate a research task to a subagent with its own context and a read-only tool set. " +
+	return "Delegate a task to a subagent with its own context and a restricted tool set. " +
 		"The child starts fresh: inline every file path, symbol name and constraint it needs. " +
+		"Research children only read; general children may edit files. " +
 		"Returns only its final summary text."
 }
 
@@ -194,7 +196,7 @@ func (t *SubagentTool) JSONSchema() map[string]any {
 			},
 			"subagent_type": map[string]any{
 				"type":        "string",
-				"description": `"research" (read-only, default) or "general" (may edit files). Phase 1 is research-only; "general" is rejected until phase 2.`,
+				"description": `"research" (read-only, default) or "general" (may edit files).`,
 			},
 			"output_schema": map[string]any{
 				"type":        "object",
@@ -214,21 +216,24 @@ func (t *SubagentTool) PromptTemplateName() string { return "" }
 func (t *SubagentTool) SelfTimeout() bool { return true }
 
 func (t *SubagentTool) PromptSection() string {
-	return `### Subagent - Delegate research with its own context
+	return `### Subagent - Delegate with its own context
 
 Subagent({"description": "find auth flow", "prompt": "How does login work? Start at internal/auth/..."})
-Subagent({"description": "trace retries", "prompt": "...", "subagent_type": "research"})
+Subagent({"description": "fix retry bug", "prompt": "...", "subagent_type": "general"})
 
 One blocking call per delegation. The child starts fresh with no parent
-history: inline every file path, symbol name and constraint it needs. It sees
-a read-only tool set (Read, Search, Glob, Web.search, Web.fetch, read-only
-Shell) and returns only its final summary text — never dump code, never write
-report files.
+history: inline every file path, symbol name and constraint it needs.
+Research children see a read-only tool set (Read, Search, Glob, Web.search,
+Web.fetch, read-only Shell) and return only a summary — never dump code,
+never write report files. General children may edit files (Edit, Write,
+DeleteLines, full Shell) but only touch files that are part of the task:
+give each child disjoint files, and re-read anything a child edited before
+editing it yourself. All children share the turn's checkout — no worktrees,
+no nesting, no background processes, no questions.
 
 Independent subagents still save context tokens sequentially; wall-clock
 parallelism is a later change. Several Subagents in one Batch run their spawn
-calls in order. Phase 1 is research-only: "general" is rejected, and
-output_schema is accepted but ignored with a note.`
+calls in order. output_schema is accepted but ignored with a note.`
 }
 
 type subagentArgs struct {
@@ -254,12 +259,9 @@ func (t *SubagentTool) parse(args json.RawMessage) (*subagentArgs, error) {
 		typ = "research"
 	}
 	switch typ {
-	case "research":
-		// Phase 1: the only supported type.
-	case "general":
-		return nil, SemanticErrorf("Subagent: subagent_type \"general\" (may edit files) is not enabled yet (phase 2). Use \"research\" for read-only delegation.")
+	case "research", "general":
 	default:
-		return nil, SemanticErrorf("Subagent: unknown subagent_type %q. Use \"research\" (read-only, default).", parsed.SubagentType)
+		return nil, SemanticErrorf("Subagent: unknown subagent_type %q. Use \"research\" (read-only, default) or \"general\" (may edit files).", parsed.SubagentType)
 	}
 	parsed.SubagentType = typ
 	return &parsed, nil
@@ -302,7 +304,9 @@ func (t *SubagentTool) Call(ctx context.Context, args json.RawMessage) (any, err
 		defer cancel()
 	}
 
-	childReg, childCtx := t.childScope(parentReg)
+	childCfg := FloorChildConfig(t.cfg, maxChild)
+	childCtx := t.newChildContext(maxChild)
+	childReg := t.childScope(parentReg, childCfg, childCtx, parsed.SubagentType)
 
 	system := BuildSubagentSystemPrompt(t.cfg.Workspace.Root, parsed.SubagentType)
 
@@ -325,10 +329,15 @@ func (t *SubagentTool) Call(ctx context.Context, args json.RawMessage) (any, err
 	// Coarser-grain change reporting, mirroring Batch: if the child changed
 	// files, the parent counts as mutating once. Never share the context
 	// object itself — the child's counters must not flip the parent's
-	// report mode mid-turn for work the parent didn't do. Phase 1 children
-	// are read-only, so this stays clear; it exists for phase 2.
+	// report mode mid-turn for work the parent didn't do.
 	if childCtx.ChangedThisTurn() && t.toolCtx != nil {
 		t.toolCtx.NoteChange()
+	}
+	// Staleness handoff: the parent must re-read every file the child
+	// edited before editing it (spec/subagents-phase2.md section 1).
+	// RequireReRead is a no-op for an empty set.
+	if t.toolCtx != nil {
+		t.toolCtx.RequireReRead(childCtx.EditedPaths())
 	}
 
 	out := t.shapeResult(result, parsed)
@@ -399,14 +408,53 @@ func (t *SubagentTool) shapeResult(result SubagentRunResult, parsed *subagentArg
 	return out
 }
 
-// childScope builds the filtered child view at Call time, never by mutating
-// the shared registry. Exclusion is structural, not prompt text.
-func (t *SubagentTool) childScope(parent *Registry) (*Registry, *ToolContext) {
-	child := NewRegistry()
-	// Fresh child context sharing only the grantor reference: pending-edit
-	// state and change counters are per-loop. Prompting paths resolve to
-	// deny (IsSubagentChild), and the context carries no inbox.
-	childCtx := NewToolContext()
+// FloorChildConfig copies cfg for a subagent child loop. The iteration budget
+// becomes the cap; read-before-edit is floored to cover the whole budget (a
+// general child must never edit a file it has not read in its own loop);
+// the preview handshake is forced off (Edit.confirm/Write.confirm are
+// structurally absent from the child handle, so a pending_confirmation would
+// wedge the child). SafetyConfirmations are copied, never shared. The agent
+// package reuses this so the child tools and the child loop see the same
+// config.
+func FloorChildConfig(cfg *config.Config, maxIters int) *config.Config {
+	if cfg == nil {
+		return &config.Config{}
+	}
+	cp := *cfg
+	cp.Agent.MaxIterations = maxIters
+	if cp.Tools.Edit.ReadBeforeEditMsgs < maxIters {
+		cp.Tools.Edit.ReadBeforeEditMsgs = maxIters
+	}
+	cp.Tools.Edit.PreviewMode = false
+	if cfg.Tools.SafetyConfirmations != nil {
+		m := make(map[string]config.SafetyConfirmation, len(cfg.Tools.SafetyConfirmations))
+		for k, v := range cfg.Tools.SafetyConfirmations {
+			m[k] = v
+		}
+		cp.Tools.SafetyConfirmations = m
+	}
+	return &cp
+}
+
+// subagentPathPromptDeny fails closed when a subagent child would otherwise
+// prompt a person for path access. A nested prompt has no UI and would wedge
+// the turn; the semantic error tells the child the parent must pre-approve
+// the path. Modes that never prompt (allow, block, warn) pass through.
+func subagentPathPromptDeny(toolCtx *ToolContext, cfg *config.Config, toolName, identifier string) error {
+	if toolCtx != nil && toolCtx.IsSubagentChild() && cfg != nil && cfg.WouldPromptForPath(toolName, identifier) {
+		return SemanticErrorf("subagents cannot prompt for path access (%s %s). The parent must pre-approve this path or work another way",
+			toolName, identifier)
+	}
+	return nil
+}
+
+// newChildContext builds the fresh child context: its own read tracker
+// (sized so the floored read-before-edit window is never trimmed away),
+// pending-edit state and change counters, sharing only the grantor
+// reference. Prompting paths resolve to deny (IsSubagentChild), and the
+// context carries no inbox.
+func (t *SubagentTool) newChildContext(maxIters int) *ToolContext {
+	childCtx := NewToolContextWithReadWindow(maxIters)
 	if t.toolCtx != nil {
 		childCtx.SetGrantor(t.toolCtx.Grantor())
 		if dir := t.toolCtx.SessionTmp(); dir != "" {
@@ -414,33 +462,121 @@ func (t *SubagentTool) childScope(parent *Registry) (*Registry, *ToolContext) {
 		}
 	}
 	childCtx.SetSubagentChild(true)
-	// Research allowlist: read-only tools plus read-only Shell calls (gated
-	// per-call via ReadOnlyCall) plus a Batch scoped to the same allowlist so
-	// exclusion cannot be bypassed by nesting. Glob is read-only and included
-	// though the spec's list omits it: without it a child cannot discover
-	// files (Read refuses directories, telling the model to use Glob first).
-	for _, name := range []string{"Read", "Search", "Glob", "Web.search", "Web.fetch", "Shell", "Shell.advanced"} {
-		if tool := parent.Get(name); tool != nil {
-			if name == "Shell" || name == "Shell.advanced" {
-				child.Enable(&readOnlyShellGate{inner: cloneShellForChild(tool, childCtx), toolCtx: childCtx})
-				continue
+	return childCtx
+}
+
+// childScope builds the filtered child view at Call time, never by mutating
+// the shared registry. Exclusion is structural, not prompt text.
+//
+// Every tool that carries a ToolContext or reads tool config is rebuilt
+// bound to the child config and context: sharing the parent's instances
+// would record child reads into the parent tracker (letting parent reads
+// satisfy the child's read-before-edit gate) and leak child edits into the
+// parent's pending state.
+func (t *SubagentTool) childScope(parent *Registry, childCfg *config.Config, childCtx *ToolContext, subagentType string) *Registry {
+	child := NewRegistry()
+	if childCfg == nil {
+		childCfg = &config.Config{}
+	}
+
+	// Read-only tools, present in both types. Glob is read-only and included
+	// though the base spec's list omits it: without it a child cannot
+	// discover files (Read refuses directories, telling the model to use
+	// Glob first).
+	if parent.Get("Read") != nil {
+		t.enableChildTool(child, NewReadFileTool(childCfg, childCtx))
+	}
+	if parent.Get("Search") != nil {
+		g := NewSearchTool(childCfg, t.tempMgr)
+		g.SetToolContext(childCtx)
+		t.enableChildTool(child, g)
+	}
+	if parent.Get("Glob") != nil {
+		g := NewGlobTool(childCfg)
+		g.SetToolContext(childCtx)
+		t.enableChildTool(child, g)
+	}
+	if parent.Get("Web.search") != nil {
+		t.enableChildTool(child, NewWebSearchTool(childCfg))
+	}
+	if parent.Get("Web.fetch") != nil {
+		t.enableChildTool(child, NewWebFetchTool(childCfg, t.tempMgr))
+	}
+
+	if subagentType == "general" {
+		// Write-capable delegation: the same Edit mode the parent offers
+		// (an Edit claimed into a tool group stays unreachable — documented
+		// limitation, revisited only if a use case demands it), Write,
+		// explicit line deletion, and full Shell bound to the child context
+		// (the IsSubagentChild permission deny still applies to ask paths).
+		switch e := parent.Get("Edit").(type) {
+		case *UnifiedEditTool:
+			t.enableChildTool(child, NewUnifiedEditTool(childCfg, childCtx))
+		case *SearchReplaceEditTool:
+			t.enableChildTool(child, NewSearchReplaceEditTool(childCfg, childCtx))
+		case *PatchEditTool:
+			t.enableChildTool(child, NewPatchEditTool(childCfg, childCtx))
+		case nil:
+			// Edit disabled: nothing to delegate.
+		default:
+			t.enableChildTool(child, e)
+		}
+		if w := parent.Get("Write"); w != nil {
+			if _, ok := w.(*WriteFileTool); ok {
+				t.enableChildTool(child, NewWriteFileTool(childCfg, childCtx))
+			} else {
+				t.enableChildTool(child, w)
 			}
-			child.Enable(tool)
+		}
+		if d := parent.Get("DeleteLines"); d != nil {
+			if _, ok := d.(*DeleteLinesTool); ok {
+				t.enableChildTool(child, NewDeleteLinesTool(childCfg, childCtx))
+			} else {
+				t.enableChildTool(child, d)
+			}
+		}
+		for _, name := range []string{"Shell", "Shell.advanced"} {
+			if tool := parent.Get(name); tool != nil {
+				t.enableChildTool(child, cloneShellForChild(tool, childCtx))
+			}
+		}
+	} else {
+		// Research: read-only Shell calls, gated per-call via ReadOnlyCall.
+		for _, name := range []string{"Shell", "Shell.advanced"} {
+			if tool := parent.Get(name); tool != nil {
+				t.enableChildTool(child, &readOnlyShellGate{inner: cloneShellForChild(tool, childCtx), toolCtx: childCtx})
+			}
 		}
 	}
+
 	// Child Batch dispatches through the filtered handle, so nesting does
 	// not smuggle an excluded tool back in.
 	if parent.Get("Batch") != nil {
-		cfg := t.cfg
-		if cfg == nil {
-			cfg = &config.Config{}
-		}
-		b := NewBatchTool(cfg)
+		b := NewBatchTool(childCfg)
 		b.SetRegistry(child)
 		b.SetToolContext(childCtx)
-		child.Enable(b)
+		t.enableChildTool(child, b)
 	}
-	return child, childCtx
+	return child
+}
+
+// enableChildTool copies one tool into the child handle, enforcing the
+// two-layer MCP exclusion: GroupTools are never copied (their members stay
+// behind the group), and any tool named mcp.* is skipped even if listed —
+// a grouped MCP tool cannot re-enter through the copy. tools must not
+// import mcp, so the name prefix is the mechanism and the test is the
+// backstop.
+func (t *SubagentTool) enableChildTool(child *Registry, tool Tool) {
+	if tool == nil {
+		return
+	}
+	if _, isGroup := tool.(*GroupTool); isGroup {
+		return
+	}
+	if strings.HasPrefix(tool.Name(), "mcp.") {
+		return
+	}
+	child.Enable(tool)
 }
 
 // cloneShellForChild rebinds a real Shell tool to the child context so its
@@ -474,11 +610,23 @@ func cloneShellForChild(tool Tool, childCtx *ToolContext) Tool {
 	}
 }
 
-// ResearchChildScope is the test hook for the allowlist: it builds the same
-// filtered view Call uses, without running a child.
+// ResearchChildScope is the test hook for the research allowlist: it builds
+// the same filtered view Call uses, without running a child.
 func ResearchChildScope(parent *Registry, parentCtx *ToolContext) (*Registry, *ToolContext) {
-	t := &SubagentTool{toolCtx: parentCtx, cfg: &config.Config{}}
-	return t.childScope(parent)
+	return TestChildScope(parent, parentCtx, &config.Config{}, config.DefaultSubagentMaxChildIterations, "research")
+}
+
+// GeneralChildScope is the test hook for the general allowlist.
+func GeneralChildScope(parent *Registry, parentCtx *ToolContext, cfg *config.Config, maxIters int) (*Registry, *ToolContext) {
+	return TestChildScope(parent, parentCtx, cfg, maxIters, "general")
+}
+
+// TestChildScope builds the same filtered view Call uses for the given type,
+// without running a child.
+func TestChildScope(parent *Registry, parentCtx *ToolContext, cfg *config.Config, maxIters int, subagentType string) (*Registry, *ToolContext) {
+	t := &SubagentTool{toolCtx: parentCtx, cfg: cfg}
+	childCtx := t.newChildContext(maxIters)
+	return t.childScope(parent, FloorChildConfig(cfg, maxIters), childCtx, subagentType), childCtx
 }
 
 // readOnlyShellGate wraps Shell/Shell.advanced inside a research child: a
@@ -545,15 +693,22 @@ func BuildSubagentSystemPrompt(workspaceRoot, subagentType string) string {
 	sb.WriteString("# OUTPUT DISCIPLINE\n")
 	sb.WriteString("Your entire response is injected into the parent agent's context. " +
 		"Return a concise summary with `file:line` references. " +
-		"Never dump large code blocks. Never create summary/report files. ")
+		"Never dump large code blocks. Never create summary/report files.")
 	if subagentType == "general" {
-		sb.WriteString("Only touch files that are part of the task. ")
+		sb.WriteString(" Only touch files that are part of the task.")
 	}
 	sb.WriteString("\n\n")
 	sb.WriteString("# TOOL GUIDANCE\n")
-	sb.WriteString("You have Read, Search, Glob, Web.search, Web.fetch and read-only Shell. " +
-		"Prefer Batch for 2+ independent reads/greps in one request. " +
-		"You cannot ask the user anything, spawn subagents, or run background processes.\n")
+	if subagentType == "general" {
+		sb.WriteString("You have Read, Edit, Write, DeleteLines, Search, Glob, Web.search, Web.fetch and full Shell. " +
+			"Read a file before editing it, and re-read it after anyone else changed it. " +
+			"Prefer Batch for 2+ independent reads/greps in one request. " +
+			"You cannot ask the user anything, spawn subagents, or run background processes.\n")
+	} else {
+		sb.WriteString("You have Read, Search, Glob, Web.search, Web.fetch and read-only Shell. " +
+			"Prefer Batch for 2+ independent reads/greps in one request. " +
+			"You cannot ask the user anything, spawn subagents, or run background processes.\n")
+	}
 	return sb.String()
 }
 

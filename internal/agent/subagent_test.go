@@ -108,3 +108,23 @@ type stubStatsCarrier struct {
 func (s *stubStatsCarrier) ChildStats() *stats.AgentStats {
 	return &stats.AgentStats{TotalPromptTokens: s.prompt, TotalCompletionTokens: s.completion, TotalCost: s.cost, Steps: s.steps}
 }
+
+func TestShallowSubagentConfigFloors(t *testing.T) {
+	cfg := testConfig()
+	cfg.Agent.MaxIterations = 1000
+	cfg.Tools.Edit.ReadBeforeEditMsgs = 0
+	cfg.Tools.Edit.PreviewMode = true
+	child := shallowSubagentConfig(cfg, 7)
+	if child.Agent.MaxIterations != 7 {
+		t.Errorf("MaxIterations %d, want 7", child.Agent.MaxIterations)
+	}
+	if child.Tools.Edit.ReadBeforeEditMsgs != 7 {
+		t.Errorf("ReadBeforeEditMsgs %d, want floored to 7", child.Tools.Edit.ReadBeforeEditMsgs)
+	}
+	if child.Tools.Edit.PreviewMode {
+		t.Error("PreviewMode still on in child config")
+	}
+	if cfg.Tools.Edit.ReadBeforeEditMsgs != 0 || !cfg.Tools.Edit.PreviewMode {
+		t.Error("parent config mutated")
+	}
+}

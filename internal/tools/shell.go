@@ -607,8 +607,12 @@ func (t *ShellAdvancedTool) validateCommand(cmd string, baseDir string) error {
 		case safety.Block:
 			return fmt.Errorf("blocked by safety rule [%s]: %s", result.Rule, result.Message)
 		case safety.Prompt:
-			// Delegate to existing path safety prompting for outside-workspace paths
+			// Delegate to existing path safety prompting for outside-workspace paths.
+			// A subagent child has no one to answer: fail closed first.
 			for _, path := range result.Paths {
+				if err := subagentPathPromptDeny(t.toolCtx, t.cfg, "shell", path); err != nil {
+					return err
+				}
 				if err := t.cfg.CheckPathSafety("shell", path); err != nil {
 					return err
 				}
@@ -721,7 +725,11 @@ func (t *ShellAdvancedTool) checkPathSafety(cmd string, baseDir string) error {
 			continue // Skip paths we can't resolve
 		}
 		if outside {
-			// Use unified safety check for individual paths
+			// Use unified safety check for individual paths.
+			// A subagent child has no one to answer: fail closed first.
+			if err := subagentPathPromptDeny(t.toolCtx, t.cfg, "shell", absPath); err != nil {
+				return err
+			}
 			if err := t.cfg.CheckPathSafety("shell", absPath); err != nil {
 				return err
 			}
@@ -748,8 +756,12 @@ func (t *ShellAdvancedTool) validateWorkingDir(dir string) (string, error) {
 		return "", fmt.Errorf("path is not a directory: %s", absDir)
 	}
 
-	// If outside workspace, use unified safety check
+	// If outside workspace, use unified safety check.
+	// A subagent child has no one to answer: fail closed first.
 	if outside {
+		if err := subagentPathPromptDeny(t.toolCtx, t.cfg, "shell.workdir", absDir); err != nil {
+			return "", err
+		}
 		if err := t.cfg.CheckPathSafety("shell.workdir", absDir); err != nil {
 			return "", err
 		}

@@ -11,8 +11,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/config"
+
 	"github.com/pmezard/go-difflib/difflib"
 )
 
@@ -27,6 +29,13 @@ type FileReadTracker struct {
 type fileReadEntry struct {
 	path      string
 	messageID int // Incremented each time a new message batch is processed
+	// size/modTime record what the file looked like when it was read, so a
+	// later edit can tell the file changed under it. hasStat is false when
+	// the stat failed (fail open on stat: the mtime check is skipped for
+	// that entry, never failed).
+	size    int64
+	modTime time.Time
+	hasStat bool
 }
 
 // RecordRead records that a file was read
@@ -40,12 +49,52 @@ func (t *FileReadTracker) RecordRead(path string, messageID int) {
 		absPath = path
 	}
 
-	t.readFiles = append(t.readFiles, fileReadEntry{path: absPath, messageID: messageID})
+	entry := fileReadEntry{path: absPath, messageID: messageID}
+	if info, statErr := os.Stat(absPath); statErr == nil {
+		entry.size = info.Size()
+		entry.modTime = info.ModTime()
+		entry.hasStat = true
+	}
+
+	t.readFiles = append(t.readFiles, entry)
 
 	// Trim old entries if we have too many
 	if len(t.readFiles) > t.maxEntries*5 {
 		t.readFiles = t.readFiles[len(t.readFiles)-t.maxEntries*5:]
 	}
+}
+
+// StatChangedSinceRead reports whether the file's current size or modTime
+// differs from its most recent read entry. found is false when no entry
+// exists for the path or the entry was recorded without a stat — the caller
+// skips the mtime check then (fail open on stat, fail closed on prompt).
+func (t *FileReadTracker) StatChangedSinceRead(path string) (changed, found bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		absPath = path
+	}
+
+	for i := len(t.readFiles) - 1; i >= 0; i-- {
+		entry := t.readFiles[i]
+		if entry.path != absPath {
+			continue
+		}
+		if !entry.hasStat {
+			return false, false
+		}
+		info, statErr := os.Stat(absPath)
+		if statErr != nil {
+			return false, false
+		}
+		if info.Size() != entry.size || !info.ModTime().Equal(entry.modTime) {
+			return true, true
+		}
+		return false, true
+	}
+	return false, false
 }
 
 // WasReadRecently checks if a file was read within the last N messages
@@ -413,8 +462,12 @@ func (t *ReadFileTool) Call(ctx context.Context, args json.RawMessage) (any, err
 	}
 
 	// For outside-workspace paths, use CheckPathSafety which respects path_safety_mode
-	// (CheckPathPermission already ran above for denied_paths check)
+	// (CheckPathPermission already ran above for denied_paths check).
+	// A subagent child has no one to answer a prompt: fail closed first.
 	if outside {
+		if err := subagentPathPromptDeny(t.toolCtx, t.config, "read", params.Path); err != nil {
+			return nil, err
+		}
 		if err := t.config.CheckPathSafety("read", params.Path); err != nil {
 			return nil, err
 		}
@@ -481,11 +534,14 @@ func (t *ReadFileTool) Call(ctx context.Context, args json.RawMessage) (any, err
 	if params.CharMode {
 		// Record that this file was read (for read-before-edit enforcement)
 		t.toolCtx.ReadTracker.RecordRead(fullPath, t.toolCtx.ReadTracker.CurrentMessageID())
+		t.toolCtx.ClearStalePath(fullPath)
 		return t.readCharModeSeek(fullPath, fileSize, params.Start, params.Limit, params.Path)
 	}
 
-	// Record that this file was read (for read-before-edit enforcement)
+	// Record that this file was read (for read-before-edit enforcement).
+	// A successful read also clears the subagent re-read requirement.
 	t.toolCtx.ReadTracker.RecordRead(fullPath, t.toolCtx.ReadTracker.CurrentMessageID())
+	t.toolCtx.ClearStalePath(fullPath)
 
 	result, err := t.readLineMode(fullPath, params.Start, params.Limit, params.Path)
 	if err != nil {
@@ -1025,6 +1081,58 @@ func (t *ReadFileTool) readCharModeSeek(fullPath string, fileSize int64, start, 
 	return response, nil
 }
 
+// checkChildWriteGate enforces read-before-write for subagent children
+// only. Write has no read check today and parent behavior must not change in
+// phase 2, so this is a no-op for any non-child context. Overwriting an
+// existing file must follow a child-local read of its current content;
+// creating a new file always passes.
+func checkChildWriteGate(toolCtx *ToolContext, cfg *config.Config, displayPath, fullPath string) error {
+	if toolCtx == nil || !toolCtx.IsSubagentChild() {
+		return nil
+	}
+	if _, statErr := os.Stat(fullPath); os.IsNotExist(statErr) {
+		return nil
+	} else if statErr != nil {
+		return nil // fail open on stat; the write itself will surface it
+	}
+	if toolCtx.IsStalePath(fullPath) {
+		return SemanticErrorWithDetails(
+			fmt.Sprintf("file changed by subagent: '%s' was edited by a subagent since you last read it; read it again before editing", displayPath),
+			map[string]any{
+				"error":     "file_changed_by_subagent",
+				"path":      displayPath,
+				"next_step": fmt.Sprintf("read {\"path\": \"%s\"}", displayPath),
+			},
+		)
+	}
+	window := cfg.Tools.Edit.ReadBeforeEditMsgs
+	if window <= 0 {
+		return nil
+	}
+	tracker := toolCtx.ReadTracker
+	if tracker == nil || !tracker.WasReadRecently(fullPath, tracker.CurrentMessageID(), window) {
+		return SemanticErrorWithDetails(
+			fmt.Sprintf("file not read recently: you must use read on '%s' before overwriting it (within last %d tool calls)", displayPath, window),
+			map[string]any{
+				"error":     "file_not_read",
+				"path":      displayPath,
+				"next_step": fmt.Sprintf("read {\"path\": \"%s\"}", displayPath),
+			},
+		)
+	}
+	if changed, found := tracker.StatChangedSinceRead(fullPath); found && changed {
+		return SemanticErrorWithDetails(
+			fmt.Sprintf("file changed since read: '%s' was modified after you read it; read it again before editing", displayPath),
+			map[string]any{
+				"error":     "file_changed_since_read",
+				"path":      displayPath,
+				"next_step": fmt.Sprintf("read {\"path\": \"%s\"}", displayPath),
+			},
+		)
+	}
+	return nil
+}
+
 // WriteFileTool writes entire content to a file (creates or overwrites)
 type WriteFileTool struct {
 	config        *config.Config
@@ -1069,6 +1177,12 @@ func (t *WriteFileTool) Check(ctx context.Context, args json.RawMessage) error {
 	}
 	if permResult == config.PermissionReadOnly {
 		return fmt.Errorf("path is read-only: %w", err)
+	}
+
+	// Subagent children must read a file before overwriting it (Write has no
+	// read check otherwise, and parent behavior must not change).
+	if err := checkChildWriteGate(t.toolCtx, t.config, params.Path, fullPath); err != nil {
+		return err
 	}
 
 	return nil
@@ -1143,6 +1257,11 @@ func (t *WriteFileTool) Call(ctx context.Context, args json.RawMessage) (any, er
 	}
 	if permResult == config.PermissionReadOnly {
 		return nil, fmt.Errorf("path is read-only: %w", err)
+	}
+
+	// Subagent children must read a file before overwriting it.
+	if err := checkChildWriteGate(t.toolCtx, t.config, params.Path, fullPath); err != nil {
+		return nil, err
 	}
 
 	// Ensure parent directory exists
@@ -1225,6 +1344,8 @@ func (t *WriteFileTool) writeFile(fullPath, displayPath, content string, isNewFi
 		return nil, fmt.Errorf("rename temp file: %w", err)
 	}
 
+	t.toolCtx.RecordEditedPath(fullPath)
+
 	// Build response
 	lines := strings.Count(content, "\n")
 	if len(content) > 0 && !strings.HasSuffix(content, "\n") {
@@ -1246,7 +1367,7 @@ func (t *WriteFileTool) writeFile(fullPath, displayPath, content string, isNewFi
 }
 
 // applyPendingEdit applies a pending edit operation (shared by Edit.confirm and Write.confirm)
-func applyPendingEdit(pending *pendingEdit) (any, error) {
+func applyPendingEdit(toolCtx *ToolContext, pending *pendingEdit) (any, error) {
 	// Verify file hasn't changed since preview (or doesn't exist for new files)
 	currentContent, err := os.ReadFile(pending.fullPath)
 	if err != nil {
@@ -1308,12 +1429,14 @@ func applyPendingEdit(pending *pendingEdit) (any, error) {
 		return nil, fmt.Errorf("atomic rename failed: %w", err)
 	}
 
+	toolCtx.RecordEditedPath(pending.fullPath)
+
 	return BuildEditSuccessResult(pending.path, pending.diff, pending.newContent,
 		pending.editStartLine, pending.editEndLine, pending.isNewFile), nil
 }
 
 // applyPendingWrite applies a pending write operation (shared by Edit.confirm and Write.confirm)
-func applyPendingWrite(pending *pendingWrite) (any, error) {
+func applyPendingWrite(toolCtx *ToolContext, pending *pendingWrite) (any, error) {
 	parentDir := filepath.Dir(pending.fullPath)
 	tempFile, err := os.CreateTemp(parentDir, ".write-*.tmp")
 	if err != nil {
@@ -1333,6 +1456,8 @@ func applyPendingWrite(pending *pendingWrite) (any, error) {
 	if err := os.Rename(tempPath, pending.fullPath); err != nil {
 		return nil, fmt.Errorf("rename temp file: %w", err)
 	}
+
+	toolCtx.RecordEditedPath(pending.fullPath)
 
 	lines := strings.Count(pending.content, "\n")
 	if len(pending.content) > 0 && !strings.HasSuffix(pending.content, "\n") {
@@ -1387,13 +1512,13 @@ func (t *ConfirmEditTool) Call(ctx context.Context, args json.RawMessage) (any, 
 	// Check for pending edit first
 	pending := t.toolCtx.GetAndClearPendingEdit()
 	if pending != nil {
-		return applyPendingEdit(pending)
+		return applyPendingEdit(t.toolCtx, pending)
 	}
 
 	// If no pending edit, check for pending write (Edit.confirm and Write.confirm are synonyms)
 	pendingWrite := t.toolCtx.GetAndClearPendingWrite()
 	if pendingWrite != nil {
-		return applyPendingWrite(pendingWrite)
+		return applyPendingWrite(t.toolCtx, pendingWrite)
 	}
 
 	return map[string]any{
@@ -1511,14 +1636,14 @@ func (t *ConfirmWriteTool) Call(ctx context.Context, args json.RawMessage) (any,
 	// Check for pending write first
 	pending := t.toolCtx.GetAndClearPendingWrite()
 	if pending != nil {
-		return applyPendingWrite(pending)
+		return applyPendingWrite(t.toolCtx, pending)
 	}
 
 	// If no pending write, check for pending edit (Write.confirm and Edit.confirm are synonyms)
 	pendingEdit := t.toolCtx.GetAndClearPendingEdit()
 	if pendingEdit != nil {
 		// Delegate to the same logic as ConfirmEditTool
-		return applyPendingEdit(pendingEdit)
+		return applyPendingEdit(t.toolCtx, pendingEdit)
 	}
 
 	return map[string]any{
