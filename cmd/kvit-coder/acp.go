@@ -1014,7 +1014,6 @@ func (a *acpAgent) runPrompt(ctx context.Context, s *acpSession, text string, im
 		workspace: turn.cfg.Workspace.Root,
 		registry:  turn.registry,
 		toolCtx:   turn.toolCtx,
-		plans:     turn.planManager,
 		procs:     turn.procRegistry,
 		title:     func() string { return turn.sess.Meta().Title },
 		calls:     map[string]*reportedCall{},

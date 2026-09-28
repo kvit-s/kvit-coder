@@ -36,7 +36,6 @@ type Runner struct {
 	checkpointMgr     *checkpoint.Manager
 	contextMgr        *ctxtools.Manager
 	contextMiddleware *ctxtools.Middleware
-	planManager       *tools.PlanManager
 	toolCtx           *tools.ToolContext
 	interrogator      *Interrogator
 	inbox             *inbox.Inbox
@@ -56,7 +55,6 @@ type RunnerOptions struct {
 	CheckpointMgr     *checkpoint.Manager
 	ContextMgr        *ctxtools.Manager
 	ContextMiddleware *ctxtools.Middleware
-	PlanManager       *tools.PlanManager
 	ToolCtx           *tools.ToolContext
 	// Inbox is where anything that arrives mid-turn waits: a line typed at
 	// the terminal, a file dropped by "kvit-coder steer", a background
@@ -117,7 +115,6 @@ func NewRunner(opts RunnerOptions) *Runner {
 		checkpointMgr:     opts.CheckpointMgr,
 		contextMgr:        opts.ContextMgr,
 		contextMiddleware: opts.ContextMiddleware,
-		planManager:       opts.PlanManager,
 		toolCtx:           opts.ToolCtx,
 		inbox:             opts.Inbox,
 		procs:             opts.Procs,
@@ -132,15 +129,6 @@ func NewRunner(opts RunnerOptions) *Runner {
 // Writer returns the UI writer for output configuration.
 func (r *Runner) Writer() *ui.Writer {
 	return r.writer
-}
-
-// ResetPlan clears any active plan. Used by the benchmark harness to give each
-// task a fresh PlanManager (the manager is shared across tasks in a single
-// process). No-op when planning is disabled.
-func (r *Runner) ResetPlan() {
-	if r.planManager != nil {
-		r.planManager.ClearPlan()
-	}
 }
 
 // backtrackResult contains the result of handleToolError

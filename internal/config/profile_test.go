@@ -31,8 +31,6 @@ tools:
     enabled: true
     preview_mode: true
     fuzzy_threshold: 0.8
-    smart_first_line_indent: true
-    max_autoindent_fix: 3
 models:
   - id: "strong-entry"
     name: "Strong"

@@ -20,7 +20,7 @@ import (
 //	    history.jsonl   append-only, one timestamped event per line
 //	    meta.json       when it was created and last touched, which workspace
 //	                    and model, the first prompt, and the compaction chain
-//	    checkpoints/    the shadow git repo the checkpoint tools commit into
+//	    checkpoints/    the shadow git repo that records the workspace after every turn
 //	    proc/           pidfiles and logs for background processes
 //	    inbox/          files dropped here reach the model next iteration
 //	    tmp/            tool output too large to put in a message
@@ -199,7 +199,7 @@ func (s *Session) Name() string { return s.name }
 // Dir is the session directory.
 func (s *Session) Dir() string { return s.dir }
 
-// CheckpointsDir is the shadow git repository the checkpoint tools commit into.
+// CheckpointsDir is the shadow git repository that records the workspace after every turn.
 func (s *Session) CheckpointsDir() string { return filepath.Join(s.dir, CheckpointsSubdir) }
 
 // ProcDir holds pidfiles and logs for processes that outlive a turn.

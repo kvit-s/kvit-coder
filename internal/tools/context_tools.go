@@ -59,7 +59,6 @@ You have tools for managing tasks and compressing context:
 - **Tasks.AcceptDiff**: Accept file changes from completed task
 - **Tasks.DeclineDiff**: Discard file changes, rollback to pre-task state
 - **Tasks.RevertFile[path]**: Revert file to conversation start
-- **Tasks.RevertToTaskStart[path]**: Revert file to task start (only inside task)
 
 ### When to use Tasks.Start:
 - Searching through logs or data (many filter steps → final findings)
@@ -235,7 +234,7 @@ func (t *TasksFinishTool) Check(ctx context.Context, args json.RawMessage) error
 	}
 
 	if !ctxtools.HasUnfinishedTaskInHistory(turns) {
-		return SemanticError("not in a task. Use Tasks.Start first, or use Tasks.Collapse to retroactively compress past work.")
+		return SemanticError("not in a task. Use Tasks.Start first.")
 	}
 
 	return nil
@@ -654,88 +653,3 @@ func (t *TasksRevertFileTool) Call(ctx context.Context, args json.RawMessage) (a
 	}, nil
 }
 
-// =============================================================================
-// Tasks.RevertToTaskStart - Revert a file to task start
-// =============================================================================
-
-type TasksRevertToTaskStartTool struct {
-	manager *ctxtools.Manager
-}
-
-func NewTasksRevertToTaskStartTool(manager *ctxtools.Manager) *TasksRevertToTaskStartTool {
-	return &TasksRevertToTaskStartTool{manager: manager}
-}
-
-func (t *TasksRevertToTaskStartTool) Name() string {
-	return "Tasks.RevertToTaskStart"
-}
-
-func (t *TasksRevertToTaskStartTool) Description() string {
-	return "Revert a file to its state when the current task began. Only available inside a task."
-}
-
-func (t *TasksRevertToTaskStartTool) JSONSchema() map[string]any {
-	return map[string]any{
-		"type": "object",
-		"properties": map[string]any{
-			"path": map[string]any{
-				"type":        "string",
-				"description": "Path to the file to revert",
-			},
-		},
-		"required": []string{"path"},
-	}
-}
-
-func (t *TasksRevertToTaskStartTool) PromptCategory() string     { return "context" }
-func (t *TasksRevertToTaskStartTool) PromptOrder() int           { return 60 }
-func (t *TasksRevertToTaskStartTool) PromptTemplateName() string { return "" }
-func (t *TasksRevertToTaskStartTool) PromptSection() string      { return "" } // Docs in Tasks.Start
-
-type tasksRevertToTaskStartArgs struct {
-	Path string `json:"path"`
-}
-
-func (t *TasksRevertToTaskStartTool) Check(ctx context.Context, args json.RawMessage) error {
-	var params tasksRevertToTaskStartArgs
-	if err := json.Unmarshal(args, &params); err != nil {
-		return fmt.Errorf("invalid arguments: %w", err)
-	}
-
-	if strings.TrimSpace(params.Path) == "" {
-		return SemanticError("path cannot be empty")
-	}
-
-	// Check if we're actually in a task
-	turns, err := t.manager.ReadTurnsForLLM()
-	if err != nil {
-		return RuntimeError(fmt.Sprintf("failed to read turns: %v", err))
-	}
-
-	if !ctxtools.HasUnfinishedTaskInHistory(turns) {
-		return SemanticError("not in a task. Use Tasks.RevertFile to revert to conversation start instead.")
-	}
-
-	return nil
-}
-
-func (t *TasksRevertToTaskStartTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
-	var params tasksRevertToTaskStartArgs
-	if err := json.Unmarshal(args, &params); err != nil {
-		return nil, fmt.Errorf("invalid arguments: %w", err)
-	}
-
-	path := strings.TrimSpace(params.Path)
-
-	content, err := t.manager.RestoreFileToTaskStart(path)
-	if err != nil {
-		return nil, RuntimeError(fmt.Sprintf("failed to restore file: %v", err))
-	}
-
-	return map[string]any{
-		"status":       "reverted",
-		"path":         path,
-		"message":      fmt.Sprintf("File '%s' reverted to task start state.", path),
-		"content_size": len(content),
-	}, nil
-}

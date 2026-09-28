@@ -26,9 +26,9 @@ type PromptContext struct {
 	HasEdit       bool
 	HasWrite      bool
 	HasSearch     bool
+
 	HasShell      bool
-	HasPlan       bool
-	HasCheckpoint bool
+
 	HasTasks      bool
 
 	// Derived
@@ -61,10 +61,11 @@ func NewPromptContext(registry RegistryInterface, cfg *config.Config) PromptCont
 	ctx.HasRead = registry.IsEnabled("Read")
 	ctx.HasEdit = registry.IsEnabled("Edit")
 	ctx.HasWrite = registry.IsEnabled("Write")
+
 	ctx.HasSearch = registry.IsEnabled("Search")
+
 	ctx.HasShell = registry.IsEnabled("Shell")
-	ctx.HasPlan = registry.IsEnabled("Plan.create") || registry.IsEnabled("Plan.write")
-	ctx.HasCheckpoint = registry.IsEnabled("Checkpoint.list")
+
 	ctx.HasTasks = registry.IsEnabled("Tasks.Start")
 
 	// Build capabilities list
@@ -98,12 +99,7 @@ func buildCapabilitiesList(registry RegistryInterface) []string {
 	if registry.IsEnabled("Shell") {
 		capabilities = append(capabilities, "running shell commands")
 	}
-	if registry.IsEnabled("Plan.create") || registry.IsEnabled("Plan.write") {
-		capabilities = append(capabilities, "making and tracking plans")
-	}
-	if registry.IsEnabled("Checkpoint.list") {
-		capabilities = append(capabilities, "managing checkpoints")
-	}
+
 	if registry.IsEnabled("Tasks.Start") {
 		capabilities = append(capabilities, "managing tasks")
 	}
@@ -112,15 +108,13 @@ func buildCapabilitiesList(registry RegistryInterface) []string {
 
 // determineEnabledCategories returns the list of tool categories that have enabled tools.
 func determineEnabledCategories(registry RegistryInterface) []string {
-	categories := []string{"filesystem", "shell", "plan", "checkpoint"}
+	categories := []string{"filesystem", "shell"}
 	var enabled []string
 
 	// Check each category for any enabled tools
 	categoryTools := map[string][]string{
 		"filesystem": {"Read", "Write", "Edit", "Search"},
 		"shell":      {"Shell", "Shell.advanced"},
-		"plan":       {"Plan.write", "Plan.create", "Plan.completeStep", "Plan.addStep"},
-		"checkpoint": {"Checkpoint.list", "Checkpoint.restore"},
 	}
 
 	for _, cat := range categories {

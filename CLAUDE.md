@@ -58,7 +58,7 @@ does.
 ~/.kvit-coder/sessions/<name>/
     history.jsonl   append-only, one timestamped event per line
     meta.json       created/touched times, workspace, model, first prompt
-    checkpoints/    shadow git repo the checkpoint tools commit into
+    checkpoints/    shadow git repo that records the workspace after every turn
     proc/           pidfiles and logs for background processes
     inbox/          files dropped here reach the model next iteration
     tmp/            tool output too large to put in a message
@@ -70,7 +70,7 @@ See `internal/session/session.go` for the authoritative version of this.
 
 | Package | Lines | What it does |
 |---|---:|---|
-| `internal/tools` | 12,700 | Tool implementations: read, three edit modes, write, search, shell, plan, checkpoint, tasks, batch, question, background processes |
+| `internal/tools` | 12,700 | Tool implementations: read, three edit modes, write, search, shell, tasks, batch, question, background processes |
 | `internal/benchmark` | 5,300 | Three benchmark harnesses. Reached only through `cmd/kvit-coder` flags; see `docs/bench-refactor.md` for the plan to split it out |
 | `internal/agent` | 2,600 | The run loop, plus the weak-model machinery: loop detection, backtracking, anomaly interrogation |
 | `internal/mcp` | 1,600 | Model Context Protocol client, stdio and HTTP transports |
@@ -89,7 +89,7 @@ See `internal/session/session.go` for the authoritative version of this.
 Tools are registered in `internal/tools/setup.go`. Adding one touches that file
 and the tool's own file. Registered names use dotted namespaces: `Read`, `Edit`,
 `Edit.confirm`, `Search`, `Shell`, `Shell.start`, `Shell.output`, `Observe.wait`,
-`Batch`, `Question`, `Web.search`, `Web.fetch`, `Plan.*`, `Checkpoint.*`,
+`Batch`, `Question`, `Web.search`, `Web.fetch`,
 `Tasks.*`, and `mcp.<server>.<tool>`.
 
 A **tool group** (`internal/tools/group.go`, configured under `tool_groups:`) is

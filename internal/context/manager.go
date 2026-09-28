@@ -620,25 +620,6 @@ func (m *Manager) RestoreFileToStart(path string) ([]byte, error) {
 	return m.checkpointMgr.RestoreFile(path)
 }
 
-// RestoreFileToTaskStart restores a file to its state at current task start
-func (m *Manager) RestoreFileToTaskStart(path string) ([]byte, error) {
-	if m.checkpointMgr == nil {
-		return nil, fmt.Errorf("checkpoint manager not available")
-	}
-
-	turns, err := m.ReadTurnsForLLM()
-	if err != nil {
-		return nil, err
-	}
-
-	checkpointID := GetTaskCheckpoint(turns)
-	if checkpointID == nil {
-		return nil, fmt.Errorf("not in a task")
-	}
-
-	// TODO: Implement per-file restore to specific turn
-	return nil, fmt.Errorf("RestoreFileToTaskStart not yet implemented")
-}
 
 // =============================================================================
 // Utility

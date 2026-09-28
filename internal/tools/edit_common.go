@@ -312,12 +312,6 @@ func BuildEditPreviewResult(path, diff, newContent string, editStartLine, editEn
 // StorePendingEdit stores a computed edit for preview mode using the provided ToolContext.
 // editStartLine and editEndLine are 1-based line numbers in the new content.
 func StorePendingEdit(toolCtx *ToolContext, path, fullPath, oldContent, newContent, diff string, isNewFile bool, editStartLine, editEndLine int) {
-	StorePendingEditWithCorrection(toolCtx, path, fullPath, oldContent, newContent, diff, isNewFile, editStartLine, editEndLine, nil)
-}
-
-// StorePendingEditWithCorrection is StorePendingEdit plus an optional first-line indent
-// auto-correction record, so Edit.undo_autoindent can recompute the edit without the fix.
-func StorePendingEditWithCorrection(toolCtx *ToolContext, path, fullPath, oldContent, newContent, diff string, isNewFile bool, editStartLine, editEndLine int, correction *IndentAutocorrection) {
 	toolCtx.SetPendingEdit(&pendingEdit{
 		path:          path,
 		fullPath:      fullPath,
@@ -327,7 +321,6 @@ func StorePendingEditWithCorrection(toolCtx *ToolContext, path, fullPath, oldCon
 		isNewFile:     isNewFile,
 		editStartLine: editStartLine,
 		editEndLine:   editEndLine,
-		autoindent:    correction,
 	})
 }
 
@@ -746,26 +739,11 @@ func CalculateEditLineRange(newContent string, replaceStart int, replaceText str
 // This is the single source of truth for the final edit handling logic.
 func FinalizeEdit(b *BaseEditTool, path, fullPath, oldContent, newContent, diff string,
 	editStartLine, editEndLine int, isNewFile bool) (any, error) {
-	return FinalizeEditWithCorrection(b, path, fullPath, oldContent, newContent, diff, editStartLine, editEndLine, isNewFile, nil)
-}
-
-// FinalizeEditWithCorrection is FinalizeEdit plus an optional first-line indent
-// auto-correction. When non-nil and preview mode is on, the correction is stored with
-// the pending edit and surfaced in the result so the model can review/undo it.
-func FinalizeEditWithCorrection(b *BaseEditTool, path, fullPath, oldContent, newContent, diff string,
-	editStartLine, editEndLine int, isNewFile bool, correction *IndentAutocorrection) (any, error) {
 
 	// Preview mode: store pending edit and return preview result
 	if b.Config.Tools.Edit.PreviewMode {
-		StorePendingEditWithCorrection(b.ToolCtx, path, fullPath, oldContent, newContent, diff, isNewFile, editStartLine, editEndLine, correction)
+		StorePendingEdit(b.ToolCtx, path, fullPath, oldContent, newContent, diff, isNewFile, editStartLine, editEndLine)
 		result := BuildEditPreviewResult(path, diff, newContent, editStartLine, editEndLine, isNewFile)
-		if correction != nil {
-			result["indent_autocorrected"] = correction.ResultField()
-			// Surface the note alongside the diff so the model reviews it before confirming.
-			if ns, ok := result["next_step"].(string); ok {
-				result["next_step"] = ns + "\n\nNOTE: " + correction.Message
-			}
-		}
 		return result, nil
 	}
 
@@ -775,8 +753,5 @@ func FinalizeEditWithCorrection(b *BaseEditTool, path, fullPath, oldContent, new
 	}
 
 	result := BuildEditSuccessResult(path, diff, newContent, editStartLine, editEndLine, isNewFile)
-	if correction != nil {
-		result["indent_autocorrected"] = correction.ResultField()
-	}
 	return result, nil
 }

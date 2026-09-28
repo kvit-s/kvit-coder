@@ -59,7 +59,7 @@ and writes its output into its tool result.
 - Each `session/prompt` is one turn, set up as a `-p` turn is. Its steps arrive
   as `session/update` notifications: the model's text and reasoning, each tool
   call with its kind, file and arguments, its result (with a diff when it
-  changed a file), the plan, the session's title, and the context in use with
+  changed a file), the session's title, and the context in use with
   the session's cost so far. The answer gives `end_turn`, `max_turn_requests`
   when the iteration budget ran out, or `cancelled` after `session/cancel`; a
   turn that failed is answered with an error giving the reason.

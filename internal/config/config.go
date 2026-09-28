@@ -270,9 +270,6 @@ type profileSnapshot struct {
 
 	previewMode bool
 
-	smartFirstLineIndent bool
-
-	maxAutoindentFix int
 
 	exactMatchOnly bool
 
@@ -288,8 +285,6 @@ func (c *Config) snapshotProfileRaw() {
 	c.profileRaw = &profileSnapshot{
 		backtrackEnabled:     c.Backtrack.Enabled,
 		previewMode:          c.Tools.Edit.PreviewMode,
-		smartFirstLineIndent: c.Tools.Edit.SmartFirstLineIndent,
-		maxAutoindentFix:     c.Tools.Edit.MaxAutoindentFix,
 		exactMatchOnly:       c.Tools.Edit.ExactMatchOnly,
 		fuzzyThreshold:       c.Tools.Edit.FuzzyThreshold,
 		interrogateOnAnomaly: c.Diagnostics.InterrogateOnAnomaly,
@@ -324,8 +319,6 @@ func (c *Config) ApplyProfile(profile string) {
 		// go the indentation repair and first-line-indent guessing that only
 		// run alongside it.
 		c.Tools.Edit.PreviewMode = false
-		c.Tools.Edit.SmartFirstLineIndent = false
-		c.Tools.Edit.MaxAutoindentFix = 0
 		// Fuzzy matching edits the closest thing it can find to what the model
 		// asked for, which is a silent wrong edit when the model was right and
 		// the file had moved on.
@@ -340,8 +333,6 @@ func (c *Config) ApplyProfile(profile string) {
 	raw := c.profileRaw
 	c.Backtrack.Enabled = raw.backtrackEnabled
 	c.Tools.Edit.PreviewMode = raw.previewMode
-	c.Tools.Edit.SmartFirstLineIndent = raw.smartFirstLineIndent
-	c.Tools.Edit.MaxAutoindentFix = raw.maxAutoindentFix
 	c.Tools.Edit.ExactMatchOnly = raw.exactMatchOnly
 	c.Tools.Edit.FuzzyThreshold = raw.fuzzyThreshold
 	c.Diagnostics.InterrogateOnAnomaly = raw.interrogateOnAnomaly
@@ -669,7 +660,6 @@ type ToolsConfig struct {
 	Report      ReportToolConfig      `yaml:"report"`
 	Procs       ProcsToolsConfig      `yaml:"procs"`
 	Batch       BatchToolConfig       `yaml:"batch"`
-	Plan        PlanToolsConfig       `yaml:"plan"`
 	Checkpoint  CheckpointToolsConfig `yaml:"checkpoint"`
 	Tasks       TasksToolsConfig      `yaml:"tasks"`
 	Web         WebToolsConfig        `yaml:"web"`
@@ -763,14 +753,6 @@ type EditToolConfig struct {
 	// re-anchored to a normalized (line-start) position. Default off = today's
 	// cascade behavior for all existing configs.
 	ExactMatchOnly bool `yaml:"exact_match_only"`
-
-	// SmartFirstLineIndent enables first-line indentation auto-correction in lines mode
-	// (the "autoindent" feature). Only active when PreviewMode is also true, since the
-	// correction is only reversible via Edit.undo_autoindent during preview. Default off.
-	SmartFirstLineIndent bool `yaml:"smart_first_line_indent"`
-	// MaxAutoindentFix is the dedent-guard threshold: the maximum under-indent deficit (in
-	// chars) that will be auto-corrected. Default 1 = fix only exact off-by-one under-indents.
-	MaxAutoindentFix int `yaml:"max_autoindent_fix"`
 
 	// ExplicitDelete enables the DeleteLines tool and flips lines-mode empty new_text
 	// semantics: with this on, an Edit replace with new_text="" blanks the addressed
@@ -929,25 +911,10 @@ type ShellToolConfig struct {
 	MaxTimeout int `yaml:"max_timeout"`
 }
 
-// PlanToolsConfig configures all plan.* tools as a group
-type PlanToolsConfig struct {
-	Enabled       bool   `yaml:"enabled"`        // group toggle for all plan.* tools
-	Mode          string `yaml:"mode"`           // "write" (default, full-list rewrite) or "incremental" (legacy 5-tool)
-	InjectionMode string `yaml:"injection_mode"` // "none" or "every_step"
-}
-
-// GetPlanMode returns the plan tool mode, defaulting to "write" (the
-// OpenCode/Codex-style full-list rewrite tool) when unset.
-func (p *PlanToolsConfig) GetPlanMode() string {
-	if p.Mode == "" {
-		return "write"
-	}
-	return p.Mode
-}
-
-// CheckpointToolsConfig configures all checkpoint.* tools as a group
+// CheckpointToolsConfig configures the shadow git repository that records the
+// workspace after every turn with tool calls (sessions/<name>/checkpoints/).
+// There are no checkpoint tools; the repository is inspected with git.
 type CheckpointToolsConfig struct {
-	Enabled          bool     `yaml:"enabled"`           // group toggle for all checkpoint.* tools
 	MaxTurns         int      `yaml:"max_turns"`         // max checkpoints before rotating (default: 100)
 	TempDir          string   `yaml:"temp_dir"`          // base directory for checkpoint storage
 	MaxFileSizeKB    int      `yaml:"max_file_size_kb"`  // skip files larger than this (default: 1024)
@@ -956,9 +923,7 @@ type CheckpointToolsConfig struct {
 
 // TasksToolsConfig configures Tasks.* tools for context compression
 type TasksToolsConfig struct {
-	Enabled  bool `yaml:"enabled"`  // Enable Tasks tools (disables Plan.* and Checkpoint.* tools)
-	Collapse bool `yaml:"collapse"` // Stage 2: Enable Tasks.Collapse (requires enabled=true)
-	Plan     bool `yaml:"plan"`     // Stage 3: Enable plan-based tools (requires enabled=true)
+	Enabled bool `yaml:"enabled"` // Enable Tasks tools
 
 	// Runtime notice thresholds
 	TaskWarnTurns       int  `yaml:"task_warn_turns"`       // Warn after N turns in task (default: 5)
@@ -990,15 +955,6 @@ func (e *EditToolConfig) GetEditMode() string {
 		return "lines"
 	}
 	return e.Mode
-}
-
-// GetMaxAutoindentFix returns the autoindent dedent-guard threshold, defaulting to 1
-// (fix only exact off-by-one under-indents) when unset or non-positive.
-func (e *EditToolConfig) GetMaxAutoindentFix() int {
-	if e.MaxAutoindentFix <= 0 {
-		return 1
-	}
-	return e.MaxAutoindentFix
 }
 
 // SafetyConfirmation tracks user confirmations for path access
@@ -1246,52 +1202,6 @@ func Load(path string) (*Config, error) {
 	// All other safety features default to false (disabled)
 
 	return &cfg, nil
-}
-
-// IsToolEnabled returns true if the tool is enabled in config
-func (c *Config) IsToolEnabled(toolName string) bool {
-	switch toolName {
-	case "read":
-		return c.Tools.Read.Enabled
-	case "edit":
-		return c.Tools.Edit.Enabled
-	case "edit.confirm", "edit.cancel":
-		return c.Tools.Edit.Enabled && c.Tools.Edit.PreviewMode
-	case "restore_file":
-		return c.Tools.RestoreFile.Enabled
-	case "search":
-		return c.Tools.Search.Enabled
-	case "shell":
-		return c.Tools.Shell.Enabled
-	case "question", "Question":
-		return c.Tools.Question.Enabled
-	case "batch", "Batch":
-		return c.Tools.Batch.Enabled
-	case "report", "Report":
-		return c.Tools.Report.Enabled
-	case "shell.start", "shell.output", "shell.status", "shell.list", "shell.kill",
-		"observe.wait", "observe.add":
-		return c.Tools.Procs.Enabled
-	case "plan.write", "Plan.write":
-		// Default full-list rewrite tool; disabled when Tasks tools are enabled
-		return c.Tools.Plan.Enabled && !c.Tools.Tasks.Enabled && c.Tools.Plan.GetPlanMode() == "write"
-	case "plan.create", "plan.add_step", "plan.complete_step", "plan.remove_step", "plan.move_step":
-		// Legacy incremental tools; disabled when Tasks tools are enabled
-		return c.Tools.Plan.Enabled && !c.Tools.Tasks.Enabled && c.Tools.Plan.GetPlanMode() == "incremental"
-	case "checkpoint.list", "checkpoint.restore", "checkpoint.diff", "checkpoint.undo":
-		// User-facing checkpoint tools are disabled when Tasks tools are enabled
-		return c.Tools.Checkpoint.Enabled && !c.Tools.Tasks.Enabled
-	// Tasks.* tools
-	case "Tasks.Start", "Tasks.Finish", "Tasks.AcceptDiff", "Tasks.DeclineDiff",
-		"Tasks.RevertFile", "Tasks.RevertToTaskStart":
-		return c.Tools.Tasks.Enabled
-	case "Tasks.Collapse":
-		return c.Tools.Tasks.Enabled && c.Tools.Tasks.Collapse
-	case "Tasks.Plan", "Tasks.Add", "Tasks.Skip", "Tasks.Complete", "Tasks.Retry", "Tasks.Replace":
-		return c.Tools.Tasks.Enabled && c.Tools.Tasks.Plan
-	default:
-		return false
-	}
 }
 
 // CheckPathSafety performs unified path safety checks for all tools

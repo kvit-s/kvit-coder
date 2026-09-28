@@ -142,15 +142,6 @@ func TestBuildCapabilitiesList(t *testing.T) {
 			want: []string{"reading files", "editing files", "searching code", "running shell commands"},
 		},
 		{
-			name: "with plan and checkpoint",
-			enabled: map[string]bool{
-				"Read":            true,
-				"Plan.create":     true,
-				"Checkpoint.list": true,
-			},
-			want: []string{"reading files", "making and tracking plans", "managing checkpoints"},
-		},
-		{
 			name: "with tasks",
 			enabled: map[string]bool{
 				"Tasks.Start": true,
@@ -206,12 +197,10 @@ func TestDetermineEnabledCategories(t *testing.T) {
 		{
 			name: "multiple categories",
 			enabled: map[string]bool{
-				"Read":            true,
-				"Shell":           true,
-				"Plan.create":     true,
-				"Checkpoint.list": true,
+				"Read":  true,
+				"Shell": true,
 			},
-			want: []string{"filesystem", "shell", "plan", "checkpoint"},
+			want: []string{"filesystem", "shell"},
 		},
 		{
 			name: "advanced shell counts",

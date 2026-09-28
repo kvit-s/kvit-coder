@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -227,36 +226,6 @@ func (r *Runner) handlePostIteration(
 		}
 
 		return true // break loop
-	}
-
-	// Plan injection
-	planInjectionMode := r.cfg.Tools.Plan.InjectionMode
-	if planInjectionMode == "every_step" && r.planManager != nil {
-		activePlan := r.planManager.GetActivePlan()
-		if activePlan != nil && activePlan.Status != "complete" {
-			anyPlanTool := false
-			for _, tc := range assistantMsg.ToolCalls {
-				if strings.HasPrefix(tc.Function.Name, "Plan.") {
-					anyPlanTool = true
-					break
-				}
-			}
-
-			if !anyPlanTool && len(state.messages) > 0 {
-				planJSON, err := json.MarshalIndent(map[string]any{
-					"task":   activePlan.TaskName,
-					"status": activePlan.Status,
-					"steps":  activePlan.Steps,
-				}, "", "  ")
-				if err == nil {
-					planContent := fmt.Sprintf("\n\n<system-reminder>\nCurrent plan status:\n```json\n%s\n```\n</system-reminder>", string(planJSON))
-					lastIdx := len(state.messages) - 1
-					if state.messages[lastIdx].Role == llm.RoleTool {
-						state.messages[lastIdx].Content += planContent
-					}
-				}
-			}
-		}
 	}
 
 	// File-first mode: persist messages

@@ -386,8 +386,6 @@ tools:
     enabled: true
     preview_mode: true
     fuzzy_threshold: 0.8
-    smart_first_line_indent: true
-    max_autoindent_fix: 3
 `
 	if err := os.WriteFile(path, []byte(body), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -409,9 +407,6 @@ tools:
 	if cfg.Tools.Edit.FuzzyThreshold != 0 || !cfg.Tools.Edit.ExactMatchOnly {
 		t.Errorf("fuzzy matching is on under the strong profile: threshold=%v exactOnly=%v",
 			cfg.Tools.Edit.FuzzyThreshold, cfg.Tools.Edit.ExactMatchOnly)
-	}
-	if cfg.Tools.Edit.SmartFirstLineIndent || cfg.Tools.Edit.MaxAutoindentFix != 0 {
-		t.Error("indentation repair is on under the strong profile")
 	}
 	if cfg.Diagnostics.InterrogateOnAnomaly {
 		t.Error("anomaly interrogation is on under the strong profile")

@@ -27,14 +27,14 @@ Each session is a directory under `~/.kvit-coder/sessions/` (`%USERPROFILE%\.kvi
 ~/.kvit-coder/sessions/my-feature/
     history.jsonl   append-only transcript, one timestamped event per line
     meta.json       when it was created and last used, workspace, model, first prompt
-    checkpoints/    the shadow git repository the checkpoint tools commit into
+    checkpoints/    the shadow git repository that records the workspace after every turn
     proc/           which process is running a turn
     inbox/          messages waiting for the running turn
     tmp/            tool output too large to fit in a message
 ```
 
-Everything that outlives a turn lives there, so a checkpoint made in one run
-can be restored in the next and a temp file the model was given the path to is
+Everything that outlives a turn lives there, so file versions recorded in one run
+are still there in the next and a temp file the model was given the path to is
 still readable later. A session left over from when a session was a single
 `<name>.jsonl` file is converted the first time it is opened; the old file is
 kept as `<name>.jsonl.migrated`.

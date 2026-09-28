@@ -38,7 +38,6 @@ type turnReporter struct {
 	workspace string
 	registry  *tools.Registry
 	toolCtx   *tools.ToolContext
-	plans     *tools.PlanManager
 	// procs is the session's background process registry.
 	procs *procs.Registry
 	// title returns the session's title, which the turn sets before the
@@ -47,7 +46,6 @@ type turnReporter struct {
 
 	calls    map[string]*reportedCall
 	current  string // the tool call running now
-	lastPlan string
 }
 
 // reportedCall is a tool call the client has been told about.
@@ -88,7 +86,6 @@ func (r *turnReporter) observe(batch []llm.Message) {
 	for _, m := range batch {
 		r.message(m, false)
 	}
-	r.sendPlan()
 	r.reportTasks()
 }
 
@@ -371,36 +368,6 @@ func sameContent(a, b *string) bool {
 		return a == nil && b == nil
 	}
 	return *a == *b
-}
-
-// sendPlan sends the plan when it has changed since it was last sent.
-func (r *turnReporter) sendPlan() {
-	if r.plans == nil {
-		return
-	}
-	entries := []map[string]any{}
-	if plan := r.plans.GetActivePlan(); plan != nil {
-		for _, step := range plan.Steps {
-			status := "pending"
-			switch step.Status {
-			case "active":
-				status = "in_progress"
-			case "complete":
-				status = "completed"
-			}
-			entries = append(entries, map[string]any{"content": step.Description, "priority": "medium", "status": status})
-		}
-	}
-	data, _ := json.Marshal(entries)
-	if r.lastPlan == "" && len(entries) == 0 {
-		r.lastPlan = string(data)
-		return
-	}
-	if string(data) == r.lastPlan {
-		return
-	}
-	r.lastPlan = string(data)
-	r.update(map[string]any{"sessionUpdate": "plan", "entries": entries})
 }
 
 func (r *turnReporter) sendTitle(title string) {

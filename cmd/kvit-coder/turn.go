@@ -82,7 +82,6 @@ type preparedTurn struct {
 	runner                *agent.Runner
 	registry              *tools.Registry
 	toolCtx               *tools.ToolContext
-	planManager           *tools.PlanManager
 	procRegistry          *procs.Registry
 	inbox                 *inbox.Inbox
 	sess                  *session.Session
@@ -460,10 +459,6 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 		writer.Debug("MCP: " + summary)
 	}
 
-	// Initialize plan manager
-	planManager := tools.NewPlanManager()
-	t.planManager = planManager
-
 	// Initialize checkpoint manager. Its shadow git repository lives in the
 	// session, so a checkpoint made in one turn is still there in the next.
 	checkpointMgr, err := checkpoint.NewManager(
@@ -603,7 +598,6 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 		ContextMgr:    contextMgr,
 		Logger:        writer, // Writer implements DebugLogger
 		TempFileMgr:   tempFileMgr,
-		PlanManager:   planManager,
 		ToolCtx:       toolCtx,
 		MCPTools:      mcpMgr.Tools(),
 		ToolGroups:    toolGroups,
@@ -642,7 +636,6 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 		CheckpointMgr:     checkpointMgr,
 		ContextMgr:        contextMgr,
 		ContextMiddleware: contextMiddleware,
-		PlanManager:       planManager,
 		ToolCtx:           toolCtx,
 		Inbox:             steering,
 		Procs:             procRegistry,

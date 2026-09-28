@@ -515,13 +515,6 @@ func (t *UnifiedEditTool) callLineMode(ctx context.Context, path string, startLi
 		newText = "\n"
 	}
 
-	// First-line indent auto-correction (opt-in, preview mode only). A no-op unless the
-	// first line of new_text is under-indented relative to the line it replaces.
-	var indentCorrection *IndentAutocorrection
-	if t.Config.Tools.Edit.SmartFirstLineIndent && t.Config.Tools.Edit.PreviewMode {
-		newText, indentCorrection = ReconcileFirstLineIndent(oldContent, startLine, endLine, newText, t.Config.Tools.Edit.GetMaxAutoindentFix())
-	}
-
 	// Apply line edit
 	newContent, editStartLine, editEndLine, err := ApplyLineEdit(oldContent, startLine, endLine, newText)
 	if err != nil {
@@ -532,7 +525,7 @@ func (t *UnifiedEditTool) callLineMode(ctx context.Context, path string, startLi
 	diff, _ := generateUnifiedDiff(oldContent, newContent, path)
 
 	// Use shared finalize logic
-	return FinalizeEditWithCorrection(&t.BaseEditTool, path, fullPath, oldContent, newContent, diff, editStartLine, editEndLine, false, indentCorrection)
+	return FinalizeEdit(&t.BaseEditTool, path, fullPath, oldContent, newContent, diff, editStartLine, editEndLine, false)
 }
 
 // HandleNoMatch returns a helpful error result when search text is not found

@@ -57,10 +57,8 @@ tools:
     pending_confirm_retries: 2  # (inert with preview_mode off)
     fuzzy_threshold: 0.0        # gates ONLY the fuzzy level; whitespace-normalization is governed by exact_match_only below
     exact_match_only: true      # byte-exact (Level 0) only: no rstrip/normalization/fuzzy. A non-exact search returns a clean no-match instead of a silently re-anchored (line-start) splice that corrupts indentation.
-    # NOTE: the flags below are lines-mode features and are INERT in searchreplace mode
-    # (autoindent needs preview_mode; the ""-blank flip lives in lines apply). Left for easy revert.
-    smart_first_line_indent: true
-    max_autoindent_fix: 1
+    # NOTE: explicit_delete below is a lines-mode feature and is INERT in searchreplace mode
+    # (the ""-blank flip lives in lines apply). Left for easy revert.
     explicit_delete: true
 
   restore_file:
@@ -78,22 +76,14 @@ tools:
     disallowed_commands: []     # blocklist (checked after allowlist)
     allow_interpreters: true    # lift the default block on interpreter one-liners (python -c, node -e, perl -e, ...). Safe here: SWE-bench runs in a Docker container and uses python -c to introspect the codebase. Still blocks sudo/su/nc/curl/rm -rf etc.
 
-  plan:
-    enabled: false              # group toggle for all plan.* tools
-    mode: "write"              # "write" (default, OpenCode/Codex-style full-list rewrite) | "incremental" (legacy 5-tool)
-    injection_mode: "every_step"      # "none" or "every_step" - inject plan state after tool calls
-
   checkpoint:
-    enabled: false              # group toggle for all checkpoint.* tools
     max_turns: 100
     temp_dir: ""
     max_file_size_kb: 1024
     excluded_patterns: []
 
   tasks:
-    enabled: false              # Enable Tasks.* tools (disables Plan.* and Checkpoint.* tools)
-    collapse: false             # Stage 2: Enable Tasks.Collapse
-    plan: false                 # Stage 3: Enable plan-based Tasks tools
+    enabled: false              # Enable Tasks.* tools
     # Runtime notice thresholds
     task_warn_turns: 5          # Warn after N turns in task
     task_critical_turns: 10     # Critical warning after N turns

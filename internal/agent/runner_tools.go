@@ -481,22 +481,13 @@ func (r *Runner) executeToolWithTimeout(
 	// ("34 lines, 5.2k chars") stays silent by design. A slow tool keeps its
 	// duration so waiting has an explanation.
 	if toolErr == nil {
-		isPlanTool := strings.HasPrefix(internalName, "Plan.")
-
 		resultJSON, _ := json.MarshalIndent(toolResult, "", "  ")
 		content = string(resultJSON)
 		// Attachments travel beside the summary, never inside it: the
 		// summary marshals metadata only (pixels are json:"-").
 		images = toolImagesFromResult(toolResult)
 
-		if isPlanTool && r.planManager != nil {
-			planText := r.planManager.FormatActivePlan()
-			if planText != "" {
-				r.writer.ActivePlan(planText)
-			}
-			r.writer.VerboseOutput(content)
-			r.logger.ToolExecuted(internalName, duration, true, nil)
-		} else {
+		{
 			var durationStr string
 			if dotCount > 0 {
 				durationStr = fmt.Sprintf("...%.0fs", duration.Seconds())

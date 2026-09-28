@@ -72,7 +72,7 @@ func (r *Registry) Get(name string) Tool {
 
 // ModelName returns the provider-facing alias for an internal tool name.
 // OpenAI-compatible function names must match ^[A-Za-z0-9_-]+$, while several
-// kvit-coder internal names use dots for grouping (Plan.write, Shell.advanced).
+// kvit-coder internal names use dots for grouping (Tasks.Start, Shell.advanced).
 func (r *Registry) ModelName(name string) string {
 	internalToModel, _ := r.toolNameAliases()
 	if modelName, ok := internalToModel[name]; ok {

@@ -1,6 +1,15 @@
 package tools
 
-import "github.com/kvit-s/kvit-coder/internal/config"
+import (
+	"encoding/json"
+
+	"github.com/kvit-s/kvit-coder/internal/config"
+)
+
+func mustJSON(v any) json.RawMessage {
+	b, _ := json.Marshal(v)
+	return b
+}
 
 // newTestConfig creates a minimal config for tool tests.
 func newTestConfig() *config.Config {

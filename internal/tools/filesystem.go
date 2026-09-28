@@ -93,10 +93,6 @@ type pendingEdit struct {
 	isNewFile     bool
 	editStartLine int // 1-based line number where edit starts in new content
 	editEndLine   int // 1-based line number where edit ends in new content
-	// autoindent is non-nil when the first line of new_text was auto-corrected
-	// (see Edit.undo_autoindent). It holds the model's original new_text and the
-	// request line range needed to recompute the edit without the correction.
-	autoindent *IndentAutocorrection
 }
 
 // pendingWrite stores a pending write operation waiting for confirmation
@@ -136,11 +132,9 @@ func CheckPendingEditBlockWithState(toolName string, state PendingEditState, cfg
 		return nil
 	}
 
-	// Allow all confirm/cancel tools (Edit.* and Write.* are synonyms), plus
-	// Edit.undo_autoindent which revises (re-stores) the pending edit in place.
+	// Allow all confirm/cancel tools (Edit.* and Write.* are synonyms).
 	if toolName == "Edit.confirm" || toolName == "Edit.cancel" ||
-		toolName == "Write.confirm" || toolName == "Write.cancel" ||
-		toolName == "Edit.undo_autoindent" {
+		toolName == "Write.confirm" || toolName == "Write.cancel" {
 		return nil
 	}
 
@@ -1527,81 +1521,6 @@ func (t *CancelEditTool) Call(ctx context.Context, args json.RawMessage) (any, e
 		"message":   "Edit cancelled. File was not modified.",
 		"next_step": fmt.Sprintf("MODIFY your edit to correct for the issues you observed, then retry. Read {\"path\": \"%s\"} if needed.", pending.path),
 	}, nil
-}
-
-// UndoAutoindentTool reverts a first-line indentation auto-correction on the current
-// pending edit, re-storing the pending edit with the model's original indentation and
-// returning a fresh diff. Zero-arg sibling of Edit.confirm / Edit.cancel; preview mode only.
-type UndoAutoindentTool struct {
-	config  *config.Config
-	toolCtx *ToolContext
-}
-
-func NewUndoAutoindentTool(cfg *config.Config, toolCtx *ToolContext) *UndoAutoindentTool {
-	return &UndoAutoindentTool{config: cfg, toolCtx: toolCtx}
-}
-
-func (t *UndoAutoindentTool) Name() string {
-	return "Edit.undo_autoindent"
-}
-
-func (t *UndoAutoindentTool) Description() string {
-	return "Revert a first-line indentation auto-correction on the current pending edit, restoring your original indentation and returning an updated diff. Only call this when an edit preview reports indent_autocorrected and the dedent was intentional."
-}
-
-func (t *UndoAutoindentTool) Check(ctx context.Context, args json.RawMessage) error {
-	return nil
-}
-
-func (t *UndoAutoindentTool) JSONSchema() map[string]any {
-	return map[string]any{
-		"type":       "object",
-		"properties": map[string]any{},
-		"required":   []string{},
-	}
-}
-
-func (t *UndoAutoindentTool) PromptCategory() string     { return "filesystem" }
-func (t *UndoAutoindentTool) PromptOrder() int           { return 23 }
-func (t *UndoAutoindentTool) PromptTemplateName() string { return "" }
-func (t *UndoAutoindentTool) PromptSection() string      { return "" } // Surfaced only in the contextual correction note
-
-func (t *UndoAutoindentTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
-	// Peek at the pending edit (do not clear - we re-store it).
-	pending := t.toolCtx.GetPendingEdit()
-	if pending == nil {
-		return map[string]any{
-			"success": false,
-			"error":   "no_pending_operation",
-			"message": "No pending edit to undo the auto-correction on. This tool is only used after an Edit preview reports indent_autocorrected.",
-		}, nil
-	}
-
-	if pending.autoindent == nil {
-		return map[string]any{
-			"success": true,
-			"path":    pending.path,
-			"message": "The pending edit was not auto-corrected, so there is nothing to undo. Call Edit.confirm to apply it or Edit.cancel to discard it.",
-		}, nil
-	}
-
-	c := pending.autoindent
-
-	// Recompute the edit from the model's original (un-corrected) new_text.
-	newContent, editStartLine, editEndLine, err := ApplyLineEdit(pending.oldContent, c.ReqStartLine, c.ReqEndLine, c.OriginalNewText)
-	if err != nil {
-		return nil, err
-	}
-
-	diff, _ := generateUnifiedDiff(pending.oldContent, newContent, pending.path)
-
-	// Re-store as the pending edit with the correction suppressed, so a later
-	// Edit.confirm applies the model's indentation verbatim (no re-correction).
-	StorePendingEdit(t.toolCtx, pending.path, pending.fullPath, pending.oldContent, newContent, diff, pending.isNewFile, editStartLine, editEndLine)
-
-	result := BuildEditPreviewResult(pending.path, diff, newContent, editStartLine, editEndLine, pending.isNewFile)
-	result["message"] = fmt.Sprintf("Reverted first-line indent auto-correction (line %d, %d→%d spaces). The diff below uses your original indentation.", c.Line, c.FromSpaces, c.ToSpaces)
-	return result, nil
 }
 
 // ConfirmWriteTool confirms and applies a pending write operation

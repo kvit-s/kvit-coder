@@ -23,7 +23,6 @@ type SetupConfig struct {
 	ContextMgr    *ctxtools.Manager
 	Logger        DebugLogger // Optional debug logger (can be nil)
 	TempFileMgr   *TempFileManager
-	PlanManager   *PlanManager
 	// ProcRegistry owns the processes that outlive a turn. Nil disables the
 	// Shell.start / Observe.* tools.
 	ProcRegistry *procs.Registry
@@ -119,14 +118,6 @@ func SetupRegistry(sc SetupConfig) *Registry {
 			registry.Enable(cancelEditTool)
 			debug(fmt.Sprintf("Enabled tool: %s", cancelEditTool.Name()))
 
-			// Edit.undo_autoindent reverts a first-line indent auto-correction.
-			// Only meaningful when smart_first_line_indent is on, but it is a safe
-			// no-op otherwise, so register it whenever preview mode is available.
-			if cfg.Tools.Edit.SmartFirstLineIndent {
-				undoAutoindentTool := NewUndoAutoindentTool(cfg, toolCtx)
-				registry.Enable(undoAutoindentTool)
-				debug(fmt.Sprintf("Enabled tool: %s", undoAutoindentTool.Name()))
-			}
 		}
 
 		// DeleteLines: explicit, first-class line removal tool (Improvement 3).
@@ -216,7 +207,7 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		debug(fmt.Sprintf("Enabled tool: %s", reportTool.Name()))
 	}
 
-	// Tasks.* tools - mutually exclusive with Plan.* and Checkpoint.* tools
+	// Tasks.* tools
 	if cfg.Tools.Tasks.Enabled && sc.ContextMgr != nil {
 		tasksStartTool := NewTasksStartTool(sc.ContextMgr)
 		registry.Enable(tasksStartTool)
@@ -238,60 +229,9 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		registry.Enable(tasksRevertFileTool)
 		debug(fmt.Sprintf("Enabled tool: %s", tasksRevertFileTool.Name()))
 
-		tasksRevertToTaskStartTool := NewTasksRevertToTaskStartTool(sc.ContextMgr)
-		registry.Enable(tasksRevertToTaskStartTool)
-		debug(fmt.Sprintf("Enabled tool: %s", tasksRevertToTaskStartTool.Name()))
 	}
 
-	// Plan tools - disabled when Tasks tools are enabled.
-	// Mode "write" (default) registers a single idempotent rewrite tool;
-	// "incremental" registers the legacy 5-tool family.
-	if cfg.Tools.Plan.Enabled && !cfg.Tools.Tasks.Enabled && sc.PlanManager != nil {
-		if cfg.Tools.Plan.GetPlanMode() == "incremental" {
-			planCreateTool := NewPlanCreateTool(sc.PlanManager)
-			registry.Enable(planCreateTool)
-			debug(fmt.Sprintf("Enabled tool: %s", planCreateTool.Name()))
 
-			planAddStepTool := NewPlanAddStepTool(sc.PlanManager)
-			registry.Enable(planAddStepTool)
-			debug(fmt.Sprintf("Enabled tool: %s", planAddStepTool.Name()))
-
-			planCompleteStepTool := NewPlanCompleteStepTool(sc.PlanManager)
-			registry.Enable(planCompleteStepTool)
-			debug(fmt.Sprintf("Enabled tool: %s", planCompleteStepTool.Name()))
-
-			planRemoveStepTool := NewPlanRemoveStepTool(sc.PlanManager)
-			registry.Enable(planRemoveStepTool)
-			debug(fmt.Sprintf("Enabled tool: %s", planRemoveStepTool.Name()))
-
-			planMoveStepTool := NewPlanMoveStepTool(sc.PlanManager)
-			registry.Enable(planMoveStepTool)
-			debug(fmt.Sprintf("Enabled tool: %s", planMoveStepTool.Name()))
-		} else {
-			planWriteTool := NewPlanWriteTool(sc.PlanManager)
-			registry.Enable(planWriteTool)
-			debug(fmt.Sprintf("Enabled tool: %s", planWriteTool.Name()))
-		}
-	}
-
-	// Checkpoint tools - disabled when Tasks tools are enabled
-	if cfg.Tools.Checkpoint.Enabled && sc.CheckpointMgr != nil && sc.CheckpointMgr.Enabled() && !cfg.Tools.Tasks.Enabled {
-		checkpointListTool := NewCheckpointListTool(sc.CheckpointMgr)
-		registry.Enable(checkpointListTool)
-		debug(fmt.Sprintf("Enabled tool: %s", checkpointListTool.Name()))
-
-		checkpointRestoreTool := NewCheckpointRestoreTool(sc.CheckpointMgr)
-		registry.Enable(checkpointRestoreTool)
-		debug(fmt.Sprintf("Enabled tool: %s", checkpointRestoreTool.Name()))
-
-		checkpointDiffTool := NewCheckpointDiffTool(sc.CheckpointMgr)
-		registry.Enable(checkpointDiffTool)
-		debug(fmt.Sprintf("Enabled tool: %s", checkpointDiffTool.Name()))
-
-		checkpointUndoTool := NewCheckpointUndoTool(sc.CheckpointMgr)
-		registry.Enable(checkpointUndoTool)
-		debug(fmt.Sprintf("Enabled tool: %s", checkpointUndoTool.Name()))
-	}
 
 	// MCP tools (from configured external servers). Registered last; they are
 	// indistinguishable from built-in tools to the registry and agent loop.

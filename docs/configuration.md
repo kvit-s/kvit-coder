@@ -207,9 +207,7 @@ Each tool group has `enabled: true/false` plus tool-specific options:
 - **`web.search.max_attempts`** — Tries before giving up on a rate-limit refusal (default 4). The provider allows one request per second shared across everything using the key, and refuses the excess rather than queueing it; a refusal costs no quota, so retrying is cheap next to handing the model a failure
 - **`web.usage_log`** — JSONL record of what was searched and when. Not a counter: the quota is account-wide and only the provider can see what other machines spent, which is why the response's `x-ratelimit-*` headers are read instead
 - **`web.fetch.max_bytes`** / **`web.fetch.timeout`** — Ceiling on HTML read, and seconds for one page (defaults 5 MB and 30)
-- **`checkpoint.max_turns`** — Max checkpoints before rotating (default: 100)
-- **`tasks.collapse`** — Enable context collapsing (stage 2)
-- **`tasks.plan`** — Enable plan-based task tools (stage 3)
+- **`checkpoint.max_turns`** — Max turns kept in the shadow git repository before rotating (default: 100)
 
 ### Web search and page fetch
 
