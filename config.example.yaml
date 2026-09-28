@@ -57,3 +57,16 @@ tools:
   #    enabled: true
   #  fetch:
   #    enabled: true
+
+# GitHub Copilot, on a machine where Copilot CLI is already signed in.
+# `kvit-coder copilot models` prints the model ids that account can call.
+# Leave api_backend empty so the account's model list picks the protocol.
+# base_url forces an origin (no /v1 suffix) when the token exchange returns
+# one the network blocks. copilot_host is a GitHub Enterprise hostname.
+#models:
+#  - id: copilot-sonnet
+#    name: "Claude Sonnet (Copilot)"
+#    provider: github-copilot
+#    model: "claude-sonnet-4.6"
+#    # copilot_host: "company.ghe.com"
+#    # base_url: "https://api.business.githubcopilot.com"

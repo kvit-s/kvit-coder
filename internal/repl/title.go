@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/config"
+	"github.com/kvit-s/kvit-coder/internal/copilot"
 	"github.com/kvit-s/kvit-coder/internal/llm"
 	"github.com/kvit-s/kvit-coder/internal/session"
 	"github.com/kvit-s/kvit-coder/internal/ui"
@@ -97,13 +98,17 @@ func generateTitle(ctx context.Context, cfg *config.Config, prompt string, write
 // summarizerTitle runs one tool-free chat completion against the summarizer
 // entry and returns the raw answer text.
 func summarizerTitle(ctx context.Context, cfg *config.Config, entry config.ModelEntry, prompt string) (string, error) {
-	client := summarizerClientFor(cfg, entry)
 	callCtx, cancel := context.WithTimeout(ctx, titleTimeout)
+	client, err := summarizerClientFor(callCtx, cfg, entry)
+	if err != nil {
+		cancel()
+		return "", err
+	}
 	defer cancel()
 	if truncated := truncatePrompt(prompt); truncated != prompt {
 		prompt = truncated
 	}
-	resp, err := client.Chat(callCtx, llm.ChatRequest{
+	req := llm.ChatRequest{
 		Model: entry.Model,
 		Messages: []llm.Message{
 			{Role: llm.RoleSystem, Content: "You generate short session titles."},
@@ -113,10 +118,15 @@ func summarizerTitle(ctx context.Context, cfg *config.Config, entry config.Model
 		Temperature: 0,
 		MaxTokens:   titleMaxTokens,
 		Stream:      false,
-		// Answer directly: reasoning would only slow a 3-word answer.
-		// Ignored by servers/templates without the key (cf. interrogate).
-		ChatTemplateKwargs: map[string]any{"enable_thinking": false},
-	})
+	}
+	// Answer directly: reasoning would only slow a 3-word answer.
+	// Ignored by servers/templates without the key (cf. interrogate).
+	// Copilot's Claude endpoint rejects fields it does not define, so the
+	// chat-template knob stays off that provider.
+	if entry.Provider != copilot.Provider {
+		req.ChatTemplateKwargs = map[string]any{"enable_thinking": false}
+	}
+	resp, err := client.Chat(callCtx, req)
 	if err != nil {
 		return "", err
 	}
@@ -137,7 +147,7 @@ func summarizerTitle(ctx context.Context, cfg *config.Config, entry config.Model
 // Endpoint fields come from the entry, falling back to the `llm:` block when
 // the entry leaves them empty; anything else (headers, timeouts) always
 // comes from `llm:`, exactly as ApplyModel leaves non-endpoint settings.
-func summarizerClientFor(cfg *config.Config, entry config.ModelEntry) *llm.Client {
+func summarizerClientFor(ctx context.Context, cfg *config.Config, entry config.ModelEntry) (*llm.Client, error) {
 	baseURL := entry.BaseURL
 	if baseURL == "" {
 		baseURL = cfg.LLM.BaseURL
@@ -154,13 +164,33 @@ func summarizerClientFor(cfg *config.Config, entry config.ModelEntry) *llm.Clien
 	if effortField == "" {
 		effortField = cfg.LLM.EffortField
 	}
+	effort := summarizerEffort(cfg, entry)
+	var auth llm.RequestAuthorizer
+	if entry.Provider == copilot.Provider {
+		// The title is not the turn's model. Its host and token come from
+		// this entry, and it does not think: a 3-word title on Claude would
+		// otherwise turn on adaptive thinking.
+		res, err := cfg.PrepareCopilotEntry(ctx, entry, true)
+		if err != nil {
+			return nil, err
+		}
+		baseURL = res.BaseURL
+		apiKey = res.APIKey
+		if res.Backend != "" {
+			backend = res.Backend
+		}
+		effort = ""
+		effortField = llm.EffortFieldReasoningEffort
+		auth = res.Auth
+	}
 	return llm.NewClient(
 		baseURL,
 		apiKey,
 		llm.WithBackend(backend),
 		llm.WithHeaders(cfg.LLMHeaders()),
-		llm.WithReasoningEffort(summarizerEffort(cfg, entry)),
+		llm.WithReasoningEffort(effort),
 		llm.WithEffortField(effortField),
+		llm.WithRequestAuthorizer(auth),
 		llm.WithTimeout(titleTimeout),
 		// One attempt. The default ladder retries a 5xx ten times, waiting
 		// 1s, 2s, 4s, 8s, 16s and so on in between, which is how a local
@@ -169,7 +199,7 @@ func summarizerClientFor(cfg *config.Config, entry config.ModelEntry) *llm.Clien
 		// full titleTimeout with nothing on screen. The title is worth one
 		// try; the fallback is the prompt's own first words.
 		llm.WithMaxRetries(0),
-	)
+	), nil
 }
 
 // summarizerEffort picks the cheapest thinking the entry offers for a

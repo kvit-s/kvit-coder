@@ -14,7 +14,9 @@ starting point.
 | `base_url` | OpenAI-compatible API endpoint |
 | `api_key` / `api_key_env` | API key or env var name |
 | `model` | Model name |
-| `api_backend` | Wire protocol: `chat_completions` (default) or `responses` |
+| `api_backend` | Wire protocol: `chat_completions` (default), `responses`, or `messages` (Claude through GitHub Copilot) |
+| `provider` | `github-copilot` to call the model through a GitHub Copilot subscription. Empty is an ordinary API key |
+| `copilot_host` | GitHub Enterprise hostname (`company.ghe.com`) when the subscription is not on github.com |
 | `headers` | Extra `Key=Value` request headers (`${VAR}` expanded; `${KVIT_RUN_ID}` = per-conversation ID) |
 | `reasoning_effort` | Thinking budget for a reasoning model (`minimal`, `low`, `medium`, `high`, `xhigh`) |
 | `effort_field` | Which field of a `chat_completions` request the effort travels in: `chat_template_kwargs` (default) or `reasoning_effort`. See below |
@@ -59,6 +61,66 @@ same prompt cache. `${KVIT_RUN_ID}` in a header expands to an ID derived from
 the session name, which keeps concurrent conversations apart while sending
 every turn of one conversation to the backend that already holds its prompt
 cache. Setting `KVIT_RUN_ID` in the environment pins a value instead.
+
+### GitHub Copilot
+
+A model with `provider: github-copilot` calls that model through the GitHub
+Copilot subscription already signed in on the machine, the same subscription
+Copilot CLI uses. No Anthropic, OpenAI, or Gemini key is involved. Usage is
+billed to the Copilot account.
+
+The model id is Copilot's own id, such as `claude-sonnet-4.6` or `gpt-5.4`.
+`kvit-coder copilot models` prints the ids the signed-in account can call,
+the context size, and which wire protocol each one speaks. The same keys work
+on an `llm:` block and on a `models:` entry.
+
+```yaml
+models:
+  - id: copilot-sonnet
+    name: "Claude Sonnet (Copilot)"
+    provider: github-copilot
+    model: "claude-sonnet-4.6"
+    # Leave api_backend empty. The account's model list says whether this
+    # model speaks chat completions, the Responses API, or Claude's messages
+    # API. Set it only to force one of those three.
+    context: 200000
+    efforts:
+      - value: low
+      - value: medium
+      - value: high
+        default: true
+```
+
+Before the first request, kvit-coder exchanges the GitHub token for a
+short-lived Copilot session and reads the API host that exchange returns. A
+personal subscription uses `https://api.githubcopilot.com`. Copilot Business
+uses `https://api.business.githubcopilot.com`, and Copilot Enterprise uses
+`https://api.enterprise.githubcopilot.com`. Sending the GitHub token to the
+personal host is what produces "the model is not supported" for a business
+seat whose model list otherwise looks fine. `base_url` on the entry forces a
+host when the network blocks the one the exchange returned. The value is the
+origin only, with no `/v1` suffix.
+
+`copilot_host` is the GitHub Enterprise hostname (`company.ghe.com`) for
+GitHub Enterprise Cloud with data residency. Leave it empty for github.com.
+
+The GitHub token is read in the same order Copilot CLI uses:
+`COPILOT_GITHUB_TOKEN`, then `GH_TOKEN`, then `GITHUB_TOKEN`, then
+`~/.copilot/config.json`, then the `copilot-cli` keychain entry, then
+`gh auth token`. An entry's `api_key` or `api_key_env`, when set, is that
+GitHub token and is used instead of the search. Accepted tokens start with
+`gho_`, `ghu_`, or `github_pat_`. A fine-grained personal access token needs
+the Copilot Requests account permission. Classic `ghp_` tokens are not
+accepted. kvit-coder does not start a GitHub login of its own. On a machine
+where Copilot CLI is not signed in, set one of those variables or run
+`copilot login`.
+
+Effort on a Copilot chat model is sent as `reasoning_effort`. On Claude, a
+selected effort turns on adaptive thinking. A Copilot entry that does not set
+`effort_field` uses `reasoning_effort` even when the `llm:` block names a
+different field for another endpoint. Claude's API also requires an output
+cap: with `max_output_tokens` unset, the cap from the model list is used, and
+16384 when the list does not give one.
 
 ## `workspace`
 

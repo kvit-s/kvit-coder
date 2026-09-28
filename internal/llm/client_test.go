@@ -4,10 +4,55 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
+
+type flipAuth struct {
+	invalidated int
+}
+
+func (f *flipAuth) Authorize(_ context.Context, req *http.Request, _ []byte) error {
+	if f.invalidated == 0 {
+		req.Header.Set("Authorization", "Bearer stale")
+	} else {
+		req.Header.Set("Authorization", "Bearer fresh")
+	}
+	return nil
+}
+
+func (f *flipAuth) Invalidate() { f.invalidated++ }
+
+func TestAuthorizerRefreshesOnceOn401(t *testing.T) {
+	var saw []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		saw = append(saw, r.Header.Get("Authorization"))
+		if r.Header.Get("Authorization") == "Bearer stale" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = io.WriteString(w, `{"error":"expired"}`)
+			return
+		}
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`)
+	}))
+	defer server.Close()
+	auth := &flipAuth{}
+	client := NewClient(server.URL, "ignored", WithRequestAuthorizer(auth), WithMaxRetries(0))
+	resp, err := client.Chat(context.Background(), ChatRequest{
+		Model:    "m",
+		Messages: []Message{{Role: RoleUser, Content: "hi"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.Choices[0].Message.Content != "ok" {
+		t.Fatalf("content = %q", resp.Choices[0].Message.Content)
+	}
+	if auth.invalidated != 1 || len(saw) != 2 || saw[0] != "Bearer stale" || saw[1] != "Bearer fresh" {
+		t.Fatalf("invalidated %d saw %v", auth.invalidated, saw)
+	}
+}
 
 func TestNewClient(t *testing.T) {
 	client := NewClient("http://localhost:8080/v1", "test-key")

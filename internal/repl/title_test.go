@@ -188,7 +188,10 @@ func TestSummarizerClientFallsBack(t *testing.T) {
 	cfg.LLM.APIKey = "main-key"
 	cfg.LLM.APIBackend = "chat_completions"
 	entry := config.ModelEntry{ID: "s", Model: "s-wire", Summarizer: true}
-	c := summarizerClientFor(cfg, entry)
+	c, err := summarizerClientFor(context.Background(), cfg, entry)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if c == nil {
 		t.Fatal("nil client")
 	}

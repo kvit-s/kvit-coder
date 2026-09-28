@@ -28,6 +28,17 @@ are for; this file is the reference.
 | `--session-delete <name>` | Delete a session | - |
 | `--version` | Show version info | - |
 
+### kvit-coder copilot models
+
+`kvit-coder copilot models [-config path] [-host hostname]` prints the models
+the signed-in GitHub Copilot account can call, and the API host the token
+exchange selected (personal, business, or enterprise). Each line is the model
+id, the wire protocol, the context window, and the effort levels when the
+model publishes any. Models the account's policy has turned off are left out.
+`-host` is a GitHub Enterprise hostname such as `company.ghe.com`. The command
+reads the same sign-in Copilot CLI uses; see [GitHub Copilot](configuration.md#github-copilot)
+for the token order and the `provider: github-copilot` model entry.
+
 ### kvit-coder acp
 
 `kvit-coder acp [-config <path>] [-log <path>]` runs the agent for an editor or

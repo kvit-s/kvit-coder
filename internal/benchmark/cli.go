@@ -335,13 +335,18 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 	}
 	defer csvWriter.Close()
 
-	// Create LLM client
+	// Create LLM client. A Copilot model exchanges its token first; the
+	// benchmark has no separate sign-in of its own.
+	if err := cfg.PrepareActiveEndpoint(context.Background()); err != nil {
+		return err
+	}
 	llmClient := llm.NewClient(cfg.LLM.BaseURL, cfg.LLM.APIKey,
 		llm.WithAPIKeyEnv(cfg.LLM.APIKeyEnv),
 		llm.WithBackend(cfg.LLM.APIBackend),
 		llm.WithHeaders(cfg.LLMHeaders()),
 		llm.WithReasoningEffort(cfg.LLM.ReasoningEffort),
-		llm.WithEffortField(cfg.LLM.EffortField))
+		llm.WithEffortField(cfg.LLM.EffortField),
+		llm.WithRequestAuthorizer(cfg.Authorizer()))
 
 	// Simple system prompt - no agent behavior, just Q&A
 	systemPrompt := "You are a helpful assistant. Answer questions about the provided source code concisely and accurately."

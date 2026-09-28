@@ -110,8 +110,8 @@ func resolveModelSelection(cfg *config.Config, modelRef string, effort *stringFl
 	}
 	if apiBackend != "" {
 		if !config.ValidBackend(apiBackend) {
-			log.Fatalf("Failed to select backend: unknown api_backend %q; use \"chat_completions\" or \"responses\"", apiBackend)
+			log.Fatalf("Failed to select backend: unknown api_backend %q; use \"chat_completions\", \"responses\" or \"messages\"", apiBackend)
 		}
-		cfg.LLM.APIBackend = apiBackend
+		cfg.UseAPIBackend(apiBackend)
 	}
 }

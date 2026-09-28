@@ -74,6 +74,10 @@ type Client struct {
 	// request that times out and retries silently can hold a turn for the
 	// timeout times the retry count.
 	onRetry func(attempt, maxAttempts int, delay time.Duration, reason error)
+	// auth, when set, refreshes a short-lived credential and rewrites
+	// request headers before each attempt. GitHub Copilot's session token
+	// expires within the hour, and a tool loop can outlast it.
+	auth RequestAuthorizer
 	// maxRetries is how many further attempts a failed request gets. See
 	// WithMaxRetries.
 	maxRetries int
@@ -113,12 +117,29 @@ func WithAPIKeyEnv(name string) Option {
 	}
 }
 
+// RequestAuthorizer adjusts a request immediately before it is sent. Copilot
+// uses it to refresh a session token, point the request at the account's API
+// host, and set the headers that endpoint requires. Authorize returning an
+// error fails the request without the retry ladder. Invalidate drops a
+// cached credential so the next Authorize fetches a new one; postJSON calls
+// it once after a 401.
+type RequestAuthorizer interface {
+	Authorize(ctx context.Context, req *http.Request, body []byte) error
+	Invalidate()
+}
+
+// WithRequestAuthorizer installs an authorizer. Nil leaves requests unchanged.
+func WithRequestAuthorizer(auth RequestAuthorizer) Option {
+	return func(c *Client) { c.auth = auth }
+}
+
 // WithBackend selects the wire protocol. An empty or unknown value leaves the
 // client on chat completions.
 func WithBackend(backend string) Option {
 	return func(c *Client) {
-		if backend == BackendResponses {
-			c.backend = BackendResponses
+		switch backend {
+		case BackendResponses, BackendMessages:
+			c.backend = backend
 		}
 	}
 }
@@ -239,8 +260,11 @@ func isPermanent500Error(respBody []byte) bool {
 // OpenAI chat completions by default, or the Responses API when the endpoint
 // only serves the model there.
 func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
-	if c.backend == BackendResponses {
+	switch c.backend {
+	case BackendResponses:
 		return c.chatViaResponses(ctx, req)
+	case BackendMessages:
+		return c.chatViaMessages(ctx, req)
 	}
 
 	// A selected effort rides in whichever field this endpoint reads. The
@@ -317,6 +341,7 @@ func (c *Client) postJSON(ctx context.Context, path string, body []byte) ([]byte
 	var lastErr error
 	var lastStatusCode int
 	var lastRespBody []byte
+	authRetries := 0
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
 		// Check context before attempting
@@ -363,6 +388,21 @@ func (c *Client) postJSON(ctx context.Context, path string, body []byte) ([]byte
 		for k, v := range c.headers {
 			httpReq.Header.Set(k, v)
 		}
+		if c.backend == BackendMessages {
+			// Claude's API rejects a request without a version, and Copilot's
+			// Claude shim is that API. The beta is what lets a thinking block
+			// be replayed on the next call of a tool loop; it is only sent
+			// when this client asked for thinking.
+			httpReq.Header.Set("anthropic-version", "2023-06-01")
+			if c.reasoningEffort != "" && !strings.EqualFold(c.reasoningEffort, "none") {
+				httpReq.Header.Set("anthropic-beta", "interleaved-thinking-2025-05-14")
+			}
+		}
+		if c.auth != nil {
+			if err := c.auth.Authorize(ctx, httpReq, body); err != nil {
+				return nil, false, err
+			}
+		}
 
 		// Execute request
 		resp, err := c.client.Do(httpReq)
@@ -403,6 +443,16 @@ func (c *Client) postJSON(ctx context.Context, path string, body []byte) ([]byte
 		// Check status code - retry on retryable errors
 		if resp.StatusCode != http.StatusOK {
 			lastErr = c.statusError(resp.StatusCode, respBody)
+			// A 401 with an authorizer is a session token that expired between
+			// the exchange and this call. Refresh once and send again, without
+			// spending a retry or waiting out the backoff: the new token is
+			// ready immediately, and a second 401 is the account being refused.
+			if resp.StatusCode == http.StatusUnauthorized && c.auth != nil && authRetries < 1 {
+				authRetries++
+				c.auth.Invalidate()
+				attempt--
+				continue
+			}
 			// Don't retry on permanent 500 errors (validation, template errors)
 			if resp.StatusCode == 500 && isPermanent500Error(respBody) {
 				return nil, false, lastErr
@@ -432,6 +482,9 @@ func (c *Client) statusError(status int, body []byte) error {
 	err := fmt.Errorf("API error %d: %s", status, body)
 	if status != http.StatusUnauthorized && status != http.StatusForbidden {
 		return err
+	}
+	if c.auth != nil {
+		return fmt.Errorf("%w (GitHub Copilot refused the request. The account needs a Copilot seat, and a business or enterprise network has to allow the API host the token exchange returned)", err)
 	}
 	switch {
 	case c.apiKey == "" && c.apiKeyEnv != "":
@@ -463,6 +516,11 @@ func (c *Client) GetGenerationStats(ctx context.Context, generationID string) (*
 	}
 	for k, v := range c.headers {
 		httpReq.Header.Set(k, v)
+	}
+	if c.auth != nil {
+		if err := c.auth.Authorize(ctx, httpReq, nil); err != nil {
+			return nil, err
+		}
 	}
 
 	// Execute request

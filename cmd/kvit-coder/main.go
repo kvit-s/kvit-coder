@@ -31,6 +31,26 @@ var (
 	buildDate  = "unknown"
 )
 
+// printUsage is the text for `kvit-coder help`, `-h`, and a run that was
+// given no prompt. The Copilot model list is a subcommand, so it never
+// appears among the flags flag.PrintDefaults walks.
+func printUsage() {
+	fmt.Fprintln(os.Stderr, `Usage: kvit-coder -p "prompt" [options]`)
+	fmt.Fprintln(os.Stderr, "       kvit-coder --benchmark [options]")
+	fmt.Fprintln(os.Stderr, "       kvit-coder acp [options]")
+	fmt.Fprintln(os.Stderr, "       kvit-coder copilot models [-host hostname]")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "kvit-coder copilot models lists the models the signed-in GitHub Copilot account can call.")
+	fmt.Fprintln(os.Stderr, "Each line gives the model id, the wire protocol, the context window, and the effort levels")
+	fmt.Fprintln(os.Stderr, "when the model publishes any. Models this account cannot call are left out.")
+	fmt.Fprintln(os.Stderr, "-host is a GitHub Enterprise hostname such as company.ghe.com.")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "kvit-coder is a headless agent. Use kvit-coder-ui for interactive mode.")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "Options:")
+	flag.PrintDefaults()
+}
+
 func main() {
 	// Subcommands are intercepted before flag.Parse, which has no notion of them.
 	if len(os.Args) > 1 && os.Args[1] == "steer" {
@@ -38,6 +58,9 @@ func main() {
 	}
 	if len(os.Args) > 1 && os.Args[1] == "acp" {
 		os.Exit(runACP(os.Args[2:]))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "copilot" {
+		os.Exit(runCopilot(os.Args[2:]))
 	}
 
 	// Parse flags
@@ -91,6 +114,11 @@ func main() {
 	var imagePaths imagePathList
 	flag.Var(&imagePaths, "image", "attach an image file to the prompt so the model can see it (repeatable)")
 
+	flag.Usage = printUsage
+	if len(os.Args) > 1 && os.Args[1] == "help" {
+		printUsage()
+		os.Exit(0)
+	}
 	flag.Parse()
 
 	launchDir, err := os.Getwd()
@@ -264,14 +292,7 @@ func main() {
 	// Require -p or a benchmark mode before anything is created on disk.
 	// kvit-coder is headless; kvit-coder-ui is the interactive front end.
 	if !execMode && !benchmarkEnabled && !thinkbenchEnabled && *benchHaystack == "" {
-		fmt.Fprintln(os.Stderr, "Usage: kvit-coder -p \"prompt\" [options]")
-		fmt.Fprintln(os.Stderr, "       kvit-coder --benchmark [options]")
-		fmt.Fprintln(os.Stderr, "       kvit-coder acp [options]")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "kvit-coder is a headless agent. Use kvit-coder-ui for interactive mode.")
-		fmt.Fprintln(os.Stderr, "")
-		fmt.Fprintln(os.Stderr, "Options:")
-		flag.PrintDefaults()
+		printUsage()
 		os.Exit(1)
 	}
 

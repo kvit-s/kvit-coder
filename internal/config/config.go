@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/kvit-s/kvit-coder/internal/copilot"
 	"github.com/kvit-s/kvit-coder/internal/llm"
 	"gopkg.in/yaml.v3"
 )
@@ -21,7 +22,14 @@ type Config struct {
 		BaseURL   string `yaml:"base_url"`
 		APIKey    string `yaml:"api_key"`
 		APIKeyEnv string `yaml:"api_key_env"`
-		Model     string `yaml:"model"`
+		// Provider selects a credential flow other than a static API key.
+		// "github-copilot" uses the GitHub Copilot subscription signed in on
+		// this machine. Empty is an OpenAI-compatible endpoint with api_key.
+		Provider string `yaml:"provider"`
+		// CopilotHost is the GitHub Enterprise hostname (company.ghe.com)
+		// for a Copilot subscription that is not on github.com.
+		CopilotHost string `yaml:"copilot_host"`
+		Model       string `yaml:"model"`
 		// APIBackend picks the wire protocol: "chat_completions" (default) or
 		// "responses". Some hosted models are served only on /responses and
 		// return an error on /chat/completions.
@@ -132,6 +140,22 @@ type Config struct {
 	// no effort_field would inherit the default entry's, and its effort
 	// would be sent in a field its endpoint does not read.
 	fileEffortField string
+
+	// fileBaseURL and fileCopilotHost are the llm: block's own values.
+	// ApplyModel clears the base URL for a Copilot entry that does not name
+	// one (the token exchange fills it in), and restores this when the next
+	// entry is an ordinary endpoint that also does not name one.
+	fileBaseURL     string
+	fileCopilotHost string
+
+	// copilotBackendPinned is set when the selected entry, or --api-backend,
+	// named a wire protocol. An unpinned Copilot model takes the protocol
+	// from the account's model list.
+	copilotBackendPinned bool
+
+	// copilotAuth refreshes the Copilot session token on each request. Nil
+	// unless PrepareActiveEndpoint ran for a github-copilot model.
+	copilotAuth llm.RequestAuthorizer
 
 	// profileRaw snapshots the file's weak-model machinery settings before
 	// any profile is applied, so switching profiles (at load for the
@@ -1148,6 +1172,16 @@ func Load(path string) (*Config, error) {
 	// first, so switching back to a weak entry restores them.
 	cfg.defaultProfile = strings.ToLower(strings.TrimSpace(cfg.Agent.Profile))
 	cfg.fileEffortField = cfg.LLM.EffortField
+	if cfg.LLM.Provider != "" && cfg.LLM.Provider != copilot.Provider {
+		return nil, fmt.Errorf("%s: unknown llm.provider %q; the only value is %q", path, cfg.LLM.Provider, copilot.Provider)
+	}
+	host, err := copilot.NormalizeHost(cfg.LLM.CopilotHost)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	cfg.LLM.CopilotHost = host
+	cfg.fileBaseURL = cfg.LLM.BaseURL
+	cfg.fileCopilotHost = cfg.LLM.CopilotHost
 	cfg.snapshotProfileRaw()
 	initialProfile := cfg.defaultProfile
 	if len(cfg.Models) > 0 {
