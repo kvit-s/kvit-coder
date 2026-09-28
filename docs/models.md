@@ -36,6 +36,14 @@ List what that seat can call:
 kvit-coder copilot models
 ```
 
+If it reports missing credentials on Windows even though `copilot` is on
+`PATH`, run the diagnostic (it walks every credential source in order and
+never prints a whole secret):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/copilot-doctor.ps1
+```
+
 To write that list into `config.yaml` instead of copying it by hand:
 
 ```bash
