@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -98,10 +97,17 @@ type UI struct {
 // New creates a new UI instance
 func New(opts Options) *UI {
 	homeDir, _ := os.UserHomeDir()
-	historyFile := filepath.Join(homeDir, ".kvit-coder-history")
+	workspaceDir := ""
+	if opts.Config != nil && opts.Config.Workspace.Root != "" {
+		workspaceDir = opts.Config.Workspace.Root
+	} else if cwd, err := os.Getwd(); err == nil {
+		workspaceDir = cwd
+	}
 
-	// Load history
-	history, _ := ui.LoadHistory(historyFile)
+	// Input history is per workspace directory, so arrow-up in one project
+	// never surfaces prompts typed in another. A new directory seeds from
+	// the legacy global file once, then diverges on its own.
+	history, historyFile := ui.LoadWorkspaceHistory(homeDir, workspaceDir)
 
 	u := &UI{
 		version:        opts.Version,

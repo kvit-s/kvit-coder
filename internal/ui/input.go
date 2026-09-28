@@ -1,7 +1,10 @@
 package ui
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"path/filepath"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
@@ -1117,8 +1120,8 @@ func (m InputModel) Cancelled() bool {
 }
 
 // LoadHistory loads history from a file
-func LoadHistory(filepath string) ([]string, error) {
-	data, err := os.ReadFile(filepath)
+func LoadHistory(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []string{}, nil
@@ -1139,13 +1142,66 @@ func LoadHistory(filepath string) ([]string, error) {
 }
 
 // SaveHistory saves history to a file
-func SaveHistory(filepath string, history []string) error {
+func SaveHistory(path string, history []string) error {
 	// Limit history size to last 1000 entries
 	const maxHistory = 1000
 	if len(history) > maxHistory {
 		history = history[len(history)-maxHistory:]
 	}
 
+	if dir := filepath.Dir(path); dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return err
+		}
+	}
+
 	// Use null byte as delimiter to preserve multi-line entries
-	return os.WriteFile(filepath, []byte(strings.Join(history, "\x00")), 0644)
+	return os.WriteFile(path, []byte(strings.Join(history, "\x00")), 0644)
+}
+
+// LegacyHistoryPath is the pre-per-directory input history file: a single
+// global file in the user's home. It is kept as the seed for per-directory
+// histories, not as the live path.
+func LegacyHistoryPath(home string) string {
+	return filepath.Join(home, ".kvit-coder-history")
+}
+
+// HistoryPathForWorkspace returns the input history file for one workspace
+// directory. The path is under ~/.kvit-coder/history/ keyed by the sha256 of
+// the absolute workspace path (same scheme as permission stores), so every
+// directory gets its own arrow-up history and listing the directory shows
+// every stored workspace. An empty workspaceDir resolves against the current
+// working directory; when that also fails the legacy global path is returned
+// so the caller still has somewhere to read and write.
+func HistoryPathForWorkspace(home, workspaceDir string) string {
+	abs := workspaceDir
+	if abs == "" {
+		var err error
+		abs, err = os.Getwd()
+		if err != nil {
+			return LegacyHistoryPath(home)
+		}
+	} else if absResolved, err := filepath.Abs(abs); err == nil {
+		abs = absResolved
+	}
+	sum := sha256.Sum256([]byte(abs))
+	return filepath.Join(home, ".kvit-coder", "history", hex.EncodeToString(sum[:6])+".history")
+}
+
+// LoadWorkspaceHistory loads the history for one workspace directory. When
+// the per-directory file does not exist yet but the legacy global file does,
+// the global entries seed the workspace so a first run in a new directory
+// starts from the familiar history and then diverges on its own.
+func LoadWorkspaceHistory(home, workspaceDir string) ([]string, string) {
+	path := HistoryPathForWorkspace(home, workspaceDir)
+	history, _ := LoadHistory(path)
+	if len(history) > 0 {
+		return history, path
+	}
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if legacy, _ := LoadHistory(LegacyHistoryPath(home)); len(legacy) > 0 {
+			return legacy, path
+		}
+	}
+	return history, path
 }
