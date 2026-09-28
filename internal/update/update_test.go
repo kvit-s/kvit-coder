@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -298,7 +299,7 @@ func TestExtractBinaries(t *testing.T) {
 }
 
 func TestReplaceUnix(t *testing.T) {
-	if os.Getenv("GOOS") == "windows" {
+	if runtime.GOOS == "windows" {
 		t.Skip("unix replace semantics")
 	}
 	dir := t.TempDir()
@@ -382,7 +383,7 @@ func TestFetchRelease(t *testing.T) {
 // TestInstallPair replaces both binaries in a fake install dir, the way
 // :update does after extracting a release.
 func TestInstallPair(t *testing.T) {
-	if os.Getenv("GOOS") == "windows" {
+	if runtime.GOOS == "windows" {
 		t.Skip("unix install path")
 	}
 	binDir := t.TempDir()
