@@ -172,3 +172,21 @@ func findRemote(models []remoteModel, id string) (remoteModel, bool) {
 	}
 	return remoteModel{}, false
 }
+
+// IsEmbeddingModel reports whether a catalog model is an embedding model.
+// Those have no chat endpoint, so they are useless as agent models. GitHub
+// serves them as text-embedding-*, with context 0 and no chat protocol.
+func IsEmbeddingModel(m ListedModel) bool {
+	if strings.Contains(strings.ToLower(m.ID), "embed") {
+		return true
+	}
+	if strings.Contains(strings.ToLower(m.Name), "embed") {
+		return true
+	}
+	for _, e := range m.Endpoints {
+		if strings.Contains(strings.ToLower(e), "embed") {
+			return true
+		}
+	}
+	return false
+}
