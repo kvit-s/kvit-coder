@@ -85,6 +85,10 @@ func IsDevVersion(v string) bool {
 // is newer. Tags carry a leading v; normalization strips it, compares three
 // numeric parts, and orders a bare release above its prereleases. Anything
 // unparsable compares as zeros, so "dev" is older than any release.
+//
+// A git-describe suffix (v0.4.0-1-gSHA, what git describe prints for commits
+// past a tag) is newer than the tag itself, not a prerelease: it names real
+// commits on top. Two such suffixes order by commit count.
 func Compare(a, b string) int {
 	ca, pa := splitVersion(a)
 	cb, pb := splitVersion(b)
@@ -96,7 +100,25 @@ func Compare(a, b string) int {
 			return 1
 		}
 	}
+	an, aDesc := describeCommits(pa)
+	bn, bDesc := describeCommits(pb)
 	switch {
+	case aDesc && bDesc:
+		switch {
+		case an != bn:
+			if an < bn {
+				return -1
+			}
+			return 1
+		default:
+			return strings.Compare(pa, pb)
+		}
+	case aDesc:
+		// Commits past the tag are newer than the tag and anything that
+		// sorts below it (prereleases, a dirty tree on the tag).
+		return 1
+	case bDesc:
+		return -1
 	case pa == pb:
 		return 0
 	case pa == "":
@@ -134,6 +156,31 @@ func splitVersion(s string) ([3]int, string) {
 		out[i] = n
 	}
 	return out, pre
+}
+
+// describeCommits reports whether a version suffix is a git-describe
+// commits-past-the-tag marker (N-gSHA, with an optional -dirty tail from a
+// dirty tree) and how many commits past it names.
+func describeCommits(pre string) (int, bool) {
+	rest := strings.TrimSuffix(pre, "-dirty")
+	idx := strings.Index(rest, "-g")
+	if idx <= 0 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest[:idx])
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	sha := rest[idx+2:]
+	if sha == "" {
+		return 0, false
+	}
+	for _, c := range sha {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return 0, false
+		}
+	}
+	return n, true
 }
 
 // NormalizeTag accepts what a person types for :update ("0.5.0" or "v0.5.0")

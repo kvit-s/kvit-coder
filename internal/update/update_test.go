@@ -34,6 +34,12 @@ func TestCompare(t *testing.T) {
 		{"v0.4.0", "v0.4.0-rc1", 1},
 		{"dev", "v0.1.0", -1}, // a dev build is older than any release
 		{"dev", "dev", 0},
+		// Commits past a tag are newer than the tag, not prereleases.
+		{"v0.4.0-1-gc031548", "v0.4.0", 1},
+		{"v0.4.0", "v0.4.0-1-gc031548", -1},
+		{"v0.4.0-1-gc031548", "v0.4.0-2-gdeadbe", -1},
+		{"v0.4.0-1-gc031548", "v0.4.0-rc1", 1},
+		{"v0.4.0-1-gc031548-dirty", "v0.4.0", 1},
 	}
 	for _, c := range cases {
 		if got := Compare(c.a, c.b); got != c.want {

@@ -166,6 +166,8 @@ func (u *UI) showVersion() {
 	switch st := update.LoadState(); {
 	case st != nil && st.LatestTag != "" && update.NewerThan(u.bannerVersion(), st.LatestTag):
 		fmt.Printf("latest release: %s — update available, :update to install\n", st.LatestTag)
+	case st != nil && st.LatestTag != "" && update.Compare(u.bannerVersion(), st.LatestTag) > 0:
+		fmt.Printf("latest release: %s (this build is ahead of it)\n", st.LatestTag)
 	case st != nil && st.LatestTag != "":
 		fmt.Printf("latest release: %s (up to date)\n", st.LatestTag)
 	default:
@@ -230,7 +232,11 @@ func (u *UI) handleUpdate(args []string) {
 			return
 		}
 		if !res.Available {
-			fmt.Printf("Already up to date: %s is the latest release.\n\n", res.Latest)
+			if update.Compare(res.Current, res.Latest) > 0 {
+				fmt.Printf("This build (%s) is ahead of the latest release (%s); nothing to install.\n\n", res.Current, res.Latest)
+			} else {
+				fmt.Printf("Already up to date: %s is the latest release.\n\n", res.Latest)
+			}
 			return
 		}
 		tag = res.Latest
