@@ -36,8 +36,18 @@ List what that seat can call:
 kvit-coder copilot models
 ```
 
-The first lines are the API host for the account and how the call was
-authenticated. Each following line is one model: the id to put in `model`,
+To write that list into `config.yaml` instead of copying it by hand:
+
+```bash
+kvit-coder copilot models-add
+```
+
+`models-add` appends every callable model to the config file's `models:` list
+(as `copilot-<id>` rows), skipping embedding models, models the seat turned
+off, and rows already there. `-dry-run` previews the rows without writing.
+
+The first lines of `models` are the API host for the account and how the call
+was authenticated. Each following line is one model: the id to put in `model`,
 the wire protocol (`chat_completions`, `responses`, or `messages`), the
 context window, the effort levels when the model publishes any, and the
 display name. Models the account's policy has turned off are omitted. On a

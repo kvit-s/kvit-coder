@@ -87,7 +87,9 @@ billed to the Copilot account.
 
 The model id is Copilot's own id, such as `claude-sonnet-4.6` or `gpt-5.4`.
 `kvit-coder copilot models` prints the ids the signed-in account can call,
-the context size, and which wire protocol each one speaks. The same keys work
+the context size, and which wire protocol each one speaks. `kvit-coder copilot
+models-add` writes those ids into the config file's `models:` list, skipping
+embedding models and rows already there. The same keys work
 on an `llm:` block and on a `models:` entry.
 
 ```yaml

@@ -60,7 +60,9 @@ tools:
   #    enabled: true
 
 # GitHub Copilot, on a machine where Copilot CLI is already signed in.
-# `kvit-coder copilot models` prints the model ids that account can call.
+# `kvit-coder copilot models` prints the model ids that account can call, and
+# `kvit-coder copilot models-add` writes them into `models:` below (skipping
+# embedding models and rows already there).
 # Leave api_backend empty so the account's model list picks the protocol.
 # base_url forces an origin (no /v1 suffix) when the token exchange returns
 # one the network blocks. copilot_host is a GitHub Enterprise hostname.
