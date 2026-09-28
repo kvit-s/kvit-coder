@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kvit-s/kvit-coder/internal/config"
+	"github.com/kvit-s/kvit-coder/internal/procutil"
 	"github.com/kvit-s/kvit-coder/internal/report"
 	"github.com/kvit-s/kvit-coder/internal/session"
 	"github.com/kvit-s/kvit-coder/internal/ui"
@@ -174,10 +174,7 @@ func (u *UI) pinRunID() {
 func (u *UI) Run() error {
 	// Ensure terminal is properly reset on exit
 	restoreTerminal := func() {
-		if os.Stdin.Fd() == 0 {
-			cmd := exec.Command("sh", "-c", "stty sane </dev/tty >/dev/tty 2>&1")
-			_ = cmd.Run()
-		}
+		procutil.RestoreTerminal()
 	}
 	defer func() {
 		fmt.Println()
@@ -905,7 +902,7 @@ func (u *UI) runAgent(prompt string, images []string) {
 	// ctrl-c at all. A caught one is reset to the default on exec, which is
 	// what lets the agent install its own handler.
 	interrupts := make(chan os.Signal, 4)
-	signal.Notify(interrupts, syscall.SIGINT)
+	signal.Notify(interrupts, procutil.InterruptSignals()...)
 	defer signal.Stop(interrupts)
 	go func() {
 		for range interrupts {

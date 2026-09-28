@@ -3,6 +3,8 @@ package safety
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
+	"strings"
 )
 
 // ShellBinaries are recognized shell binaries that can wrap commands
@@ -18,6 +20,12 @@ var ShellBinaries = map[string]bool{
 	"/usr/bin/sh":   true,
 	"/bin/zsh":      true,
 	"/usr/bin/zsh":  true,
+	// Windows shells: a `powershell -Command "rm ..."` must unwrap like
+	// `bash -c` does, or the rm rules never see the inner command. Matched
+	// case-insensitively on Windows (see IsShellBinary).
+	"powershell": true,
+	"pwsh":       true,
+	"cmd":        true,
 }
 
 // IsShellBinary returns true if the binary is a recognized shell
@@ -28,7 +36,36 @@ func IsShellBinary(binary string) bool {
 	}
 	// Check base name (for full paths)
 	base := filepath.Base(binary)
-	return ShellBinaries[base]
+	if ShellBinaries[base] {
+		return true
+	}
+	if runtime.GOOS == "windows" {
+		return IsWindowsShellBinary(binary)
+	}
+	return false
+}
+
+// IsWindowsShellBinary reports whether binary is a recognized shell on
+// Windows, folding case and stripping .exe/.bat/.cmd/.ps1 so
+// `powershell.exe -Command ...` unwraps like `bash -c` does. It is a separate
+// function so tests can exercise Windows matching on any OS.
+func IsWindowsShellBinary(binary string) bool {
+	base := binary
+	if i := strings.LastIndexAny(base, `/\`); i >= 0 {
+		base = base[i+1:]
+	}
+	lower := strings.ToLower(base)
+	for _, suffix := range []string{".exe", ".bat", ".cmd", ".ps1"} {
+		if strings.HasSuffix(lower, suffix) {
+			lower = lower[:len(lower)-len(suffix)]
+			break
+		}
+	}
+	if ShellBinaries[lower] {
+		return true
+	}
+	// Full-path keys are unix-only; compare their bases too.
+	return ShellBinaries[filepath.Base(lower)]
 }
 
 // UnwrapShellCommand recursively unwraps shell invocations like:

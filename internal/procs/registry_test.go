@@ -4,9 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
+
+	"github.com/kvit-s/kvit-coder/internal/procutil"
 )
 
 func waitFor(t *testing.T, what string, cond func() bool) {
@@ -75,7 +76,7 @@ func TestSurvivesTheProcessThatStartedIt(t *testing.T) {
 	if err := second.Kill(id); err != nil {
 		t.Fatalf("Kill: %v", err)
 	}
-	waitFor(t, "the process to be gone", func() bool { return syscall.Kill(pid, 0) != nil })
+	waitFor(t, "the process to be gone", func() bool { return !procutil.Alive(pid) })
 
 	after, _ := second.Status(id)
 	if after.Running() {
@@ -128,8 +129,8 @@ func TestReconcileFindsAProcessKilledFromOutside(t *testing.T) {
 
 	// Kill the group behind the registry's back, and remove the exit file the
 	// wrapper leaves, so the only evidence is that the pid has gone.
-	_ = syscall.Kill(-info.PID, syscall.SIGKILL)
-	waitFor(t, "the process to die", func() bool { return syscall.Kill(info.PID, 0) != nil })
+	_ = procutil.KillTree(info.PID)
+	waitFor(t, "the process to die", func() bool { return !procutil.Alive(info.PID) })
 	_ = os.Remove(filepath.Join(dir, id+".exit"))
 
 	changed := r.Reconcile()
@@ -268,7 +269,7 @@ func TestKillAllStopsEverything(t *testing.T) {
 		t.Fatalf("KillAll stopped %d processes, want 3", len(killed))
 	}
 	for _, pid := range pids {
-		waitFor(t, "every process to be gone", func() bool { return syscall.Kill(pid, 0) != nil })
+		waitFor(t, "every process to be gone", func() bool { return !procutil.Alive(pid) })
 	}
 	for _, info := range r.List() {
 		if info.Running() {

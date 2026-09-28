@@ -1,6 +1,6 @@
 # Sessions, steering and background work
 
-A session is a directory under `~/.kvit-coder/sessions/<name>/` holding
+A session is a directory under `~/.kvit-coder/sessions/<name>/` (`%USERPROFILE%\.kvit-coder\sessions\<name>\` on Windows) holding
 everything that has to outlive a turn, because the agent runs as one process per
 turn and keeps nothing in memory between them. This file covers working with
 sessions from the command line, talking to a turn while it runs, how several
@@ -21,7 +21,7 @@ Conversation history persists across runs via named sessions:
 ./kvit-coder --session-delete my-feature # delete
 ```
 
-Each session is a directory under `~/.kvit-coder/sessions/`:
+Each session is a directory under `~/.kvit-coder/sessions/` (`%USERPROFILE%\.kvit-coder\sessions\` on Windows):
 
 ```
 ~/.kvit-coder/sessions/my-feature/

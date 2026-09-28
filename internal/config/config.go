@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/kvit-s/kvit-coder/internal/copilot"
 	"github.com/kvit-s/kvit-coder/internal/llm"
+	"github.com/kvit-s/kvit-coder/internal/procutil"
 	"gopkg.in/yaml.v3"
 )
 
@@ -1435,9 +1437,9 @@ func (c *Config) promptForPathAccess(toolName, path string) bool {
 
 	// No line reader running, so read the terminal directly.
 	fmt.Fprint(os.Stderr, question)
-	tty, err := os.Open("/dev/tty")
+	tty, err := procutil.OpenConsole()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to open /dev/tty: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Failed to open %s: %v\n", procutil.ConsoleName(), err)
 		return false
 	}
 	defer tty.Close()
@@ -1472,6 +1474,20 @@ func NormalizeAndValidatePath(workspaceRoot, path string) (string, bool, error) 
 	// Normalize paths for comparison
 	absPath = filepath.Clean(absPath)
 	absWorkspace = filepath.Clean(absWorkspace)
+
+	// On Windows the comparison folds case: C:\Proj and c:\proj\..\proj
+	// are the same directory, so an exact or prefix match must ignore case
+	// or a case-variant escape walks around the check.
+	if runtime.GOOS == "windows" {
+		if strings.EqualFold(absPath, absWorkspace) {
+			return absPath, false, nil
+		}
+		sep := string(filepath.Separator)
+		if strings.HasPrefix(strings.ToLower(absPath), strings.ToLower(absWorkspace+sep)) {
+			return absPath, false, nil
+		}
+		return absPath, true, nil
+	}
 
 	// Check if path is outside workspace
 	if !strings.HasPrefix(absPath, absWorkspace+string(filepath.Separator)) && absPath != absWorkspace {

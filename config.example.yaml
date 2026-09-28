@@ -1,4 +1,5 @@
-# A short working configuration. Copy it to ~/.kvit-coder/config.yaml and point
+# A short working configuration. Copy it to ~/.kvit-coder/config.yaml
+# (%USERPROFILE%\.kvit-coder\config.yaml on Windows) and point
 # the llm: block at whichever OpenAI-compatible endpoint you have.
 #
 # Every key is documented at

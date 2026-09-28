@@ -389,6 +389,18 @@ func MatchWithNormalization(content, search string, fuzzyThreshold float64, exac
 		return idx, idx + len(search), 0, true
 	}
 
+	// Level 0b: CRLF-normalized exact match. A file a Windows editor touched
+	// has \r\n while the model writes \n; stripping \r for comparison
+	// finds it without converting the file. Maps back to original bytes so
+	// the replacement preserves surrounding \r\n.
+	if hasCRLF(content) || hasCRLF(search) {
+		normContent := normalizeForMatch(content)
+		normSearch := normalizeForMatch(search)
+		if idx := strings.Index(normContent, normSearch); idx >= 0 {
+			return mapCRLFPositionToOriginal(content, idx, len(normSearch))
+		}
+	}
+
 	if exactOnly {
 		return 0, 0, -1, false
 	}
@@ -474,4 +486,34 @@ func mapNormalizedPositionToOriginal(original, normalized string, normStart, nor
 	}
 
 	return origStart, origEnd, 1, true
+}
+
+// mapCRLFPositionToOriginal maps a normalized (\r-stripped) match back to
+// original byte offsets. Each \r\n in the original is one byte longer than
+// the \n in the normalized form, so the original start shifts right by the
+// number of CRLFs before it, and the end by those inside the match too.
+func mapCRLFPositionToOriginal(original string, normStart, normLen int) (start, end int, level int, found bool) {
+	// Scan: the normalized index advances on every byte except \r in \r\n.
+	normIdx := 0
+	origIdx := 0
+	for origIdx < len(original) && normIdx < normStart {
+		if original[origIdx] == '\r' && origIdx+1 < len(original) && original[origIdx+1] == '\n' {
+			origIdx++ // skip \r, the \n below advances normIdx
+			continue
+		}
+		origIdx++
+		normIdx++
+	}
+	origStart := origIdx
+	// Advance normLen normalized bytes to find the original end.
+	remaining := normLen
+	for origIdx < len(original) && remaining > 0 {
+		if original[origIdx] == '\r' && origIdx+1 < len(original) && original[origIdx+1] == '\n' {
+			origIdx++ // skip \r without consuming a normalized byte
+			continue
+		}
+		origIdx++
+		remaining--
+	}
+	return origStart, origIdx, 0, true
 }

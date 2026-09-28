@@ -14,6 +14,9 @@ set -euo pipefail
 # They are symlinks rather than copies, so scripts/build.sh is all that is
 # needed after a change; there is nothing to install again.
 #
+# On native Windows this symlink farm needs privilege; prefer .exe copies on
+# the PATH instead (install.ps1 does this for releases).
+#
 #   scripts/install.sh                    build, then link into ~/.local/bin
 #   scripts/install.sh --no-build         link what is already built
 #   scripts/install.sh --bin-dir ~/bin    link somewhere else

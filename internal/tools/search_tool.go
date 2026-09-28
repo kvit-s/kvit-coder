@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,6 +20,7 @@ type searchBackend int
 const (
 	backendRipgrep searchBackend = iota
 	backendGrep
+	backendGo
 	backendNone
 )
 
@@ -27,7 +29,12 @@ var (
 	backendDetectedOnce sync.Once
 )
 
-// detectSearchBackend checks which search command is available
+// detectSearchBackend checks which search command is available.
+// Order is rg, then grep (unix) or the pure-Go fallback, then pure Go: rg
+// works on Windows when installed, neither shell fallback does, so on
+// Windows the WalkDir fallback outranks grep and removes the 2>/dev/null|xargs
+// quoting surface where quoting differs most. Pure Go is always available,
+// so backendNone is only a zero value, never returned.
 func detectSearchBackend() searchBackend {
 	backendDetectedOnce.Do(func() {
 		// Try ripgrep first
@@ -35,12 +42,16 @@ func detectSearchBackend() searchBackend {
 			detectedBackend = backendRipgrep
 			return
 		}
+		if runtime.GOOS == "windows" {
+			detectedBackend = backendGo
+			return
+		}
 		// Fall back to grep
 		if _, err := exec.LookPath("grep"); err == nil {
 			detectedBackend = backendGrep
 			return
 		}
-		detectedBackend = backendNone
+		detectedBackend = backendGo
 	})
 	return detectedBackend
 }
@@ -196,48 +207,59 @@ func (t *SearchTool) Call(ctx context.Context, args json.RawMessage) (any, error
 	}
 
 	backend := detectSearchBackend()
-	if backend == backendNone {
-		return map[string]any{
-			"success": false,
-			"error":   "no_search_command",
-			"message": "Neither 'rg' (ripgrep) nor 'grep' found in PATH. Please install one of them.",
-		}, nil
-	}
 
-	var output []byte
-	var err error
-
-	if backend == backendRipgrep {
-		output, err = t.searchWithRipgrep(ctx, params.Pattern, searchPath, params.FilePattern, params.ContextLines)
-	} else {
-		output, err = t.searchWithGrep(ctx, params.Pattern, searchPath, params.FilePattern, params.ContextLines)
-	}
-
-	// Both rg and grep exit with 1 if no matches found, which is not an error
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			if exitErr.ExitCode() == 1 {
-				// No matches found
-				return map[string]any{
-					"success":       true,
-					"matches":       []searchMatch{},
-					"total_matches": 0,
-					"message":       "No matches found",
-				}, nil
-			}
-			// Exit 2+ means the search itself failed (e.g. bad regex,
-			// unreadable path). cmd.Output captures stderr into
-			// ExitError.Stderr, so surface it: a bare "exit status 2"
-			// tells the model nothing actionable.
-			if stderr := strings.TrimSpace(string(exitErr.Stderr)); stderr != "" {
-				return nil, fmt.Errorf("search failed: %w: %s", err, stderr)
-			}
+	var matches []searchMatch
+	if backend == backendGo {
+		// Pure-Go WalkDir fallback: no external tool, no shell quoting.
+		var err error
+		matches, err = t.searchWithGo(ctx, params.Pattern, searchPath, params.FilePattern, params.ContextLines)
+		if err != nil {
+			return nil, fmt.Errorf("search failed: %w", err)
 		}
-		return nil, fmt.Errorf("search failed: %w", err)
-	}
+	} else {
+		if backend == backendNone {
+			return map[string]any{
+				"success": false,
+				"error":   "no_search_command",
+				"message": "Neither 'rg' (ripgrep) nor 'grep' found in PATH. Please install one of them.",
+			}, nil
+		}
 
-	// Parse output (format is the same for both rg and grep with our options)
-	matches := parseSearchOutput(string(output), params.ContextLines)
+		var output []byte
+		var err error
+
+		if backend == backendRipgrep {
+			output, err = t.searchWithRipgrep(ctx, params.Pattern, searchPath, params.FilePattern, params.ContextLines)
+		} else {
+			output, err = t.searchWithGrep(ctx, params.Pattern, searchPath, params.FilePattern, params.ContextLines)
+		}
+
+		// Both rg and grep exit with 1 if no matches found, which is not an error
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				if exitErr.ExitCode() == 1 {
+					// No matches found
+					return map[string]any{
+						"success":       true,
+						"matches":       []searchMatch{},
+						"total_matches": 0,
+						"message":       "No matches found",
+					}, nil
+				}
+				// Exit 2+ means the search itself failed (e.g. bad regex,
+				// unreadable path). cmd.Output captures stderr into
+				// ExitError.Stderr, so surface it: a bare "exit status 2"
+				// tells the model nothing actionable.
+				if stderr := strings.TrimSpace(string(exitErr.Stderr)); stderr != "" {
+					return nil, fmt.Errorf("search failed: %w: %s", err, stderr)
+				}
+			}
+			return nil, fmt.Errorf("search failed: %w", err)
+		}
+
+		// Parse output (format is the same for both rg and grep with our options)
+		matches = parseSearchOutput(string(output), params.ContextLines)
+	}
 	totalMatches := len(matches)
 
 	// Get thresholds from config (with defaults)

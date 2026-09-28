@@ -24,18 +24,22 @@ To build from source, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 **Platforms.** Linux is where this is developed and used daily, including under
 Windows Subsystem for Linux (WSL). The macOS builds compile and are published,
-but never tested. Windows is not supported yet.
+but never tested. Native Windows (10/11, amd64) builds, runs, and passes tests;
+it needs Git for Windows (for `sh.exe`, `grep`, and `git` itself) and installs
+via `install.ps1` (see below). WSL stays supported regardless; benchmarks stay
+WSL/unix-only (see `spec/windows.md`).
 
 ## Configure
 
 Copy [`config.example.yaml`](config.example.yaml) to
-`~/.kvit-coder/config.yaml` and point the `llm:` block at an endpoint you have —
+`~/.kvit-coder/config.yaml` (on Windows: `%USERPROFILE%\.kvit-coder\config.yaml`)
+and point the `llm:` block at an endpoint you have —
 a local llama.cpp, vLLM or Ollama server, or any hosted API that speaks the same
 protocol:
 
 Without `-config`, both binaries take the first of `$KVIT_CODER_CONFIG`,
-`./config.yaml`, `~/.kvit-coder/config.yaml`, and `config.yaml` beside the
-binary with symlinks resolved.
+`./config.yaml`, `~/.kvit-coder/config.yaml` (`%USERPROFILE%\.kvit-coder\config.yaml`
+on Windows), and `config.yaml` beside the binary with symlinks resolved.
 
 Every key is documented in
 [`docs/configuration.md`](docs/configuration.md), including the parts

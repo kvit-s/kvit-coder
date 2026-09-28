@@ -9,12 +9,12 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/agent"
 	"github.com/kvit-s/kvit-coder/internal/config"
 	"github.com/kvit-s/kvit-coder/internal/llm"
+	"github.com/kvit-s/kvit-coder/internal/procutil"
 )
 
 // restoreTerminal resets terminal to sane state
@@ -42,7 +42,7 @@ func Run(ctx context.Context, flags CLIFlags, runner *agent.Runner, cfg *config.
 	defer restoreTerminal()
 
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, procutil.InterruptSignals()...)
 	go func() {
 		<-sigChan
 		restoreTerminal()
@@ -209,7 +209,7 @@ func RunHaystack(ctx context.Context, flags HaystackCLIFlags, cfg *config.Config
 	defer restoreTerminal()
 
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, procutil.InterruptSignals()...)
 	go func() {
 		<-sigChan
 		restoreTerminal()

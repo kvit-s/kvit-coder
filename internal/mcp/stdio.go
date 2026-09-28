@@ -8,8 +8,9 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"github.com/kvit-s/kvit-coder/internal/procutil"
 )
 
 // stdioClient speaks JSON-RPC 2.0 to a subprocess over its stdin/stdout, the
@@ -44,14 +45,15 @@ func newStdioClient(command string, args, extraEnv []string, cwd string, logger 
 		return nil, fmt.Errorf("stdio transport requires a command")
 	}
 
-	cmd := exec.Command(command, expandArgs(args)...)
+	command, args = procutil.MediateMCPCommand(command, expandArgs(args))
+	cmd := exec.Command(command, args...)
 	cmd.Dir = cwd
 	cmd.Env = os.Environ()
 	if len(extraEnv) > 0 {
 		cmd.Env = append(cmd.Env, expandEnvEntries(extraEnv)...)
 	}
 	// Own process group so Close can reap the whole tree (npx → node → ...).
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	procutil.DetachProcessGroup(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -143,16 +145,10 @@ func (c *stdioClient) Close() error {
 	return nil
 }
 
-// killGroup SIGKILLs the subprocess's whole group.
+// killGroup kills the subprocess's whole group (SIGKILL on unix, an
+// immediate taskkill /T on Windows where there is no polite signal).
 func (c *stdioClient) killGroup() {
-	if c.cmd.Process == nil {
-		return
-	}
-	if pgid, err := syscall.Getpgid(c.cmd.Process.Pid); err == nil {
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-	} else {
-		_ = c.cmd.Process.Kill()
-	}
+	procutil.KillProcessGroup(c.cmd)
 }
 
 // drainStderr forwards subprocess stderr lines to debug logging.

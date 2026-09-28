@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
+	"github.com/kvit-s/kvit-coder/internal/filelock"
 	"github.com/kvit-s/kvit-coder/internal/llm"
 )
 
@@ -453,7 +453,7 @@ func acquireLockAt(lockPath, name string) (func(), error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create lock file: %w", err)
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := filelock.Lock(f); err != nil {
 		f.Close()
 		return nil, fmt.Errorf("session %q is already in use by another process", name)
 	}
@@ -462,7 +462,7 @@ func acquireLockAt(lockPath, name string) (func(), error) {
 	fmt.Fprintf(f, "%d\n", os.Getpid())
 
 	return func() {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = filelock.Unlock(f)
 		f.Close()
 		os.Remove(lockPath)
 	}, nil

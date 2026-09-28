@@ -12,6 +12,24 @@ import (
 	"sync"
 )
 
+// gitBaseConfig forces LF line endings in the shadow repo. A default
+// core.autocrlf=true (standard on Git for Windows) rewrites line endings on
+// the way in and out, corrupting snapshot round-trips. Every git invocation
+// below carries these -c overrides so a user's global git config cannot
+// change checkpoint bytes; Initialize also persists them in the shadow repo's
+// own config.
+var gitBaseConfig = []string{"-c", "core.autocrlf=false", "-c", "core.eol=lf"}
+
+// gitCmd builds a git command carrying the shadow repo's line-ending config.
+// Extra git global flags (e.g. --git-dir) go in args before the subcommand;
+// the -c overrides sort before them, which git accepts.
+func gitCmd(args ...string) *exec.Cmd {
+	full := make([]string, 0, len(gitBaseConfig)+len(args))
+	full = append(full, gitBaseConfig...)
+	full = append(full, args...)
+	return exec.Command("git", full...)
+}
+
 // Manager handles checkpoint creation and restoration using a shadow git repository
 type Manager struct {
 	mu              sync.RWMutex
@@ -137,10 +155,17 @@ func (m *Manager) Initialize() error {
 		return nil
 	}
 
-	// Initialize shadow git repo
-	cmd := exec.Command("git", "init", "--bare", gitDir)
+	// Initialize shadow git repo with LF endings pinned, so a default
+	// core.autocrlf=true (Git for Windows) cannot rewrite checkpoint bytes.
+	cmd := gitCmd("init", "--bare", gitDir)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to init shadow git: %w\nOutput: %s", err, output)
+	}
+	for _, kv := range [][2]string{{"core.autocrlf", "false"}, {"core.eol", "lf"}} {
+		cfgCmd := gitCmd("--git-dir="+gitDir, "config", kv[0], kv[1])
+		if output, err := cfgCmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("failed to pin %s in shadow git: %w\nOutput: %s", kv[0], err, output)
+		}
 	}
 
 	// Create initial commit (turn-0) with empty tree
@@ -155,7 +180,7 @@ func (m *Manager) Initialize() error {
 // largest N, which is where this turn's numbering continues from.
 func (m *Manager) highestTurn() (int, error) {
 	gitDir := filepath.Join(m.checkpointDir, ".git")
-	out, err := exec.Command("git", "--git-dir="+gitDir, "tag", "--list", "turn-*").Output()
+	out, err := gitCmd("--git-dir="+gitDir, "tag", "--list", "turn-*").Output()
 	if err != nil {
 		return 0, err
 	}
@@ -187,7 +212,7 @@ func (m *Manager) createInitialCommit() error {
 	}
 
 	// Stage all current files to capture initial state
-	cmd := exec.Command("git",
+	cmd := gitCmd(
 		"--git-dir="+gitDir,
 		"--work-tree="+m.workdir,
 		"add", "-A",
@@ -198,7 +223,7 @@ func (m *Manager) createInitialCommit() error {
 	}
 
 	// Create initial commit
-	cmd = exec.Command("git",
+	cmd = gitCmd(
 		"--git-dir="+gitDir,
 		"--work-tree="+m.workdir,
 		"commit", "--allow-empty", "-m", "turn-0",
@@ -215,7 +240,7 @@ func (m *Manager) createInitialCommit() error {
 	}
 
 	// Tag it as turn-0
-	cmd = exec.Command("git",
+	cmd = gitCmd(
 		"--git-dir="+gitDir,
 		"tag", "turn-0",
 	)
@@ -258,7 +283,7 @@ func (m *Manager) commitTurn(turnNum int, isRestore bool, restoredTo int) error 
 	gitDir := filepath.Join(m.checkpointDir, ".git")
 
 	// Stage all changes (exclude patterns are in .git/info/exclude)
-	cmd := exec.Command("git",
+	cmd := gitCmd(
 		"--git-dir="+gitDir,
 		"--work-tree="+m.workdir,
 		"add", "-A",
@@ -269,7 +294,7 @@ func (m *Manager) commitTurn(turnNum int, isRestore bool, restoredTo int) error 
 	}
 
 	// Also stage external files and mapping
-	cmd = exec.Command("git",
+	cmd = gitCmd(
 		"--git-dir="+gitDir,
 		"--work-tree="+m.checkpointDir,
 		"add", "-Af",
@@ -287,7 +312,7 @@ func (m *Manager) commitTurn(turnNum int, isRestore bool, restoredTo int) error 
 	}
 
 	// Commit
-	cmd = exec.Command("git",
+	cmd = gitCmd(
 		"--git-dir="+gitDir,
 		"--work-tree="+m.workdir,
 		"commit", "--allow-empty", "-m", commitMsg,
@@ -308,7 +333,7 @@ func (m *Manager) commitTurn(turnNum int, isRestore bool, restoredTo int) error 
 
 	// Tag this turn
 	tagName := fmt.Sprintf("turn-%d", turnNum)
-	cmd = exec.Command("git",
+	cmd = gitCmd(
 		"--git-dir="+gitDir,
 		"tag", "-f", tagName,
 	)
@@ -462,7 +487,7 @@ func (m *Manager) Restore(turnNum int) ([]string, error) {
 	tagName := fmt.Sprintf("turn-%d", turnNum)
 
 	// First, get list of files that will change
-	cmd := exec.Command("git",
+	cmd := gitCmd(
 		"--git-dir="+gitDir,
 		"--work-tree="+m.workdir,
 		"diff", "--name-only", tagName,
@@ -479,7 +504,7 @@ func (m *Manager) Restore(turnNum int) ([]string, error) {
 	}
 
 	// Checkout workdir files from the target turn
-	cmd = exec.Command("git",
+	cmd = gitCmd(
 		"--git-dir="+gitDir,
 		"--work-tree="+m.workdir,
 		"checkout", tagName, "--", ".",
@@ -509,7 +534,7 @@ func (m *Manager) restoreExternalFiles(turnNum int) error {
 	tagName := fmt.Sprintf("turn-%d", turnNum)
 
 	// Get external-files.json from that commit
-	cmd := exec.Command("git",
+	cmd := gitCmd(
 		"--git-dir="+gitDir,
 		"show", fmt.Sprintf("%s:external-files.json", tagName),
 	)
@@ -527,7 +552,7 @@ func (m *Manager) restoreExternalFiles(turnNum int) error {
 	// Restore each external file
 	for key, mapping := range mappings {
 		// Get file content from that commit
-		cmd := exec.Command("git",
+		cmd := gitCmd(
 			"--git-dir="+gitDir,
 			"show", fmt.Sprintf("%s:external-files/%s", tagName, key),
 		)
@@ -571,7 +596,7 @@ func (m *Manager) Diff(turnNum int, path string) (string, error) {
 		args = append(args, "--", path)
 	}
 
-	cmd := exec.Command("git", args...)
+	cmd := gitCmd(args...)
 	cmd.Dir = m.workdir
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -598,7 +623,7 @@ func (m *Manager) List() ([]TurnInfo, error) {
 		currTag := fmt.Sprintf("turn-%d", i)
 
 		// Get files changed between turns
-		cmd := exec.Command("git",
+		cmd := gitCmd(
 			"--git-dir="+gitDir,
 			"--work-tree="+m.workdir,
 			"diff", "--name-only", prevTag, currTag,
@@ -614,7 +639,7 @@ func (m *Manager) List() ([]TurnInfo, error) {
 		}
 
 		// Check if this was a restore by looking at commit message
-		cmd = exec.Command("git",
+		cmd = gitCmd(
 			"--git-dir="+gitDir,
 			"log", "-1", "--format=%s", currTag,
 		)
@@ -693,7 +718,7 @@ func (m *Manager) GetModifiedFiles() []string {
 	gitDir := filepath.Join(m.checkpointDir, ".git")
 
 	// Get list of files that differ from turn-0
-	cmd := exec.Command("git",
+	cmd := gitCmd(
 		"--git-dir="+gitDir,
 		"--work-tree="+m.workdir,
 		"diff", "--name-only", "turn-0",
@@ -741,7 +766,7 @@ func (m *Manager) findSimilarFiles(targetPath string) []string {
 		}
 
 		// Check if file existed at turn-0
-		cmd := exec.Command("git",
+		cmd := gitCmd(
 			"--git-dir="+gitDir,
 			"cat-file", "-e", fmt.Sprintf("turn-0:%s", relPath),
 		)
@@ -807,7 +832,7 @@ func (m *Manager) RestoreFile(path string) ([]byte, error) {
 	gitDir := filepath.Join(m.checkpointDir, ".git")
 
 	// Get file content from turn-0
-	cmd := exec.Command("git",
+	cmd := gitCmd(
 		"--git-dir="+gitDir,
 		"--work-tree="+m.workdir,
 		"show", fmt.Sprintf("turn-0:%s", relPath),

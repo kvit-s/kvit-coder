@@ -26,8 +26,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
+
+	"github.com/kvit-s/kvit-coder/internal/procutil"
 )
 
 // State is where a process is in its life.
@@ -274,16 +275,21 @@ func (r *Registry) start(command, cwd, name string, every int, report, until str
 	}
 	script := "trap 'printf \"%s\" \"$?\" > \"$KVIT_EXIT_FILE\"' EXIT\n" + body + "\n"
 
-	cmd := exec.Command("sh", "-c", script)
+	shell, err := procutil.ResolveShell()
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.Command(shell, "-c", script)
 	cmd.Dir = cwd
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.Stdin = nil
 	cmd.Env = append(os.Environ(), "KVIT_EXIT_FILE="+r.exitPath(id))
-	// Setsid detaches the process into its own session, so it neither dies
-	// with the turn nor receives the terminal's ctrl-c, and killing it by
-	// negative pid takes everything it started with it.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	// Detach detaches the process into its own session (Setsid on unix,
+	// CREATE_NEW_PROCESS_GROUP on Windows), so it neither dies with the
+	// turn nor receives the terminal's ctrl-c, and killing it takes
+	// everything it started with it.
+	procutil.Detach(cmd)
 
 	if err := cmd.Start(); err != nil {
 		return "", fmt.Errorf("procs: failed to start command: %w", err)
@@ -617,7 +623,7 @@ func (r *Registry) refresh(info Info) (Info, bool) {
 		return info, true
 	}
 
-	if info.PID > 0 && syscall.Kill(info.PID, 0) == nil {
+	if info.PID > 0 && procutil.Alive(info.PID) {
 		return info, false
 	}
 
@@ -631,25 +637,7 @@ func (r *Registry) refresh(info Info) (Info, bool) {
 }
 
 func killGroup(pid int) error {
-	if pid <= 0 {
-		return nil
-	}
-	// Negative pid means the whole process group, which Setsid made this
-	// process the leader of, so nothing it started is left behind.
-	if err := syscall.Kill(-pid, syscall.SIGTERM); err != nil && err != syscall.ESRCH {
-		return err
-	}
-	// Give it a moment to go quietly before insisting.
-	for range 20 {
-		if syscall.Kill(-pid, 0) != nil {
-			return nil
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil && err != syscall.ESRCH {
-		return err
-	}
-	return nil
+	return procutil.KillTree(pid)
 }
 
 // --- the files ---------------------------------------------------------------

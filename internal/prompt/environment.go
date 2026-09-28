@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/kvit-s/kvit-coder/internal/procutil"
 )
 
 // environmentTimeout bounds the git calls. The prompt must be ready whether or
@@ -31,6 +33,13 @@ func Environment(workspaceRoot string) string {
 	fmt.Fprintf(&sb, "Platform: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 	if shell := os.Getenv("SHELL"); shell != "" {
 		fmt.Fprintf(&sb, "Shell: %s\n", shell)
+	}
+	if runtime.GOOS == "windows" {
+		// Name the resolved POSIX shell so transcripts say what ran
+		// (Git for Windows' sh.exe location varies by install).
+		if resolved := procutil.ShellNameForPrompt(); resolved != "" {
+			fmt.Fprintf(&sb, "Shell path: %s (POSIX sh via Git for Windows)\n", resolved)
+		}
 	}
 	fmt.Fprintf(&sb, "Today: %s\n", time.Now().Format("2006-01-02"))
 

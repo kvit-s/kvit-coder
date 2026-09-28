@@ -259,8 +259,10 @@ func (t *SearchReplaceEditTool) Call(ctx context.Context, args json.RawMessage) 
 		}
 	}
 
-	// Perform the replacement
-	newContent := content[:start] + params.Replace + content[end:]
+	// Perform the replacement, adopting the file's prevailing ending so an
+	// edit in a CRLF file does not mix endings line by line.
+	replace := adaptReplacement(params.Replace, content)
+	newContent := content[:start] + replace + content[end:]
 
 	// Generate diff
 	diff, err := generateUnifiedDiff(content, newContent, params.Path)
@@ -269,7 +271,7 @@ func (t *SearchReplaceEditTool) Call(ctx context.Context, args json.RawMessage) 
 	}
 
 	// Calculate edit line range for post-edit context
-	editStartLine, editEndLine := CalculateEditLineRange(newContent, start, params.Replace)
+	editStartLine, editEndLine := CalculateEditLineRange(newContent, start, replace)
 
 	// Use shared finalize logic
 	result, err := FinalizeEdit(&t.BaseEditTool, params.Path, fullPath, content, newContent, diff, editStartLine, editEndLine, false)

@@ -181,7 +181,9 @@ func NormalizeWhitespaceRstrip(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-// CountMatches counts how many times search appears in content
+// CountMatches counts how many times search appears in content. When either
+// side carries CRLF it also counts the CRLF-normalized form, so a LF search
+// in a CRLF file reports its true multiplicity for the multiple-match check.
 func CountMatches(content, search string) int {
 	if search == "" {
 		return len(content) + 1 // empty string matches at every position + end
@@ -195,6 +197,19 @@ func CountMatches(content, search string) int {
 		}
 		count++
 		pos += idx + len(search)
+	}
+	if count == 0 && (hasCRLF(content) || hasCRLF(search)) {
+		normContent := normalizeForMatch(content)
+		normSearch := normalizeForMatch(search)
+		pos = 0
+		for {
+			idx := strings.Index(normContent[pos:], normSearch)
+			if idx == -1 {
+				break
+			}
+			count++
+			pos += idx + len(normSearch)
+		}
 	}
 	return count
 }

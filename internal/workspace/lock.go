@@ -6,7 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
+
+	"github.com/kvit-s/kvit-coder/internal/filelock"
 )
 
 const lockFileName = ".kvit-coder.lock"
@@ -39,7 +40,7 @@ func AcquireLock(workspaceRoot string) (*Lock, error) {
 	}
 
 	// Try to acquire exclusive lock (non-blocking)
-	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := filelock.Lock(lockFile); err != nil {
 		lockFile.Close()
 		return nil, fmt.Errorf("workspace %q is already in use by another kvit-coder instance", workspaceRoot)
 	}
@@ -66,7 +67,7 @@ func (l *Lock) Release() {
 	l.cleanup()
 }
 
-// cleanup releases the flock and removes the lock file, once.
+// cleanup releases the lock and removes the lock file, once.
 func (l *Lock) cleanup() {
 	l.cleanupOnce.Do(func() {
 		l.mu.Lock()
@@ -74,7 +75,7 @@ func (l *Lock) cleanup() {
 		if l.file == nil {
 			return
 		}
-		_ = syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN)
+		_ = filelock.Unlock(l.file)
 		l.file.Close()
 		os.Remove(l.lockPath)
 		l.file = nil

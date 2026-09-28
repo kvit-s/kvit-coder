@@ -2,9 +2,22 @@
 
 Every key in `config.yaml`, grouped by the section it sits in. The file is found
 at the first of `$KVIT_CODER_CONFIG`, `./config.yaml`,
-`~/.kvit-coder/config.yaml`, and `config.yaml` beside the binary with symlinks
-resolved; `config.example.yaml` in the repository root is a short working
-starting point.
+`~/.kvit-coder/config.yaml` (`%USERPROFILE%\.kvit-coder\config.yaml` on Windows),
+and `config.yaml` beside the binary with symlinks resolved;
+`config.example.yaml` in the repository root is a short working starting point.
+
+## Windows
+
+Native Windows needs Git for Windows (https://git-scm.com/download/win): the
+agent's shell is Git's `sh.exe` (plus `grep`, `find`, and `git` itself, which
+checkpoints require), resolved from `PATH` else the standard install locations
+(`%ProgramFiles%\Git\usr\bin\sh.exe`). When none is found, Shell fails fast
+naming Git for Windows. `cmd.exe` is never the agent's shell, so `del`/`rmdir`
+/`copy` builtins are out of scope by design.
+
+The environment prompt block already prints `Platform: windows/amd64`; on
+Windows it also prints the resolved `Shell path: ... (POSIX sh via Git for
+Windows)` so transcripts say what ran. Benchmarks stay WSL/unix-only.
 
 
 ## `llm`

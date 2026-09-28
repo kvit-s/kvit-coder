@@ -8,11 +8,11 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/agent"
 	"github.com/kvit-s/kvit-coder/internal/config"
+	"github.com/kvit-s/kvit-coder/internal/procutil"
 )
 
 // ThinkbenchCLIFlags holds the command-line flags for thinkbench benchmarks.
@@ -35,7 +35,7 @@ type ThinkbenchCLIFlags struct {
 func RunThinkbench(ctx context.Context, flags ThinkbenchCLIFlags, runner *agent.Runner, cfg *config.Config, systemPrompt, version, originalWorkspaceRoot string) error {
 	defer restoreTerminal()
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigChan, procutil.InterruptSignals()...)
 	go func() {
 		<-sigChan
 		restoreTerminal()

@@ -10,11 +10,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/config"
 	"github.com/kvit-s/kvit-coder/internal/permissions"
+	"github.com/kvit-s/kvit-coder/internal/procutil"
 	"github.com/kvit-s/kvit-coder/internal/safety"
 )
 
@@ -287,6 +287,11 @@ func (t *ShellAdvancedTool) Call(ctx context.Context, args json.RawMessage) (any
 
 // executeCommand is the actual shell execution implementation
 func (t *ShellAdvancedTool) executeCommand(ctx context.Context, command, workDir string, timeout time.Duration) (any, error) {
+	// Fail fast when no POSIX shell exists (Windows without Git for Windows)
+	// rather than surfacing a bare exec "sh not found".
+	if _, err := procutil.ResolveShell(); err != nil {
+		return nil, err
+	}
 
 	// Create output buffer for managing large outputs
 	outputBuf := NewOutputBuffer(t.tempFileMgr)
@@ -393,6 +398,14 @@ func (t *ShellAdvancedTool) executeCommand(ctx context.Context, command, workDir
 func (t *ShellAdvancedTool) buildCommand(command, workDir string) *exec.Cmd {
 	prefix := t.cfg.Tools.Shell.ExecPrefix
 
+	// The agent's shell is sh everywhere: on Windows this resolves to Git for
+	// Windows' sh.exe (PATH plus the standard install locations), failing
+	// fast with a message naming Git for Windows when none is found.
+	shell, err := procutil.ResolveShell()
+	if err != nil {
+		shell = "sh"
+	}
+
 	var cmd *exec.Cmd
 	if len(prefix) > 0 {
 		// Substitute {workdir} in any prefix arg (e.g. bwrap --chdir {workdir}).
@@ -400,10 +413,10 @@ func (t *ShellAdvancedTool) buildCommand(command, workDir string) *exec.Cmd {
 		for _, a := range prefix {
 			args = append(args, strings.ReplaceAll(a, "{workdir}", workDir))
 		}
-		args = append(args, "sh", "-c", command)
+		args = append(args, shell, "-c", command)
 		cmd = exec.Command(args[0], args[1:]...)
 	} else {
-		cmd = exec.Command("sh", "-c", command)
+		cmd = exec.Command(shell, "-c", command)
 	}
 	cmd.Dir = workDir
 
@@ -412,23 +425,14 @@ func (t *ShellAdvancedTool) buildCommand(command, workDir string) *exec.Cmd {
 	}
 
 	// Create a new process group so we can kill all child processes on timeout
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// (Setpgid on unix, CREATE_NEW_PROCESS_GROUP on Windows).
+	procutil.DetachProcessGroup(cmd)
 	return cmd
 }
 
 // killProcessGroup kills the entire process group of the command
 func (t *ShellAdvancedTool) killProcessGroup(cmd *exec.Cmd) {
-	if cmd.Process == nil {
-		return
-	}
-	// Kill the entire process group (negative PID)
-	pgid, err := syscall.Getpgid(cmd.Process.Pid)
-	if err == nil {
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-	} else {
-		// Fallback: kill just the process
-		_ = cmd.Process.Kill()
-	}
+	procutil.KillProcessGroup(cmd)
 }
 
 // validateCommand validates a shell command for safety

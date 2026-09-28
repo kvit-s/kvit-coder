@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/benchmark"
@@ -18,6 +17,7 @@ import (
 	"github.com/kvit-s/kvit-coder/internal/inbox"
 	"github.com/kvit-s/kvit-coder/internal/permissions"
 	"github.com/kvit-s/kvit-coder/internal/procs"
+	"github.com/kvit-s/kvit-coder/internal/procutil"
 	"github.com/kvit-s/kvit-coder/internal/repl"
 	"github.com/kvit-s/kvit-coder/internal/session"
 	"github.com/kvit-s/kvit-coder/internal/ui"
@@ -549,7 +549,7 @@ func stdinIsATerminal() bool {
 // seconds exits immediately, for when that is taking too long.
 func installInterruptHandler(cancelRun, signalInterrupt context.CancelFunc) {
 	sigCh := make(chan os.Signal, 4)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(sigCh, procutil.InterruptSignals()...)
 	go func() {
 		var last time.Time
 		for range sigCh {

@@ -17,7 +17,7 @@ are for; this file is the reference.
 | `-model <name>` | Override model | from config |
 | `-base-url <url>` | Override LLM endpoint | from config |
 | `-agent-file <path>` | Append file content to system prompt | - |
-| `-log <path>` | Log file (empty to disable) | `~/.kvit-coder/logs/kvit-coder.log` |
+| `-log <path>` | Log file (empty to disable) | `~/.kvit-coder/logs/kvit-coder.log` (`%USERPROFILE%\.kvit-coder\logs\kvit-coder.log` on Windows) |
 | `--json` | Structured JSON output to stderr | false |
 | `--structured` | End the turn with a structured report instead of prose (a validated JSON report; see `Report` in the tool list) | false |
 | `-s <name>` | Continue or create named session | - |

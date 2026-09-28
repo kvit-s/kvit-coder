@@ -6,7 +6,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
+
+	"github.com/kvit-s/kvit-coder/internal/procutil"
 )
 
 // turnPIDFile names the process currently running a turn for this session.
@@ -47,8 +48,10 @@ func readLivePID(path string) (int, bool) {
 	if err != nil || pid <= 0 {
 		return 0, false
 	}
-	// Signal 0 asks the kernel whether the process exists without disturbing it.
-	if err := syscall.Kill(pid, 0); err != nil {
+	// Alive asks the kernel whether the process exists without disturbing it
+	// (signal 0 on unix, exit-code query on Windows where FindProcess always
+	// succeeds).
+	if !procutil.Alive(pid) {
 		return pid, false
 	}
 	return pid, true

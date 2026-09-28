@@ -9,6 +9,7 @@ builds:
     goos:
       - linux
       - darwin
+      - windows
     goarch:
       - amd64
       - arm64
@@ -27,6 +28,7 @@ builds:
     goos:
       - linux
       - darwin
+      - windows
     goarch:
       - amd64
       - arm64
@@ -39,6 +41,10 @@ builds:
 
 archives:
   - formats: [tar.gz]
+    # Windows convention is zip: a tar.gz with a .exe inside confuses Windows users.
+    format_overrides:
+      - goos: windows
+        formats: [zip]
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_

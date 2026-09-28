@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/kvit-s/kvit-coder/internal/procutil"
 )
 
 // Confirmation policy. MCP tools run in a separate process and can touch
@@ -109,7 +111,7 @@ func (c *confirmer) ask(toolName, server, argsPreview string, remember bool) err
 		}
 		resp = strings.ToLower(strings.TrimSpace(answer))
 	} else {
-		tty, err := os.Open("/dev/tty")
+		tty, err := procutil.OpenConsole()
 		if err != nil {
 			return fmt.Errorf("MCP tool %s requires confirmation but no terminal is available; "+
 				"set mcp.confirm: trust for trusted servers to run headless", toolName)

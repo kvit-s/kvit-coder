@@ -23,6 +23,11 @@ jobs:
       - name: Build
         run: go build -v ./...
 
+      - name: Build for Windows
+        # Red gate for the native Windows port (spec/windows.md): the unix
+        # build passing while Windows fails is how every port phase starts.
+        run: GOOS=windows go build ./...
+
       - name: Test
         run: go test -v -race -coverprofile=coverage.out ./...
 
@@ -31,6 +36,28 @@ jobs:
         with:
           name: coverage
           path: coverage.out
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Build on Windows
+        run: go build ./...
+
+      - name: Test on Windows
+        # No -race: it needs gcc, which the runner may not have. TUI tests on
+        # headless Windows runners are historically flaky; if they prove so
+        # here, scope this to build plus non-interactive packages.
+        run: go test ./...
 
   lint:
     runs-on: ubuntu-latest

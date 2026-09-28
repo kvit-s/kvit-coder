@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 )
 
@@ -75,11 +76,23 @@ func (r Rule) Matches(s Scope) bool {
 		got := words[i]
 		if i == 0 {
 			// The program is compared without its directory, so /usr/bin/curl
-			// and ./curl are the same rule's business.
+			// and ./curl are the same rule's business. On Windows the
+			// comparison also strips .exe/.bat/.cmd/.ps1 and folds case,
+			// so curl.exe matches a curl rule.
 			got = programName(got)
 			want = programName(want)
 			if prefix, partial := strings.CutSuffix(want, "*"); partial {
-				if !strings.HasPrefix(got, prefix) {
+				if runtime.GOOS == "windows" {
+					if len(got) < len(prefix) || !strings.EqualFold(got[:len(prefix)], prefix) {
+						return false
+					}
+				} else if !strings.HasPrefix(got, prefix) {
+					return false
+				}
+				continue
+			}
+			if runtime.GOOS == "windows" {
+				if !strings.EqualFold(got, want) {
 					return false
 				}
 				continue
@@ -94,9 +107,33 @@ func (r Rule) Matches(s Scope) bool {
 
 func programName(word string) string {
 	if base := filepath.Base(word); base != "" && base != "." {
-		return base
+		word = base
+	}
+	if runtime.GOOS == "windows" {
+		return canonicalWindowsProgramName(word)
 	}
 	return word
+}
+
+// canonicalWindowsProgramName strips Windows executable/script suffixes and
+// folds case, so C:\tools\CURL.EXE and curl match the same rule. It is a
+// separate function so tests can exercise Windows matching on any OS.
+func canonicalWindowsProgramName(word string) string {
+	base := word
+	// filepath.Base already ran in programName, but tests call this directly
+	// with bare or path forms, so strip directories here too. Both separators
+	// count: a rule written on unix may carry forward slashes.
+	if i := strings.LastIndexAny(base, `/\`); i >= 0 {
+		base = base[i+1:]
+	}
+	lower := strings.ToLower(base)
+	for _, suffix := range []string{".exe", ".bat", ".cmd", ".ps1"} {
+		if strings.HasSuffix(lower, suffix) {
+			base = base[:len(base)-len(suffix)]
+			break
+		}
+	}
+	return strings.ToLower(base)
 }
 
 // Verdict is what the policy decided about one command.

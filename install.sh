@@ -9,6 +9,9 @@
 # agent, kcu and kvit-coder-ui for the interactive front end. If there is no
 # configuration yet it leaves one at ~/.kvit-coder/config.yaml to edit.
 #
+# For native Windows (outside WSL) use install.ps1 instead, which installs
+# the Windows zip release the same way.
+#
 # Environment:
 #   KVIT_VERSION   a release tag to install instead of the latest (e.g. v0.1.0)
 #   KVIT_BIN_DIR   where to put the binaries (default ~/.local/bin)
