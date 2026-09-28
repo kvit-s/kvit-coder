@@ -137,6 +137,32 @@ if (-not (Test-Path $cfgPath -PathType Leaf)) {
     Remove-Variable -Name found -Scope Script -ErrorAction SilentlyContinue
   } catch {
     Say ("  valid JSON: NO -- " + $_.Exception.Message)
+    try {
+      $bytes = [System.IO.File]::ReadAllBytes($cfgPath)
+      $n = [Math]::Min(32, $bytes.Length)
+      $hex = @()
+      for ($i = 0; $i -lt $n; $i++) { $hex += ("{0:X2}" -f $bytes[$i]) }
+      Say ("  first bytes (hex): " + ($hex -join " "))
+      if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+        Say "  encoding: UTF-8 with BOM"
+      } elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+        Say "  encoding: UTF-16 LE (BOM) -- this alone can explain the JSON error"
+      } elseif ($bytes.Length -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+        Say "  encoding: UTF-16 BE (BOM) -- this alone can explain the JSON error"
+      } else {
+        Say "  encoding: no BOM (plain UTF-8/ASCII)"
+      }
+      $sr = New-Object System.IO.StreamReader($cfgPath, $true)
+      $text = $sr.ReadToEnd()
+      $sr.Close()
+      $head = $text.Substring(0, [Math]::Min(300, $text.Length))
+      $head = $head -replace '(gho_|ghu_|ghp_|github_pat_)[A-Za-z0-9_]+', '$1***'
+      $head = $head -replace '[A-Za-z0-9+/=_-]{32,}', '***'
+      $head = $head -replace "`r", '\r' -replace "`n", '\n'
+      Say ("  head (secrets redacted): " + $head)
+    } catch {
+      Say ("  could not dump file head: " + $_.Exception.Message)
+    }
   }
 }
 
@@ -236,15 +262,24 @@ if (-not $kvit) {
   Say "  kvit-coder not found beside this script or on PATH -- skipping repro."
 } else {
   Say ("  running: " + $kvit + " copilot models")
+  # Start-Process with temp-file redirects (not 2>&1 | Out-String): a native
+  # command's non-zero exit turns each stderr line into a red NativeCommandError
+  # record on the pipeline, which is the noise in section 7 of earlier runs.
+  $tmpOut = [System.IO.Path]::GetTempFileName()
+  $tmpErr = [System.IO.Path]::GetTempFileName()
   try {
-    $out = & $kvit copilot models 2>&1 | Out-String
-    $code = $LASTEXITCODE
-    Say ("  exit code: " + $code)
-    $lines = @($out -split "`r?`n")
+    $p = Start-Process -FilePath $kvit -ArgumentList "copilot","models" -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tmpOut -RedirectStandardError $tmpErr
+    Say ("  exit code: " + $p.ExitCode)
+    $outText = [System.IO.File]::ReadAllText($tmpOut)
+    $errText = [System.IO.File]::ReadAllText($tmpErr)
+    $combined = ($outText + "`n" + $errText).Trim()
+    $lines = @($combined -split "`r?`n")
     $tail = $lines | Select-Object -Last 15
     foreach ($line in $tail) { Say ("  | " + $line) }
   } catch {
     Say ("  failed to run: " + $_.Exception.Message)
+  } finally {
+    Remove-Item $tmpOut, $tmpErr -ErrorAction SilentlyContinue
   }
 }
 
@@ -258,16 +293,29 @@ if ($script:usableFound) {
 }
 if ($credTargets.Count -gt 0) {
   Say "LIKELY CAUSE: you are signed in, but only inside Windows Credential"
-  Say "Manager -- which kvit-coder does not read on Windows yet."
+  Say "Manager -- which kvit-coder does not read on Windows."
   Say ""
-  Say "Fastest workaround (current terminal only):"
-  Say '  $env:COPILOT_GITHUB_TOKEN = (gh auth token)'
-  Say "then re-run 'kvit-coder copilot models' in the SAME terminal."
-  Say "Needs 'gh auth login' done first (see section 4)."
-  Say ""
-  Say "Persistent workaround: System Properties > Environment Variables, add"
-  Say "COPILOT_GITHUB_TOKEN for your user (needs a gho_/ghu_/github_pat_ token),"
-  Say "then open a NEW terminal."
+  if ($gh) {
+    Say "Fastest workaround (current terminal only):"
+    Say '  $env:COPILOT_GITHUB_TOKEN = (gh auth token)'
+    Say "then re-run 'kvit-coder copilot models' in the SAME terminal."
+  } else {
+    Say "Copy the token out once, by hand:"
+    Say "  1. Press Win+R, paste this and press Enter:"
+    Say "       control /name Microsoft.CredentialManager"
+    Say "  2. Open 'Windows Credentials'."
+    Say "  3. Under Generic Credentials find the entry with 'copilot' in"
+    Say "     its name, expand it, click Show next to the password."
+    Say "  4. Copy the value. It should start with gho_ or ghu_."
+    Say ""
+    Say "  Then, in the SAME terminal you run kvit-coder from:"
+    Say '  $env:COPILOT_GITHUB_TOKEN = "<paste the token here>"'
+    Say "  kvit-coder copilot models"
+    Say ""
+    Say "  To keep it, add COPILOT_GITHUB_TOKEN as a User environment"
+    Say "  variable (System Properties > Environment Variables),"
+    Say "  then open a NEW terminal."
+  }
   exit 1
 }
 Say "No usable Copilot credential found anywhere the script looked."
