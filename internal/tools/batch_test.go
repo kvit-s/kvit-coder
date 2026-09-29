@@ -230,3 +230,83 @@ func TestBatchAcceptsNamespacePrefix(t *testing.T) {
 		t.Fatalf("results = %+v, want one OK result", results)
 	}
 }
+
+// TestBatchStringifiedCallsAccepted: some harnesses deliver the array as a
+// JSON-encoded string ({"calls": "[{...}]"}). There is no legitimate call
+// where 'calls' is a string, so Batch accepts it when it parses as an array.
+func TestBatchStringifiedCallsAccepted(t *testing.T) {
+	batch := newBatchTool(t, &batchTestTool{name: "Read", parallel: true})
+
+	inner, _ := json.Marshal([]map[string]any{
+		{"tool": "Read", "args": map[string]any{"path": "a"}},
+		{"tool": "Read", "args": map[string]any{"path": "b"}},
+	})
+	raw, _ := json.Marshal(map[string]any{"calls": string(inner)})
+
+	if err := batch.Check(context.Background(), raw); err != nil {
+		t.Fatalf("Check(stringified calls) = %v, want it accepted", err)
+	}
+	result, err := batch.Call(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	results := result.(map[string]any)["results"].([]BatchResult)
+	if len(results) != 2 || !results[0].OK || !results[1].OK {
+		t.Fatalf("results = %+v, want two OK results", results)
+	}
+}
+
+// TestBatchStringifiedCallsInvalid: a string that does not parse as an array
+// is rejected with an actionable message, not Go internals.
+func TestBatchStringifiedCallsInvalid(t *testing.T) {
+	batch := newBatchTool(t, &batchTestTool{name: "Read", parallel: true})
+
+	raw, _ := json.Marshal(map[string]any{"calls": "not-json["})
+	err := batch.Check(context.Background(), raw)
+	if err == nil {
+		t.Fatal("Check(stringified garbage) = nil, want an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "must be an array") {
+		t.Errorf("error is %q, want it to say 'calls' must be an array", msg)
+	}
+	for _, leaked := range []string{"cannot unmarshal", "batchArgs", "Go struct"} {
+		if strings.Contains(msg, leaked) {
+			t.Errorf("error %q leaks Go internals %q", msg, leaked)
+		}
+	}
+}
+
+// TestBatchStringifiedInnerArgsAccepted: the same double-encoding one level
+// down ({"tool": "Read", "args": "{\"path\": \"a\"}"}) is decoded in place.
+func TestBatchStringifiedInnerArgsAccepted(t *testing.T) {
+	batch := newBatchTool(t, &batchTestTool{
+		name:     "Read",
+		parallel: true,
+		call: func(_ context.Context, args json.RawMessage) (any, error) {
+			var m map[string]any
+			if err := json.Unmarshal(args, &m); err != nil {
+				return nil, SemanticErrorf("args are not an object: %v", err)
+			}
+			if m["path"] != "a" {
+				return nil, SemanticErrorf("want path a, got %v", m["path"])
+			}
+			return map[string]any{"ok": true}, nil
+		},
+	})
+
+	raw, _ := json.Marshal(map[string]any{"calls": []map[string]any{
+		{"tool": "Read", "args": "{\"path\": \"a\"}"},
+	}})
+	if err := batch.Check(context.Background(), raw); err != nil {
+		t.Fatalf("Check = %v, want it accepted", err)
+	}
+	result, err := batch.Call(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	results := result.(map[string]any)["results"].([]BatchResult)
+	if len(results) != 1 || !results[0].OK {
+		t.Fatalf("results = %+v, want one OK result", results)
+	}
+}

@@ -162,7 +162,54 @@ func (t *BatchTool) Check(ctx context.Context, args json.RawMessage) error {
 func (t *BatchTool) parse(args json.RawMessage) (*batchArgs, error) {
 	var parsed batchArgs
 	if err := json.Unmarshal(args, &parsed); err != nil {
-		return nil, SemanticErrorf("Batch: arguments are not valid JSON: %v", err)
+		// Lenient path: some harnesses deliver the array as a JSON-encoded
+		// string ({"calls": "[{...}]"}) instead of a raw array. There is no
+		// legitimate call where 'calls' is a string, so when it parses as
+		// an array we accept it rather than failing on the shape.
+		var outer map[string]json.RawMessage
+		if oerr := json.Unmarshal(args, &outer); oerr == nil {
+			if raw, ok := outer["calls"]; ok {
+				var s string
+				if serr := json.Unmarshal(raw, &s); serr == nil {
+					if trimmed := strings.TrimSpace(s); trimmed != "" {
+						var calls []batchCall
+						if cerr := json.Unmarshal([]byte(trimmed), &calls); cerr == nil {
+							parsed.Calls = calls
+						} else {
+							return nil, SemanticErrorf("Batch: 'calls' must be an array of {tool, args} — send the raw array, not a JSON-encoded string. %d calls max, no Batch inside a Batch.", maxBatchCalls)
+						}
+					}
+				} else {
+					return nil, SemanticErrorf("Batch: 'calls' must be an array of {tool, args} — send the raw array, not a JSON-encoded string. %d calls max, no Batch inside a Batch.", maxBatchCalls)
+				}
+			} else {
+				return nil, SemanticErrorf("Batch: 'calls' is required — send {\"calls\": [{\"tool\": ..., \"args\": {...}}]}. %d calls max, no Batch inside a Batch.", maxBatchCalls)
+			}
+		} else {
+			return nil, SemanticErrorf("Batch: arguments are not valid JSON — send {\"calls\": [{\"tool\": ..., \"args\": {...}}]}.")
+		}
+	}
+
+	// Lenient path, inner level: an individual call's args may arrive the
+	// same way ({"tool": "Read", "args": "{\"path\": \"a\"}"}). Decode it in
+	// place when it parses as an object; otherwise leave it for the tool's
+	// own check to report.
+	for i, call := range parsed.Calls {
+		if len(call.Args) == 0 {
+			continue
+		}
+		var s string
+		if serr := json.Unmarshal(call.Args, &s); serr != nil {
+			continue
+		}
+		trimmed := strings.TrimSpace(s)
+		if trimmed == "" {
+			continue
+		}
+		var obj map[string]any
+		if oerr := json.Unmarshal([]byte(trimmed), &obj); oerr == nil {
+			parsed.Calls[i].Args = json.RawMessage(trimmed)
+		}
 	}
 	if len(parsed.Calls) == 0 {
 		return nil, SemanticErrorf("Batch: 'calls' is empty. Call the tool directly instead.")
