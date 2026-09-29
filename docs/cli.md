@@ -28,27 +28,6 @@ are for; this file is the reference.
 | `--session-delete <name>` | Delete a session | - |
 | `--version` | Show version info | - |
 
-### kvit-coder copilot models / models-add
-
-`kvit-coder copilot models [-config path] [-host hostname]` prints the models
-the signed-in GitHub Copilot account can call, and the API host the token
-exchange selected (personal, business, or enterprise). Each line is the model
-id, the wire protocol, the context window, and the effort levels when the
-model publishes any. Models the account's policy has turned off are left out.
-`-host` is a GitHub Enterprise hostname such as `company.ghe.com`. The command
-reads the same sign-in Copilot CLI uses; see [GitHub Copilot](configuration.md#github-copilot)
-for the token order and the `provider: github-copilot` model entry.
-
-`kvit-coder copilot models-add [-config path] [-host hostname] [-dry-run]`
-appends those models to the config file's `models:` list so they can be picked
-with `:mN` or `--model`. Embedding models (no chat endpoint) are skipped, as
-are models the account's policy turned off and rows the file already has. Each
-new row records the context window and the advertised effort levels, with the
-default on `medium` (or the first level when there is no `medium`).
-`api_backend` is left empty so the protocol keeps coming from the account's
-model list. `-dry-run` prints the rows without writing. Running it
-again is a no-op: rows already present are reported and left alone.
-
 ### kvit-coder acp
 
 `kvit-coder acp [-config <path>] [-log <path>]` runs the agent for an editor or

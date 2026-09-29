@@ -286,13 +286,6 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 		t.defer_(func() { workspaceLock.Release() })
 	}
 
-	// A Copilot model exchanges its GitHub token here, before the first
-	// request, so a missing sign-in fails the turn immediately. The
-	// authorizer refreshes that session token on later requests.
-	if err := cfg.PrepareActiveEndpoint(runCtx); err != nil {
-		return nil, err
-	}
-
 	// Initialize LLM client
 	t.llmClient = llm.NewClient(cfg.LLM.BaseURL, cfg.LLM.APIKey,
 		llm.WithAPIKeyEnv(cfg.LLM.APIKeyEnv),
@@ -301,7 +294,6 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 		llm.WithReasoningEffort(cfg.LLM.ReasoningEffort),
 		llm.WithEffortField(cfg.LLM.EffortField),
 		llm.WithReasoningSummary(cfg.ReasoningSummaryOrDefault()),
-		llm.WithRequestAuthorizer(cfg.Authorizer()),
 		llm.WithTimeout(time.Duration(cfg.LLM.RequestTimeout)*time.Second),
 		llm.WithRetryNotice(func(attempt, maxAttempts int, delay time.Duration, reason error) {
 			// Say it out loud. A failed request that is quietly retried looks

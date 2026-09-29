@@ -191,41 +191,25 @@ func TestChatCompletionsWithEfforts(t *testing.T) {
 	}
 }
 
-func TestApplyModelCopilotClearsBaseAndRestoresIt(t *testing.T) {
+func TestApplyModelRestoresFileBaseURL(t *testing.T) {
 	cfg := &Config{}
 	cfg.fileBaseURL = "https://file/v1"
-	cfg.fileCopilotHost = "company.ghe.com"
 	cfg.LLM.BaseURL = "https://file/v1"
 	cfg.LLM.APIBackend = "responses"
 	cfg.LLM.APIKey = "old"
 
-	cfg.ApplyModel(ModelEntry{ID: "sonnet", Model: "claude-sonnet-4.6", Provider: "github-copilot"}, "high")
-	if cfg.LLM.Provider != "github-copilot" || cfg.LLM.BaseURL != "" {
-		t.Fatalf("copilot entry should drop the previous base URL: %+v", cfg.LLM)
-	}
-	if cfg.LLM.CopilotHost != "company.ghe.com" {
-		t.Fatalf("host = %q, want the file default", cfg.LLM.CopilotHost)
-	}
-	if cfg.LLM.EffortField != "reasoning_effort" {
-		t.Fatalf("effort field = %q, want reasoning_effort", cfg.LLM.EffortField)
-	}
-	if cfg.LLM.APIKey != "" {
-		t.Fatalf("key = %q, want it cleared so the Copilot sign-in is used", cfg.LLM.APIKey)
-	}
-	if cfg.copilotBackendPinned {
-		t.Fatal("an entry with no api_backend should let the model list choose")
-	}
-
 	cfg.ApplyModel(ModelEntry{ID: "local", Model: "qwen", BaseURL: "http://local/v1", APIBackend: "chat_completions"}, "")
-	if cfg.LLM.Provider != "" || cfg.LLM.CopilotHost != "" {
-		t.Fatalf("leaving Copilot should clear it: %+v", cfg.LLM)
-	}
 	if cfg.LLM.BaseURL != "http://local/v1" {
 		t.Fatalf("base = %q", cfg.LLM.BaseURL)
 	}
 
-	cfg.ApplyModel(ModelEntry{ID: "sonnet", Model: "claude-sonnet-4.6", Provider: "github-copilot"}, "")
 	cfg.ApplyModel(ModelEntry{ID: "plain", Model: "plain-wire"}, "")
+	if cfg.LLM.BaseURL != "http://local/v1" {
+		t.Fatalf("an entry with no base URL keeps the current one, got %q", cfg.LLM.BaseURL)
+	}
+
+	cfg.LLM.BaseURL = ""
+	cfg.ApplyModel(ModelEntry{ID: "plain2", Model: "plain-wire-2"}, "")
 	if cfg.LLM.BaseURL != "https://file/v1" {
 		t.Fatalf("an entry with no base URL should restore the file's, got %q", cfg.LLM.BaseURL)
 	}

@@ -5,101 +5,12 @@ row names an endpoint, the model id that endpoint expects, the wire protocol,
 the context window, and the effort levels the UI offers as `:e1`, `:e2`, and
 so on. `:m1` is the first row. The row whose model id matches `llm.model` is
 the one a new session starts on. Every key is defined in
-[configuration.md](configuration.md). This page is how to fill a row from the
-two hosted sources this program is set up for: a GitHub Copilot seat already
-signed in on the machine, and OpenCode, which has a pay-per-request catalog
-(Zen) and a separate low-cost subscription (Go).
+[configuration.md](configuration.md). This page is how to fill a row from
+OpenCode, which has a pay-per-request catalog (Zen) and a separate low-cost
+subscription (Go).
 
-The model ids below were taken from those providers on 28 September 2026.
-Both catalogs change. For Copilot, `kvit-coder copilot models` is the list
-for the account on that machine. For OpenCode, the Zen and Go pages linked
-below are the current list.
-
-## GitHub Copilot
-
-A row with `provider: github-copilot` calls the model through the Copilot
-seat signed in on the machine, the same seat Copilot CLI uses. Usage is
-counted against that seat. A personal Copilot Free seat is enough for the
-models that seat has turned on. Buying Copilot for a GitHub organization is
-a different subscription and is not required for this.
-
-Sign in with `copilot login`, or leave a GitHub token where the program
-already looks: `COPILOT_GITHUB_TOKEN`, then `GH_TOKEN`, then `GITHUB_TOKEN`,
-then `~/.copilot/config.json`, then the `copilot-cli` keychain entry, then
-`gh auth token`. The token is a `gho_`, `ghu_`, or `github_pat_` token. A
-fine-grained token needs the Copilot Requests account permission. The full
-order is in [configuration.md](configuration.md#github-copilot).
-
-List what that seat can call:
-
-```bash
-kvit-coder copilot models
-```
-
-If it reports missing credentials on Windows even though `copilot` is on
-`PATH`, run the diagnostic (it walks every credential source in order and
-never prints a whole secret):
-
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts/copilot-doctor.ps1
-```
-
-To write that list into `config.yaml` instead of copying it by hand:
-
-```bash
-kvit-coder copilot models-add
-```
-
-`models-add` appends every callable model to the config file's `models:` list
-(as `copilot-<id>` rows), skipping embedding models, models the seat turned
-off, and rows already there. `-dry-run` previews the rows without writing.
-
-The first lines of `models` are the API host for the account and how the call
-was authenticated. Each following line is one model: the id to put in `model`,
-the wire protocol (`chat_completions`, `responses`, or `messages`), the
-context window, the effort levels when the model publishes any, and the
-display name. Models the account's policy has turned off are omitted. On a
-Copilot Free seat checked on 28 September 2026 the callable set included
-`gpt-6-luna`, `gpt-5.6-luna`, `gpt-5.4-mini-free-auto`, `gpt-5-mini`,
-`kimi-k3`, `mai-code-1.1-flash`, `claude-haiku-4.5`, and `gpt-4.1`. Claude
-Sonnet and Claude Opus were in GitHub's catalog with the policy disabled, so
-they did not appear.
-
-Leave `api_backend` empty. The program reads the protocol from that model
-list. Set it only to force `chat_completions`, `responses`, or `messages`.
-`context` is the context-window number from the line. Copy the effort values
-onto the row. A Copilot chat model reads effort from the top-level
-`reasoning_effort` field, which an entry gets when it does not set
-`effort_field` itself. On Claude, a selected effort turns on adaptive
-thinking. The responses protocol sends the effort as `reasoning.effort` and
-ignores `effort_field`.
-
-```yaml
-models:
-  - id: copilot-luna
-    name: "GPT-6 Luna (Copilot)"
-    provider: github-copilot
-    model: "gpt-6-luna"
-    context: 1000000
-    efforts:
-      - value: low
-      - value: medium
-      - value: high
-        default: true
-      - value: xhigh
-      - value: max
-```
-
-The program exchanges the GitHub token for a short-lived Copilot session and
-uses the API host that exchange returns. The host is the first line of
-`kvit-coder copilot models`. Accounts land on
-`https://api.individual.githubcopilot.com`,
-`https://api.githubcopilot.com`,
-`https://api.business.githubcopilot.com`, or
-`https://api.enterprise.githubcopilot.com`. Set `base_url` to one of those
-origins, with no `/v1` suffix, only when the network blocks the host the
-exchange returned. For GitHub Enterprise Cloud with data residency, set
-`copilot_host` to the hostname, such as `company.ghe.com`.
+The model ids below were taken from OpenCode on 28 September 2026 and change
+over time; the Zen and Go pages linked below are the current list.
 
 ## OpenCode
 

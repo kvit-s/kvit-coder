@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/kvit-s/kvit-coder/internal/copilot"
 	"github.com/kvit-s/kvit-coder/internal/llm"
 )
 
@@ -38,8 +37,7 @@ func IsCanonicalEffort(s string) bool {
 }
 
 // ValidBackend reports whether b names a known wire protocol (or is empty,
-// which means the chat-completions default). "messages" is Claude's API,
-// which is how GitHub Copilot serves Claude.
+// which means the chat-completions default). "messages" is Claude's API.
 func ValidBackend(b string) bool {
 	return b == "" || b == llm.BackendChatCompletions || b == llm.BackendResponses || b == llm.BackendMessages
 }
@@ -65,23 +63,15 @@ func (e EffortOption) Display() string {
 // merge_thinking, ...) always come from the `llm:` block — except the agent
 // profile, which an entry may override per model (see ProfileFor).
 type ModelEntry struct {
-	ID         string `yaml:"id"`
-	Name       string `yaml:"name"`
-	Model      string `yaml:"model"`
-	BaseURL    string `yaml:"base_url"`
-	APIBackend string `yaml:"api_backend"`
-	APIKey     string `yaml:"api_key"`
-	APIKeyEnv  string `yaml:"api_key_env"`
-	// Provider selects a non-OpenAI credential flow. "github-copilot" calls
-	// this model through the GitHub Copilot subscription signed in on the
-	// machine; the api_key is then a GitHub token, not a model-vendor key,
-	// and base_url is optional (the token exchange names the API host).
-	Provider string `yaml:"provider"`
-	// CopilotHost is the GitHub Enterprise hostname (company.ghe.com) when
-	// the subscription is not on github.com. Empty means github.com.
-	CopilotHost string         `yaml:"copilot_host"`
-	Context     int            `yaml:"context"`
-	Efforts     []EffortOption `yaml:"efforts"`
+	ID         string         `yaml:"id"`
+	Name       string         `yaml:"name"`
+	Model      string         `yaml:"model"`
+	BaseURL    string         `yaml:"base_url"`
+	APIBackend string         `yaml:"api_backend"`
+	APIKey     string         `yaml:"api_key"`
+	APIKeyEnv  string         `yaml:"api_key_env"`
+	Context    int            `yaml:"context"`
+	Efforts    []EffortOption `yaml:"efforts"`
 
 	// EffortField names which field of a chat-completions request carries
 	// the reasoning effort for this endpoint: "chat_template_kwargs" (the
@@ -143,16 +133,14 @@ func (c *Config) ModelList() []ModelEntry {
 		return c.Models
 	}
 	return []ModelEntry{{
-		ID:          "default",
-		Name:        c.LLM.Model,
-		Model:       c.LLM.Model,
-		BaseURL:     c.LLM.BaseURL,
-		APIBackend:  c.LLM.APIBackend,
-		APIKey:      c.LLM.APIKey,
-		APIKeyEnv:   c.LLM.APIKeyEnv,
-		Provider:    c.LLM.Provider,
-		CopilotHost: c.LLM.CopilotHost,
-		Context:     c.LLM.Context,
+		ID:         "default",
+		Name:       c.LLM.Model,
+		Model:      c.LLM.Model,
+		BaseURL:    c.LLM.BaseURL,
+		APIBackend: c.LLM.APIBackend,
+		APIKey:     c.LLM.APIKey,
+		APIKeyEnv:  c.LLM.APIKeyEnv,
+		Context:    c.LLM.Context,
 	}}
 }
 
@@ -383,27 +371,9 @@ func (c *Config) ApplyModel(entry ModelEntry, effort string) {
 
 	c.LLM.Model = entry.Model
 
-	// Always assigned, like the effort field below. ApplyModel runs for the
-	// default entry and then for the selected one, so a Copilot entry has to
-	// clear a previous entry's host and the other way around.
-	c.LLM.Provider = entry.Provider
-	c.copilotBackendPinned = entry.Provider == copilot.Provider && entry.APIBackend != ""
-	if entry.Provider == copilot.Provider {
-		c.LLM.CopilotHost = entry.CopilotHost
-		if c.LLM.CopilotHost == "" {
-			c.LLM.CopilotHost = c.fileCopilotHost
-		}
-	} else {
-		c.LLM.CopilotHost = ""
-	}
-
 	switch {
 	case entry.BaseURL != "":
 		c.LLM.BaseURL = entry.BaseURL
-	case entry.Provider == copilot.Provider:
-		// Empty means the token exchange names the host. Leaving the previous
-		// entry's URL in place would send the Copilot token to that endpoint.
-		c.LLM.BaseURL = ""
 	case c.LLM.BaseURL == "":
 		c.LLM.BaseURL = c.fileBaseURL
 	}
@@ -415,16 +385,10 @@ func (c *Config) ApplyModel(entry ModelEntry, effort string) {
 	// Always assigned, never left alone: ApplyModel runs twice in a process
 	// (the default entry, then the selected one), so an entry that names no
 	// effort_field has to fall back to the file's rather than keep whatever
-	// the previous entry set. A Copilot entry is the exception: Copilot's
-	// chat endpoint reads the top-level reasoning_effort field, and the
-	// file's value is whatever the default endpoint wants, so an entry that
-	// does not say inherits reasoning_effort rather than the file.
+	// the previous entry set.
 	c.LLM.EffortField = entry.EffortField
 	if c.LLM.EffortField == "" {
 		c.LLM.EffortField = c.fileEffortField
-	}
-	if entry.Provider == copilot.Provider && entry.EffortField == "" {
-		c.LLM.EffortField = llm.EffortFieldReasoningEffort
 	}
 
 	if entry.Context != 0 {
@@ -442,6 +406,12 @@ func (c *Config) ApplyModel(entry ModelEntry, effort string) {
 	c.LLM.ReasoningEffort = effort
 
 	c.ApplyProfile(c.ProfileFor(entry))
+}
+
+// UseAPIBackend records a wire protocol chosen on the command line. It wins
+// over the protocol a catalog entry would otherwise select.
+func (c *Config) UseAPIBackend(backend string) {
+	c.LLM.APIBackend = backend
 }
 
 // EntryDisplay is ModelDisplay for a catalog row: "model:effort" when an
@@ -528,15 +498,6 @@ func (c *Config) validateModels(configPath string) error {
 			return fmt.Errorf("%s (%s): unknown api_backend %q; use %q, %q or %q",
 				where, e.ID, e.APIBackend, llm.BackendChatCompletions, llm.BackendResponses, llm.BackendMessages)
 		}
-		if e.Provider != "" && e.Provider != copilot.Provider {
-			return fmt.Errorf("%s (%s): unknown provider %q; the only value is %q",
-				where, e.ID, e.Provider, copilot.Provider)
-		}
-		host, err := copilot.NormalizeHost(e.CopilotHost)
-		if err != nil {
-			return fmt.Errorf("%s (%s): %w", where, e.ID, err)
-		}
-		e.CopilotHost = host
 
 		if !llm.ValidEffortField(e.EffortField) {
 			return fmt.Errorf("%s (%s): unknown effort_field %q; use %q or %q",

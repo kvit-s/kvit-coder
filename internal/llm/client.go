@@ -75,8 +75,7 @@ type Client struct {
 	// timeout times the retry count.
 	onRetry func(attempt, maxAttempts int, delay time.Duration, reason error)
 	// auth, when set, refreshes a short-lived credential and rewrites
-	// request headers before each attempt. GitHub Copilot's session token
-	// expires within the hour, and a tool loop can outlast it.
+	// request headers before each attempt.
 	auth RequestAuthorizer
 	// maxRetries is how many further attempts a failed request gets. See
 	// WithMaxRetries.
@@ -117,12 +116,10 @@ func WithAPIKeyEnv(name string) Option {
 	}
 }
 
-// RequestAuthorizer adjusts a request immediately before it is sent. Copilot
-// uses it to refresh a session token, point the request at the account's API
-// host, and set the headers that endpoint requires. Authorize returning an
-// error fails the request without the retry ladder. Invalidate drops a
-// cached credential so the next Authorize fetches a new one; postJSON calls
-// it once after a 401.
+// RequestAuthorizer adjusts a request immediately before it is sent.
+// Authorize returning an error fails the request without the retry ladder.
+// Invalidate drops a cached credential so the next Authorize fetches a new
+// one; postJSON calls it once after a 401.
 type RequestAuthorizer interface {
 	Authorize(ctx context.Context, req *http.Request, body []byte) error
 	Invalidate()
@@ -389,10 +386,9 @@ func (c *Client) postJSON(ctx context.Context, path string, body []byte) ([]byte
 			httpReq.Header.Set(k, v)
 		}
 		if c.backend == BackendMessages {
-			// Claude's API rejects a request without a version, and Copilot's
-			// Claude shim is that API. The beta is what lets a thinking block
-			// be replayed on the next call of a tool loop; it is only sent
-			// when this client asked for thinking.
+			// Claude's API rejects a request without a version. The beta is
+			// what lets a thinking block be replayed on the next call of a
+			// tool loop; it is only sent when this client asked for thinking.
 			httpReq.Header.Set("anthropic-version", "2023-06-01")
 			if c.reasoningEffort != "" && !strings.EqualFold(c.reasoningEffort, "none") {
 				httpReq.Header.Set("anthropic-beta", "interleaved-thinking-2025-05-14")
@@ -484,7 +480,7 @@ func (c *Client) statusError(status int, body []byte) error {
 		return err
 	}
 	if c.auth != nil {
-		return fmt.Errorf("%w (GitHub Copilot refused the request. The account needs a Copilot seat, and a business or enterprise network has to allow the API host the token exchange returned)", err)
+		return fmt.Errorf("%w (the request authorizer refused the request)", err)
 	}
 	switch {
 	case c.apiKey == "" && c.apiKeyEnv != "":

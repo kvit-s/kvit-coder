@@ -10,7 +10,7 @@ and was extended with features more suitable to strong models. Weak/strong modes
 and how much handholding is done. Each model added to the agent flagged as weak or strong.
 
 It uses small amound of RAM (<30 Mb) compared to hundreds Mbs other agents use. See [`docs/agents-ram.md`](docs/agents-ram.md).
-This was is important to me as I often have dosens of agents opened/running/waiting at any moment.
+This is important to me as I often have dosens of agents opened/running/waiting at any moment.
 
 ![kvit-coder-ui running a session](docs/screen.png)
 
@@ -104,7 +104,7 @@ skills of weak models. See [`benchmarks/README.md`](benchmarks/README.md).
 [`docs/`](docs/) holds the reference documentation: the
 [tools the model can call](docs/tools.md), every
 [command-line flag](docs/cli.md), every [configuration key](docs/configuration.md),
-[how to add a Copilot or OpenCode model](docs/models.md),
+[how to add an OpenCode model](docs/models.md),
 [sessions and steering](docs/sessions.md), [external tools](docs/mcp.md), the
 [memory measurements](docs/agents-ram.md) quoted above, and
 [how the program is built](docs/architecture.md): one process per turn, sessions

@@ -8,9 +8,7 @@ import (
 	"strings"
 )
 
-// BackendMessages is the Anthropic Messages API (POST /v1/messages). GitHub
-// Copilot serves Claude there; chat completions and the Responses API both
-// answer that the model is not supported.
+// BackendMessages is the Anthropic Messages API (POST /v1/messages).
 const BackendMessages = "messages"
 
 // messagesDefaultMaxTokens is sent when the caller did not set a limit.
@@ -18,9 +16,9 @@ const BackendMessages = "messages"
 const messagesDefaultMaxTokens = 16384
 
 // anthropicThinkingID marks a ReasoningBlock that is a Claude thinking block
-// to be replayed, not a Responses-API encrypted item. The signature Copilot
-// returns has to go back with the thinking text on the next request of the
-// same tool loop, or Claude rejects the call.
+// to be replayed, not a Responses-API encrypted item. The signature has to
+// go back with the thinking text on the next request of the same tool loop,
+// or Claude rejects the call.
 const anthropicThinkingID = "anthropic-thinking"
 
 // anthropicRedactedID is the same for a redacted thinking block, whose

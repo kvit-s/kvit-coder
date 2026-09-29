@@ -32,18 +32,11 @@ var (
 )
 
 // printUsage is the text for `kvit-coder help`, `-h`, and a run that was
-// given no prompt. The Copilot model list is a subcommand, so it never
-// appears among the flags flag.PrintDefaults walks.
+// given no prompt.
 func printUsage() {
 	fmt.Fprintln(os.Stderr, `Usage: kvit-coder -p "prompt" [options]`)
 	fmt.Fprintln(os.Stderr, "       kvit-coder --benchmark [options]")
 	fmt.Fprintln(os.Stderr, "       kvit-coder acp [options]")
-	fmt.Fprintln(os.Stderr, "       kvit-coder copilot models [-host hostname]")
-	fmt.Fprintln(os.Stderr, "       kvit-coder copilot models-add [-host hostname] [-dry-run]")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "kvit-coder copilot models lists the models the signed-in GitHub Copilot account can call.")
-	fmt.Fprintln(os.Stderr, "kvit-coder copilot models-add appends them to the config file's models: list,")
-	fmt.Fprintln(os.Stderr, "skipping embedding models and rows already there.")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "kvit-coder is a headless agent. Use kvit-coder-ui for interactive mode.")
 	fmt.Fprintln(os.Stderr, "")
@@ -59,16 +52,13 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "acp" {
 		os.Exit(runACP(os.Args[2:]))
 	}
-	if len(os.Args) > 1 && os.Args[1] == "copilot" {
-		os.Exit(runCopilot(os.Args[2:]))
-	}
 
 	// Parse flags
 	configPath := flag.String("config", "", "path to config file (default: the first of $KVIT_CODER_CONFIG, ./config.yaml, ~/.kvit-coder/config.yaml, config.yaml beside the binary)")
 	model := flag.String("model", "", "select model: :mN, index, id, name or wire id from models:, with optional :effort (e.g. --model m3:xhigh)")
 	modelShort := flag.String("m", "", "shorthand for --model")
 	baseURL := flag.String("base-url", "", "override LLM base URL")
-	apiBackend := flag.String("api-backend", "", "override LLM wire protocol (chat_completions or responses)")
+	apiBackend := flag.String("api-backend", "", "override LLM wire protocol (chat_completions, responses or messages)")
 	effort := &stringFlag{}
 	flag.Var(effort, "effort", "reasoning effort for the selected model (empty clears it)")
 	effortShort := &stringFlag{}

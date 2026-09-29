@@ -19,7 +19,6 @@ func TestPowerShellScriptsAreASCII(t *testing.T) {
 	}
 	root := filepath.Dir(filepath.Dir(filepath.Dir(thisFile)))
 	files := []string{
-		filepath.Join(root, "scripts", "copilot-doctor.ps1"),
 		filepath.Join(root, "scripts", "portable-install.ps1"),
 		filepath.Join(root, "install.ps1"),
 	}
