@@ -310,3 +310,82 @@ func TestBatchStringifiedInnerArgsAccepted(t *testing.T) {
 		t.Fatalf("results = %+v, want one OK result", results)
 	}
 }
+
+// TestBatchStringifiedMalformedShowsPosition: the f0vfnx failure was a
+// stringified array with a misplaced brace (a tool parameter outside args),
+// so the string never parsed as an array. The error must keep saying the
+// array must be raw, and add where the parse broke plus what was received.
+func TestBatchStringifiedMalformedShowsPosition(t *testing.T) {
+	batch := newBatchTool(t, &batchTestTool{name: "Read", parallel: true}, &batchTestTool{name: "Shell", parallel: true}, &batchTestTool{name: "Glob", parallel: true})
+
+	inner := `[{"args": {"command": "git log --oneline"}, "tool": "Shell"}, {"args": {"path": "/tmp"}, "pattern": "*.md"}, "tool": "Glob"}]`
+	raw, _ := json.Marshal(map[string]any{"calls": inner})
+	err := batch.Check(context.Background(), raw)
+	if err == nil {
+		t.Fatal("Check(malformed stringified calls) = nil, want an error")
+	}
+	msg := err.Error()
+	for _, want := range []string{"must be an array", "not a JSON-encoded string", "inside its args", "Received"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q wants %q", msg, want)
+		}
+	}
+	for _, leaked := range []string{"cannot unmarshal", "batchArgs", "batchCall", "Go struct", "Go value"} {
+		if strings.Contains(msg, leaked) {
+			t.Errorf("error %q leaks Go internals %q", msg, leaked)
+		}
+	}
+}
+
+// TestBatchStringifiedObjectNotArray: a string holding a single object (not
+// an array) must not leak Go type names either.
+func TestBatchStringifiedObjectNotArray(t *testing.T) {
+	batch := newBatchTool(t, &batchTestTool{name: "Read", parallel: true})
+	raw, _ := json.Marshal(map[string]any{"calls": `{"tool": "Read", "args": {"path": "a"}}`})
+	err := batch.Check(context.Background(), raw)
+	if err == nil {
+		t.Fatal("Check(stringified object) = nil, want an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "must be an array") {
+		t.Errorf("error is %q, want it to say 'calls' must be an array", msg)
+	}
+	for _, leaked := range []string{"cannot unmarshal", "batchArgs", "batchCall", "Go struct", "Go value"} {
+		if strings.Contains(msg, leaked) {
+			t.Errorf("error %q leaks Go internals %q", msg, leaked)
+		}
+	}
+}
+
+// TestBatchRawExtraKeysRejected: {"tool": "Glob", "args": {"path": ...},
+// "pattern": ...} leaves a parameter outside args, where it would be
+// silently dropped. Fail fast naming the field and its home.
+func TestBatchRawExtraKeysRejected(t *testing.T) {
+	batch := newBatchTool(t, &batchTestTool{name: "Glob", parallel: true})
+	raw, _ := json.Marshal(map[string]any{"calls": []map[string]any{
+		{"tool": "Glob", "args": map[string]any{"path": "/tmp"}, "pattern": "*.md"},
+	}})
+	err := batch.Check(context.Background(), raw)
+	if err == nil {
+		t.Fatal("Check(extra key outside args) = nil, want an error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `"pattern"`) || !strings.Contains(msg, "outside 'args'") {
+		t.Errorf("error is %q, want it to name \"pattern\" outside 'args'", msg)
+	}
+	if !strings.Contains(msg, "inside its args") {
+		t.Errorf("error is %q, want it to say parameters go inside args", msg)
+	}
+}
+
+// TestBatchPromptSectionStatesShapeRules: the prompt must warn against both
+// halves of the f0vfnx slip before the model makes it.
+func TestBatchPromptSectionStatesShapeRules(t *testing.T) {
+	batch := newBatchTool(t, &batchTestTool{name: "Read", parallel: true})
+	section := batch.PromptSection()
+	for _, want := range []string{"never a JSON-encoded string", "inside its own 'args'"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("PromptSection %q wants %q", section, want)
+		}
+	}
+}

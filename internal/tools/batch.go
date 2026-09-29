@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -109,7 +111,13 @@ Use it whenever the next few calls are already decided and none depends on
 another's result. One request and one round of thinking instead of one each,
 and read-only calls run at the same time. At most %d calls, no Batch inside a
 Batch, and one call failing does not stop the others: every call comes back
-with its own result or its own error.`, maxBatchCalls)
+with its own result or its own error.
+
+Shape rules: 'calls' is a raw JSON array, never a JSON-encoded string, and
+every tool's parameters go inside its own 'args' object — never beside
+'tool'/'args'. A Glob call looks like {"tool": "Glob", "args":
+{"path": "dir", "pattern": "*.md"}}, not {"args": {"path": "dir"},
+"pattern": "*.md"}.`, maxBatchCalls)
 }
 
 // SelfTimeout opts out of the loop's blanket 15-second tool timeout: a batch is
@@ -175,8 +183,17 @@ func (t *BatchTool) parse(args json.RawMessage) (*batchArgs, error) {
 						var calls []batchCall
 						if cerr := json.Unmarshal([]byte(trimmed), &calls); cerr == nil {
 							parsed.Calls = calls
+							if extra := extraBatchKeysFromString(trimmed); len(extra) > 0 {
+								// The string parsed, but a call carries fields
+								// beside tool/args — usually a tool parameter
+								// left outside args. Fail fast with the fix
+								// instead of running with half the arguments.
+								return nil, SemanticErrorf("Batch: call %d has %s outside 'args'. All of that tool's parameters go inside its args: {\"tool\": %q, \"args\": {...}}.",
+									extra[0].index, quotedList(extra[0].keys), parsed.Calls[extra[0].index-1].Tool)
+							}
 						} else {
-							return nil, SemanticErrorf("Batch: 'calls' must be an array of {tool, args} — send the raw array, not a JSON-encoded string. %d calls max, no Batch inside a Batch.", maxBatchCalls)
+							return nil, SemanticErrorf("Batch: 'calls' must be an array of {tool, args} — send the raw array, not a JSON-encoded string. %d calls max, no Batch inside a Batch. The string did not parse as an array: %s. Received (first %d chars): %s. Every tool's parameters belong inside its args: {\"tool\": \"Glob\", \"args\": {\"path\": ..., \"pattern\": ...}}.",
+								maxBatchCalls, sanitizeBatchJSONError(cerr), maxBatchPreview, truncateBatchPreview(trimmed, maxBatchPreview))
 						}
 					}
 				} else {
@@ -220,10 +237,121 @@ func (t *BatchTool) parse(args json.RawMessage) (*batchArgs, error) {
 	}
 	for i, call := range parsed.Calls {
 		if strings.TrimSpace(call.Tool) == "" {
-			return nil, SemanticErrorf("Batch: call %d has no tool name.", i+1)
+			if extra := extraBatchKeys(args); len(extra) > 0 {
+				for _, e := range extra {
+					if e.index == i+1 && len(e.keys) > 0 {
+						return nil, SemanticErrorf("Batch: call %d has no tool name, and %s outside 'args'. All of that tool's parameters go inside its args: {\"tool\": \"Glob\", \"args\": {\"path\": ..., \"pattern\": ...}}.", i+1, quotedList(e.keys))
+					}
+				}
+			}
+			return nil, SemanticErrorf("Batch: call %d has no tool name. Send {\"tool\": ..., \"args\": {...}} with every tool's parameters inside args.", i+1)
 		}
 	}
+	if extra := extraBatchKeys(args); len(extra) > 0 {
+		// The call names a tool but still carries fields beside tool/args —
+		// the usual slip is {"tool": "Glob", "args": {"path": ...},
+		// "pattern": ...} with a parameter left outside args. Running it
+		// would silently drop that parameter, so fail fast with the fix.
+		return nil, SemanticErrorf("Batch: call %d has %s outside 'args'. All of that tool's parameters go inside its args: {\"tool\": %q, \"args\": {...}}.",
+			extra[0].index, quotedList(extra[0].keys), parsed.Calls[extra[0].index-1].Tool)
+	}
 	return &parsed, nil
+}
+
+// maxBatchPreview bounds the received-string preview in the
+// stringified-calls error: enough for the model to see the nesting slip,
+// not the whole payload.
+const maxBatchPreview = 300
+
+// truncateBatchPreview shortens s to max chars, marking the cut so the
+// model knows there was more.
+func truncateBatchPreview(s string, max int) string {
+	if max <= 0 || len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
+
+// sanitizeBatchJSONError keeps the actionable part of a JSON parse failure
+// (a syntax error and its position) while leaving out Go internals. A type
+// error names Go values ("cannot unmarshal object into Go value of type
+// []tools.batchCall"); that tells the model nothing about how to fix the
+// shape, so it is replaced with what the shape should have been.
+func sanitizeBatchJSONError(err error) string {
+	if err == nil {
+		return "invalid JSON"
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "cannot unmarshal") || strings.Contains(msg, "Go value") || strings.Contains(msg, "batchCall") || strings.Contains(msg, "batchArgs") {
+		return "it is valid JSON but not an array of {tool, args} (for example a single object, or array elements missing tool/args)"
+	}
+	// A syntax error knows its byte offset; that plus the preview below is
+	// what lets the model find the misplaced brace.
+	if se, ok := err.(*json.SyntaxError); ok && se.Offset > 0 {
+		return fmt.Sprintf("%s (at byte %d)", msg, se.Offset)
+	}
+	return msg
+}
+
+// extraBatchCallKeys names one call's fields beside tool/args.
+type extraBatchCallKeys struct {
+	index int
+	keys  []string
+}
+
+// extraBatchKeys reports calls in a raw-array Batch payload that carry
+// fields beside "tool" and "args". It returns nil when the payload is not
+// a raw array (the stringified path checks its own string instead).
+func extraBatchKeys(args json.RawMessage) []extraBatchCallKeys {
+	var outer struct {
+		Calls []map[string]json.RawMessage `json:"calls"`
+	}
+	if err := json.Unmarshal(args, &outer); err != nil {
+		return nil
+	}
+	return extraKeysFromCallMaps(outer.Calls)
+}
+
+// extraBatchKeysFromString is the same check for the lenient path, where
+// the calls array arrived as a JSON-encoded string that already parsed.
+func extraBatchKeysFromString(trimmed string) []extraBatchCallKeys {
+	var calls []map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(trimmed), &calls); err != nil {
+		return nil
+	}
+	return extraKeysFromCallMaps(calls)
+}
+
+func extraKeysFromCallMaps(calls []map[string]json.RawMessage) []extraBatchCallKeys {
+	var out []extraBatchCallKeys
+	for i, m := range calls {
+		var keys []string
+		for k := range m {
+			if k != "tool" && k != "args" {
+				keys = append(keys, k)
+			}
+		}
+		if len(keys) > 0 {
+			out = append(out, extraBatchCallKeys{index: i + 1, keys: keys})
+		}
+	}
+	return out
+}
+
+// quotedList renders keys as `"pattern"` or `"path", "pattern"` for errors.
+func quotedList(keys []string) string {
+	sorted := append([]string(nil), keys...)
+	// Deterministic order so the prompt-cache prefix stays stable and the
+	// message reads the same on every retry.
+	sort.Strings(sorted)
+	quoted := make([]string, len(sorted))
+	for i, k := range sorted {
+		quoted[i] = strconv.Quote(k)
+	}
+	if len(quoted) == 1 {
+		return "field " + quoted[0]
+	}
+	return "fields " + strings.Join(quoted, ", ")
 }
 
 func (t *BatchTool) Call(ctx context.Context, args json.RawMessage) (any, error) {

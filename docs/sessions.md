@@ -76,7 +76,9 @@ One request and one round of thinking instead of one each. Calls that only read
 run at the same time, so four reads take about as long as one; calls that
 change the workspace run afterwards, in order. Each call comes back with its own
 result or its own error, so one failure does not lose the others. At most ten
-calls, and no `Batch` inside a `Batch`.
+calls, and no `Batch` inside a `Batch`. `calls` is a raw JSON array, never a
+JSON-encoded string, and every tool's parameters go inside its own `args`
+object — never beside `tool`/`args`.
 
 ## Command permissions
 
