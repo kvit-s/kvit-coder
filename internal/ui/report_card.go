@@ -77,6 +77,7 @@ func (m *InputModel) SetReport(rep *report.Report) {
 	m.cardDismissed = false
 	m.cardExpanded = map[string]bool{}
 	m.cardAnswer = nil
+	m.cardOffset = 0
 }
 
 // CardAnswerPicked returns what the user chose from the card, or nil.
@@ -176,6 +177,36 @@ func (m *InputModel) handleCardKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		return true, nil
 	}
 
+	// A card taller than the terminal scrolls under pgup/pgdn (home/end jump
+	// to the ends) whenever it is truncated, even mid-draft: the keys never
+	// type text, and without them the top of an expanded report is
+	// unreachable while the composer is open. Anything else falls through to
+	// the history, completion and textarea keys below. home/end are cursor
+	// keys while a draft is being typed, so they only jump the card on empty
+	// text, like the digits; pgup/pgdn never edit and always scroll the card.
+	switch key {
+	case "pgup":
+		if m.scrollCardUp() {
+			return true, nil
+		}
+		return false, nil
+	case "pgdown":
+		if m.scrollCardDown() {
+			return true, nil
+		}
+		return false, nil
+	case "home":
+		if m.textarea.Value() == "" && m.scrollCardTop() {
+			return true, nil
+		}
+		return false, nil
+	case "end":
+		if m.textarea.Value() == "" && m.scrollCardBottom() {
+			return true, nil
+		}
+		return false, nil
+	}
+
 	if len(key) == 1 && m.textarea.Value() == "" {
 		switch {
 		case key[0] >= '1' && key[0] <= '9':
@@ -270,6 +301,9 @@ func (m *InputModel) toggleAllDetails() {
 			m.cardExpanded[b.ID] = !open
 		}
 	}
+	// Opening jumps back to the top so the headline and the first block are
+	// what is visible; closing cannot leave the offset past the shorter card.
+	m.cardOffset = 0
 }
 
 // Card colors. What the turn did is drawn in grey, because it is there to be
@@ -513,14 +547,246 @@ func TranscriptWidth(card *report.Report, ans *CardAnswer, width int) string {
 // dashed rule ends it, so the card and the message being typed below it do
 // not run together. not_run checks collapse to a footnote here; the
 // transcript keeps them in full.
+//
+// A card taller than the terminal shows a window of it instead of pushing its
+// own top out of view: pgup/pgdn scroll, home/end jump, and a dim line says
+// how many rows are hidden each way. The window is sized so the whole frame —
+// card window, indicator, rule, prompt, input and footer — fits the terminal.
 func (m InputModel) cardView() string {
 	if !m.cardShowing() {
 		return ""
 	}
+	rows, _ := cardRows(m.card, m.cardOpts(), m.cardWidth(), true)
+	win, above, below, truncated := m.cardWindow(rows)
 	var sb strings.Builder
-	sb.WriteString(renderCardLines(m.card, m.cardOpts(), m.cardWidth(), true))
+	sb.WriteString(strings.Join(win, "\n") + "\n")
+	if truncated {
+		sb.WriteString(m.cardScrollLine(above, below) + "\n")
+	}
 	sb.WriteString("\n" + cardDim.Render(strings.Repeat("╌", m.cardWidth())) + "\n")
 	return sb.String()
+}
+
+// cardWindow cuts the card's content rows down to what fits the terminal. It
+// returns the visible window plus how many rows are hidden above and below it,
+// and whether anything was cut. Uncapped (no resize seen yet) or fitting cards
+// show everything with no scrolling.
+func (m InputModel) cardWindow(rows []string) (win []string, above, below int, truncated bool) {
+	vis, cut := m.cardVisibleBudget(len(rows))
+	if !cut {
+		return rows, 0, 0, false
+	}
+	off := m.cardOffset
+	if off < 0 {
+		off = 0
+	}
+	if maxOff := len(rows) - vis; off > maxOff {
+		off = maxOff
+	}
+	if off < 0 {
+		off = 0
+	}
+	return rows[off : off+vis], off, len(rows) - (off + vis), true
+}
+
+// cardVisibleBudget is how many card content rows fit on screen. The second
+// result says whether the card is truncated: false means show everything.
+// Zero termRows (no resize yet: tests, headless) never truncates.
+//
+// The footer hint itself names the scroll keys while truncated, so the budget
+// is first computed with the base hint and then recomputed with the full one:
+// the longer footer can only shrink what fits, never un-truncate.
+func (m InputModel) cardVisibleBudget(total int) (int, bool) {
+	if m.termRows <= 0 {
+		return total, false
+	}
+	base := m.baseCardHint()
+	if _, cut := m.cardBudgetWithHint(total, base); !cut {
+		return total, false
+	}
+	// Truncated: one more row goes to the scroll indicator, and the whole
+	// frame still fits: vis + indicator + blank + rule + below == termRows.
+	vis, _ := m.cardBudgetWithHint(total, m.cardHintWithScroll(base))
+	if vis < 1 {
+		vis = 1
+	}
+	return vis, true
+}
+
+// cardBudgetWithHint is cardVisibleBudget with an explicit footer hint. It
+// takes the hint as a parameter rather than reading it so the budget can be
+// computed while deciding what the hint itself says, without recursing.
+func (m InputModel) cardBudgetWithHint(total int, hint string) (int, bool) {
+	avail := m.termRows - m.cardBelowRowsForHint(hint) - 2
+	if avail < 3 {
+		avail = 3
+	}
+	if total <= avail {
+		return total, false
+	}
+	vis := avail - 1
+	if vis < 1 {
+		vis = 1
+	}
+	return vis, true
+}
+
+// cardBelowRows counts the display rows the composer needs below the card:
+// the prompt line, the input, the footer hint, and whatever is staged under
+// the input. The budget above keeps the card window inside what is left.
+func (m InputModel) cardBelowRows() int {
+	return m.cardBelowRowsForHint(m.cardHint())
+}
+
+// cardBelowRowsForHint counts the rows below the card with an explicit footer
+// hint, so the budget can be computed while deciding what the hint says.
+func (m InputModel) cardBelowRowsForHint(hint string) int {
+	n := 1 + m.textarea.Height()
+	if m.pasteNotice != "" {
+		n++
+	}
+	if m.wakePending > 0 {
+		n++
+	}
+	if m.compNotice != "" {
+		n++
+	}
+	if len(m.compCandidates) > 0 {
+		shown := len(m.compCandidates)
+		remaining := m.compTotal - len(m.compCandidates)
+		if shown > maxCompletionDisplay {
+			remaining += shown - maxCompletionDisplay
+			shown = maxCompletionDisplay
+		}
+		n += shown + 1 // candidates plus the "(↑↓/tab select, esc dismiss)" line
+		if remaining > 0 {
+			n++
+		}
+	}
+	n += len(m.pastedImages)
+	if hint != "" {
+		// The blank line before the hint, plus the hint itself, which the
+		// terminal soft-wraps on narrow screens.
+		w := m.cardWidth()
+		if w < 1 {
+			w = 1
+		}
+		n += 1 + (visibleLen(hint)-1)/w + 1
+	}
+	return n
+}
+
+// cardScrollLine is the dim row between the card window and its rule while
+// truncated: how many rows are hidden each way, and the keys that reach them.
+func (m InputModel) cardScrollLine(above, below int) string {
+	var parts []string
+	if above > 0 {
+		parts = append(parts, "↑"+itoa(above)+" more")
+	}
+	if below > 0 {
+		parts = append(parts, "↓"+itoa(below)+" more")
+	}
+	msg := strings.Join(parts, " · ")
+	if msg != "" {
+		msg += " — pgup/pgdn to scroll"
+	}
+	return cardDim.Render(msg)
+}
+
+// cardScrollable reports whether the card is currently truncated to a
+// scrollable window, which is when pgup/pgdn do something and the footer says
+// so.
+func (m InputModel) cardScrollable() bool {
+	if !m.cardShowing() || m.termRows <= 0 {
+		return false
+	}
+	rows, _ := cardRows(m.card, m.cardOpts(), m.cardWidth(), true)
+	_, cut := m.cardVisibleBudget(len(rows))
+	return cut
+}
+
+// clampCardOffset keeps the scroll position inside the window after a resize
+// or a re-wrap changed how many rows the card has.
+func (m *InputModel) clampCardOffset() {
+	if !m.cardShowing() {
+		m.cardOffset = 0
+		return
+	}
+	rows, _ := cardRows(m.card, m.cardOpts(), m.cardWidth(), true)
+	vis, cut := m.cardVisibleBudget(len(rows))
+	if !cut {
+		m.cardOffset = 0
+		return
+	}
+	if m.cardOffset < 0 {
+		m.cardOffset = 0
+	}
+	if maxOff := len(rows) - vis; m.cardOffset > maxOff {
+		m.cardOffset = maxOff
+	}
+}
+
+// cardPage is one pgup/pgdn step: the window height with one row of overlap
+// for context, so repeated paging never loses the reader's place.
+func (m InputModel) cardPage() int {
+	rows, _ := cardRows(m.card, m.cardOpts(), m.cardWidth(), true)
+	vis, cut := m.cardVisibleBudget(len(rows))
+	if !cut {
+		return 0
+	}
+	if vis > 1 {
+		return vis - 1
+	}
+	return 1
+}
+
+// scrollCard moves the card window by delta rows, clamping at the ends, and
+// reports whether there was a scrollable card to move. Zero or negative
+// deltas never reach here with nothing to show: the caller falls through so
+// the key keeps its normal job.
+func (m *InputModel) scrollCard(delta int) bool {
+	rows, _ := cardRows(m.card, m.cardOpts(), m.cardWidth(), true)
+	vis, cut := m.cardVisibleBudget(len(rows))
+	if !cut {
+		return false
+	}
+	m.cardOffset += delta
+	if m.cardOffset < 0 {
+		m.cardOffset = 0
+	}
+	if maxOff := len(rows) - vis; m.cardOffset > maxOff {
+		m.cardOffset = maxOff
+	}
+	return true
+}
+
+// scrollCardUp scrolls the card window up one page.
+func (m *InputModel) scrollCardUp() bool { return m.scrollCard(-m.cardPage()) }
+
+// scrollCardDown scrolls the card window down one page.
+func (m *InputModel) scrollCardDown() bool { return m.scrollCard(m.cardPage()) }
+
+// scrollCardTop jumps the card window to its first row.
+func (m *InputModel) scrollCardTop() bool {
+	if !m.cardScrollable() {
+		return false
+	}
+	m.cardOffset = 0
+	return true
+}
+
+// scrollCardBottom jumps the card window to its last row.
+func (m *InputModel) scrollCardBottom() bool {
+	if !m.cardScrollable() {
+		return false
+	}
+	rows, _ := cardRows(m.card, m.cardOpts(), m.cardWidth(), true)
+	vis, _ := m.cardVisibleBudget(len(rows))
+	m.cardOffset = len(rows) - vis
+	if m.cardOffset < 0 {
+		m.cardOffset = 0
+	}
+	return true
 }
 
 // cardFooter is the key hint drawn under the composer while the card shows,
@@ -547,7 +813,26 @@ func wrapCardLine(text string, width int) []string {
 // cardHint is the footer that says which keys the card is holding. It lists
 // only the ones that would do something on this report, so it never advertises
 // a key that does nothing. esc and :report still work; they are in the help.
+// While the card is truncated to a scrollable window it also names pgup/pgdn.
 func (m InputModel) cardHint() string {
+	base := m.baseCardHint()
+	if !m.cardScrollable() {
+		return base
+	}
+	return m.cardHintWithScroll(base)
+}
+
+// cardHintWithScroll names the scroll keys alongside a base hint.
+func (m InputModel) cardHintWithScroll(base string) string {
+	if base == "" {
+		return "pgup/pgdn scroll"
+	}
+	return base + " · pgup/pgdn scroll"
+}
+
+// baseCardHint is the footer without the scroll keys: picks, Enter and
+// details. The budget uses it first so deciding the hint never recurses.
+func (m InputModel) baseCardHint() string {
 	var parts []string
 	if n := len(m.card.Choices()); n > 0 {
 		if n > report.MaxChoices {

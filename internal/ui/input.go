@@ -100,8 +100,16 @@ type InputModel struct {
 	// is what the report card wraps to. m.width is the textarea's width and
 	// has a margin taken off it already, so it is too narrow for the card.
 	termCols int
+	// termRows is the terminal's height as the last resize reported it, which
+	// is what caps the report card: without it an expanded report taller than
+	// the screen pushes its own top out of view with no way back. Zero until
+	// the first resize, meaning uncapped (tests, headless).
+	termRows int
 	// cardExpanded holds the ids of blocks showing their details.
 	cardExpanded map[string]bool
+	// cardOffset is the first card content row in view while the card is
+	// taller than the terminal: pgup/pgdn move it, 0 and resize clamp it.
+	cardOffset int
 	// cardAnswer is what the user picked, for the driver to act on.
 	cardAnswer *CardAnswer
 }
@@ -728,6 +736,7 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, wakeTickCmd()
 	case tea.WindowSizeMsg:
 		m.termCols = msg.Width
+		m.termRows = msg.Height
 		// Adjust width based on terminal size
 		m.width = msg.Width - 10 // Leave some margin
 		if m.width < 40 {
@@ -743,6 +752,9 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Re-wrap at the new width: a narrower terminal can turn one hard
 		// line into several visual rows.
 		m.adjustHeight()
+		// A new size re-wraps the card too, so the scroll offset may now
+		// point past the end.
+		m.clampCardOffset()
 
 	case tea.KeyMsg:
 		// A completion list belongs to the token it was built for. Tab
