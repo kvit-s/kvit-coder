@@ -269,6 +269,11 @@ func (t *SubagentTool) PromptTemplateName() string { return "" }
 // via ctx.WithTimeout.
 func (t *SubagentTool) SelfTimeout() bool { return true }
 
+// ParallelSafe keeps Subagent in Batch's sequential phase: even research
+// children burn minutes of wall-clock, and parallel delegation is the
+// phase-3 spawn/collect split (Subagent.start), never a Batch carve-out.
+func (t *SubagentTool) ParallelSafe() bool { return false }
+
 func (t *SubagentTool) PromptSection() string {
 	return `### Subagent - Delegate with its own context
 

@@ -426,6 +426,10 @@ func (t *SubagentStartTool) JSONSchema() map[string]any {
 func (t *SubagentStartTool) PromptCategory() string     { return "filesystem" }
 func (t *SubagentStartTool) PromptOrder() int           { return 61 }
 func (t *SubagentStartTool) PromptTemplateName() string { return "" }
+
+// ParallelSafe keeps spawns in Batch's sequential phase: three cheap
+// sequential spawns still overlap, so no carve-out is needed.
+func (t *SubagentStartTool) ParallelSafe() bool { return false }
 func (t *SubagentStartTool) PromptSection() string {
 	return `### Subagent.start - Spawn a child that runs while the turn continues
 
@@ -477,6 +481,9 @@ func (t *SubagentStatusTool) Description() string {
 func (t *SubagentStatusTool) PromptCategory() string     { return "filesystem" }
 func (t *SubagentStatusTool) PromptOrder() int           { return 62 }
 func (t *SubagentStatusTool) PromptTemplateName() string { return "" }
+
+// ParallelSafe keeps collects in Batch's sequential phase: no carve-out.
+func (t *SubagentStatusTool) ParallelSafe() bool { return false }
 func (t *SubagentStatusTool) PromptSection() string      { return "" }
 
 func (t *SubagentStatusTool) JSONSchema() map[string]any {
@@ -561,6 +568,9 @@ alone and never cancels its siblings.`
 // wait set, collecting is allowed to take as long as the timeout says.
 func (t *SubagentOutputTool) SelfTimeout() bool { return true }
 
+// ParallelSafe keeps collects in Batch's sequential phase: no carve-out.
+func (t *SubagentOutputTool) ParallelSafe() bool { return false }
+
 func (t *SubagentOutputTool) JSONSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -639,6 +649,9 @@ collect later.`
 // waiting is what this tool is for. It honours its own timeout instead.
 func (t *SubagentWaitTool) SelfTimeout() bool { return true }
 
+// ParallelSafe keeps waits in Batch's sequential phase: no carve-out.
+func (t *SubagentWaitTool) ParallelSafe() bool { return false }
+
 func (t *SubagentWaitTool) JSONSchema() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -711,6 +724,9 @@ func (t *SubagentKillTool) PromptCategory() string     { return "filesystem" }
 func (t *SubagentKillTool) PromptOrder() int           { return 65 }
 func (t *SubagentKillTool) PromptTemplateName() string { return "" }
 func (t *SubagentKillTool) PromptSection() string      { return "" }
+
+// ParallelSafe keeps kills in Batch's sequential phase: no carve-out.
+func (t *SubagentKillTool) ParallelSafe() bool { return false }
 
 func (t *SubagentKillTool) JSONSchema() map[string]any {
 	return map[string]any{

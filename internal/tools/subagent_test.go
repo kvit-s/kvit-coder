@@ -470,9 +470,23 @@ func TestSubagentBatchRunsInOrder(t *testing.T) {
 	}
 	// Subagent stays out of the parallel phase: it is not read-only (a
 	// general child edits; even research burns wall-clock), so Batch runs it
-	// sequentially.
-	var psTool any = sub
-	if ps, ok := psTool.(ParallelSafeTool); ok && ps.ParallelSafe() {
-		t.Error("Subagent reports ParallelSafe: several Subagents in one Batch must run in order")
+	// sequentially. The whole Subagent family reports ParallelSafe false
+	// explicitly — no Batch carve-out in any phase.
+	for _, psTool := range []any{
+		sub,
+		NewSubagentStartTool(sub),
+		NewSubagentStatusTool(sub),
+		NewSubagentOutputTool(sub),
+		NewSubagentWaitTool(sub),
+		NewSubagentKillTool(sub),
+	} {
+		ps, ok := psTool.(ParallelSafeTool)
+		if !ok {
+			t.Errorf("%T does not report ParallelSafe: Batch placement must be explicit", psTool)
+			continue
+		}
+		if ps.ParallelSafe() {
+			t.Errorf("%T reports ParallelSafe: several Subagents in one Batch must run in order", psTool)
+		}
 	}
 }
