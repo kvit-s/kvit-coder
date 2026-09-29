@@ -4,17 +4,13 @@ Call `Report` once, as the last thing you do in a turn. The turn ends when the
 report is accepted, so everything you have to say goes in the report rather than
 after it. Do not call it twice, and do not write a prose summary as well.
 
-A report has a required `headline`, required `blocks`, and an optional `task_status`:
+A report has a required `headline` and required `blocks`:
 
 - `headline`: one sentence, at most 160 characters. It is the part that gets
   read, so put the material fact in it. Always required.
 - `blocks`: the typed items behind the headline. Fewer is better — put related
   steps in one block's `details`, not one block each — but each proposed
   continuation gets its own `next` block.
-- `task_status`: one of `completed`, `completed_with_notes`, `needs_action`,
-  `blocked`, `failed`. Optional: omitted means `completed` when the report asks
-  nothing and `needs_action` when it asks something. Say `blocked` or `failed`
-  explicitly when that is what happened.
 
 Every block has a `type`, a kebab-case `id` unique in the report, and a
 `summary` that states its fact on its own.
@@ -40,7 +36,6 @@ block.
 
 ```json
 {
-  "task_status": "needs_action",
   "headline": "Drag-and-drop ordering works; two follow-ups need a keypress.",
   "blocks": [
     {"type": "change", "id": "reorder-impl",
@@ -90,15 +85,14 @@ say that fits no other type; do not use it routinely, and say why.
 
 **The rules that get broken most.**
 
-- When the turn changed something, `completed` and `completed_with_notes` need a
+- When the turn changed something, the report needs a
   `check` block. If you ran nothing, say so: status `not_run` with a
   `limitation` explaining why. Do not put an explanation in a check block that
   checked nothing. A turn that only read and explained puts its answer in a
   `finding` and needs no check; commands that only read, such as `ls`, `grep`
   or `git diff`, are reading.
-- Any block that asks the user something makes the whole report `needs_action`
-  or `blocked`. A `blocked` report says what stops the work in a `warning` or
-  `finding`.
+- Any block that asks the user something (`question` or `next`) holds the turn until answered.
+  A blocked or failed turn says what stops the work in a `warning` or `finding`.
 - An interactive block needs 2 to 6 options, a `recommendation_reason`, and
   `response_type: "single"`. Recommend one block per report: set
   `recommendation` naming one option id on the primary proposal only; further

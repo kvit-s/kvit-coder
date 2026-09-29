@@ -21,7 +21,11 @@ import (
 	"strings"
 )
 
-// Status is the task_status field: what the turn amounted to.
+// Status is the task_status field. It is deprecated and informational only:
+// the card never shows it, the validator never rejects on it, and whether the
+// turn waits on the user is derived from the blocks (HasInteractive), not from
+// this field. It is kept so reports saved by older sessions still decode, and
+// so an explicit blocked or failed still tints the headline dot red.
 type Status string
 
 const (
@@ -40,9 +44,9 @@ const (
 	StatusFailed Status = "failed"
 )
 
-// Statuses lists every status a model may send, in the order they are
-// documented. The list is the schema's enum and the validator's allowed set,
-// so the two cannot drift.
+// Statuses lists every status an older report may carry, in the order they
+// used to be documented. New reports should omit task_status entirely; the
+// schema keeps the field only so old sessions still decode.
 var Statuses = []Status{
 	StatusCompleted,
 	StatusCompletedWithNotes,
@@ -51,11 +55,13 @@ var Statuses = []Status{
 	StatusFailed,
 }
 
-// InferStatus derives the task status from the blocks, so a report that omits
-// it still validates: a report that asks the user something needs action,
-// anything else counts as completed. Blocked and failed carry meaning the
-// blocks alone cannot convey (what stops the work, why it failed), so a turn
-// that means those still says so explicitly.
+// InferStatus derives the task status from the blocks: a report that asks the
+// user something needs action, anything else counts as completed. It is what
+// Normalize fills an omitted or unknown status with, and what an explicit
+// completed/completed_with_notes becomes when the report holds a question or
+// next block (and vice versa for a needs_action with nothing to answer), so a
+// stale label never costs a repair round trip. An explicit blocked or failed
+// is preserved as sent, since only the model knows it is stuck.
 func (r *Report) InferStatus() Status {
 	if r != nil && r.HasInteractive() {
 		return StatusNeedsAction
@@ -63,15 +69,40 @@ func (r *Report) InferStatus() Status {
 	return StatusCompleted
 }
 
-// DefaultTaskStatus fills an empty task_status from the blocks. It is
-// normalization, not validation: an omitted status is completed when the
-// report asks nothing and needs_action when it does, while a status the model
-// did send is left alone for the validator to check.
+// DefaultTaskStatus coerces task_status into agreement with the blocks. It is
+// normalization, not validation: an omitted or unknown status is inferred
+// (completed when the report asks nothing, needs_action when it does), a
+// completed/completed_with_notes holding a question or next becomes
+// needs_action, and a needs_action holding nothing to answer becomes
+// completed. An explicit blocked or failed is left alone. The validator never
+// rejects on the status, so after this call there is nothing left to reject.
 func (r *Report) DefaultTaskStatus() {
-	if r == nil || r.TaskStatus != "" {
+	if r == nil {
 		return
 	}
-	r.TaskStatus = r.InferStatus()
+	if r.TaskStatus == "" || !knownStatus(r.TaskStatus) {
+		r.TaskStatus = r.InferStatus()
+		return
+	}
+	if r.HasInteractive() {
+		if r.TaskStatus == StatusCompleted || r.TaskStatus == StatusCompletedWithNotes {
+			r.TaskStatus = StatusNeedsAction
+		}
+		return
+	}
+	if r.TaskStatus == StatusNeedsAction {
+		r.TaskStatus = StatusCompleted
+	}
+}
+
+// knownStatus reports whether s is one of the retained status values.
+func knownStatus(s Status) bool {
+	for _, known := range Statuses {
+		if s == known {
+			return true
+		}
+	}
+	return false
 }
 
 // BlockType selects which shape a block has.
@@ -603,14 +634,13 @@ func JSONSchema(maxBlocks int) map[string]any {
 		"required": []string{"type", "id", "summary"},
 	}
 
-	return map[string]any{
+	// Note: task_status is deliberately absent from the schema. It stays on
+// the struct only so reports saved by older sessions still decode; new
+// reports omit it and Normalize coerces any stale value into agreement
+// with the blocks.
+return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"task_status": enum("Optional: what this turn amounted to. Omitted means completed when the report asks nothing and needs_action when it asks something. " +
-				"Say blocked or failed explicitly when that is what happened: blocked needs a warning or finding saying what stops the work; " +
-				"'completed' and 'completed_with_notes' need a check block. A failed turn says why in a finding or warning. "+
-				"When there is an obvious continuation, "+
-				"prefer 'needs_action' with 'next' blocks over 'completed' with instructions in details.", statusStrings()),
 			"headline": str(fmt.Sprintf("One sentence, at most %d characters, no line break. It is the part that gets read, so put the "+
 				"material fact in it rather than a label for it.", HeadlineMax)),
 			"blocks": map[string]any{
@@ -622,14 +652,6 @@ func JSONSchema(maxBlocks int) map[string]any {
 		},
 		"required": []string{"headline", "blocks"},
 	}
-}
-
-func statusStrings() []string {
-	out := make([]string, len(Statuses))
-	for i, s := range Statuses {
-		out[i] = string(s)
-	}
-	return out
 }
 
 func blockTypeStrings() []string {

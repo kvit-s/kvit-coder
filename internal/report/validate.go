@@ -27,8 +27,8 @@ var fencePattern = regexp.MustCompile("(?s)^```[a-zA-Z0-9_+-]*\n(.*)\n?```$")
 
 // Normalize cleans up what a model sent before it is checked: surrounding
 // whitespace everywhere, a code fence wrapped around a whole Markdown value,
-// a block type under a name it used to have, and an omitted task_status
-// inferred from the blocks. It never changes meaning, so a report that only needed normalizing is
+// a block type under a name it used to have, and a task_status coerced into
+// agreement with the blocks. It never changes meaning, so a report that only needed normalizing is
 // accepted rather than bounced for a formatting habit.
 func Normalize(r *Report) {
 	if r == nil {
@@ -71,9 +71,9 @@ func Normalize(r *Report) {
 			o.Preview = unfence(o.Preview)
 		}
 	}
-	// Block types are trimmed above, so interactivity is reliable here: an
-	// omitted status is completed when the report asks nothing and
-	// needs_action when it does.
+	// Block types are trimmed above, so interactivity is reliable here: the
+	// deprecated status is coerced into agreement with the blocks rather than
+	// rejected, so a stale label never costs a repair round trip.
 	r.DefaultTaskStatus()
 }
 
@@ -110,11 +110,11 @@ func Validate(r *Report, rules Rules) []Problem {
 	if r == nil {
 		return []Problem{{Path: "/", Code: "report_missing", Message: "The report is empty."}}
 	}
-	// Defensive: Normalize already fills an omitted status, but a caller that
-	// validates without normalizing still gets the inference rather than a
-	// rejection for forgetting a field the card no longer even shows.
+	// Defensive: Normalize already coerced the deprecated status into agreement
+	// with the blocks, but a caller that validates without normalizing still
+	// gets the coercion rather than a rejection for a field the card does not
+	// even show.
 	r.DefaultTaskStatus()
-	ps = append(ps, checkStatus(r)...)
 	ps = append(ps, checkHeadline(r)...)
 
 	if len(r.Blocks) > maxBlocks {
@@ -130,18 +130,6 @@ func Validate(r *Report, rules Rules) []Problem {
 	}
 	ps = append(ps, checkConsistency(r, rules)...)
 	return ps
-}
-
-func checkStatus(r *Report) []Problem {
-	for _, s := range Statuses {
-		if r.TaskStatus == s {
-			return nil
-		}
-	}
-	return []Problem{{
-		Path: "/task_status", Code: "status_unknown",
-		Message: fmt.Sprintf("%q is not a task status. Use one of: %s.", r.TaskStatus, joinStatuses()),
-	}}
 }
 
 func checkHeadline(r *Report) []Problem {
@@ -377,47 +365,27 @@ func checkInteractive(r *Report, b *Block, index int, at func(string) string) []
 	return ps
 }
 
-// checkConsistency covers the rules between the status and the blocks: a turn
-// cannot claim to be done with nothing that says it was checked, and cannot ask
-// a question while claiming to be finished.
+// checkConsistency covers the content rules that do not depend on any block
+// type: a turn that changed something says how it was checked, and a report
+// is never empty. The deprecated task_status never gates here: whether the
+// turn waits on the user is derived from question/next blocks, and an explicit
+// blocked or failed is preserved for the headline dot without demanding extra
+// blocks.
 func checkConsistency(r *Report, rules Rules) []Problem {
 	var ps []Problem
-	count := map[BlockType]int{}
+	checks := 0
 	for i := range r.Blocks {
-		count[r.Blocks[i].Type]++
-	}
-	interactive := count[BlockQuestion] + count[BlockNext]
-
-	switch r.TaskStatus {
-	case StatusCompleted, StatusCompletedWithNotes:
-		switch {
-		case rules.Mutated && count[BlockCheck] == 0:
-			ps = append(ps, Problem{Path: "/blocks", Code: "status_needs_check",
-				Message: "This turn changed something, so the report says how that was checked: add a check block. When you ran nothing, use status \"not_run\" with a limitation saying why."})
-		case !rules.Mutated && len(r.Blocks) == 0:
-			ps = append(ps, Problem{Path: "/blocks", Code: "status_needs_block",
-				Message: "A completed report needs at least one block. This turn changed nothing, so what it found goes in a finding rather than a check."})
-		}
-	case StatusNeedsAction:
-		if interactive == 0 {
-			ps = append(ps, Problem{Path: "/blocks", Code: "status_needs_interaction",
-				Message: "needs_action means the user has something to answer: add a question or next block."})
-		}
-	case StatusBlocked:
-		if count[BlockWarning]+count[BlockFinding] == 0 {
-			ps = append(ps, Problem{Path: "/blocks", Code: "status_needs_blocked",
-				Message: "blocked means something is stopping the work: add a warning or finding saying what, and a question if the user can clear it."})
-		}
-	case StatusFailed:
-		if count[BlockFinding]+count[BlockWarning] == 0 {
-			ps = append(ps, Problem{Path: "/blocks", Code: "status_needs_explanation",
-				Message: "A failed turn says why it failed: add a finding or warning."})
+		if r.Blocks[i].Type == BlockCheck {
+			checks++
 		}
 	}
-
-	if interactive > 0 && r.TaskStatus != StatusNeedsAction && r.TaskStatus != StatusBlocked {
-		ps = append(ps, Problem{Path: "/task_status", Code: "interaction_needs_status",
-			Message: fmt.Sprintf("This report asks the user something, so its status is %q or %q, not %q.", StatusNeedsAction, StatusBlocked, r.TaskStatus)})
+	switch {
+	case rules.Mutated && checks == 0:
+		ps = append(ps, Problem{Path: "/blocks", Code: "status_needs_check",
+			Message: "This turn changed something, so the report says how that was checked: add a check block. When you ran nothing, use status \"not_run\" with a limitation saying why."})
+	case len(r.Blocks) == 0:
+		ps = append(ps, Problem{Path: "/blocks", Code: "status_needs_block",
+			Message: "A report needs at least one block. This turn changed nothing, so what it found goes in a finding rather than a check."})
 	}
 	return ps
 }
@@ -442,14 +410,6 @@ func oneOf(at func(string) string, field, value string, allowed []string) []Prob
 	}
 	return []Problem{{Path: at(field), Code: "field_unknown_value",
 		Message: fmt.Sprintf("%s is %q. Use one of: %s.", field, value, strings.Join(allowed, ", "))}}
-}
-
-func joinStatuses() string {
-	out := make([]string, len(Statuses))
-	for i, s := range Statuses {
-		out[i] = string(s)
-	}
-	return strings.Join(out, ", ")
 }
 
 func joinBlockTypes() string {

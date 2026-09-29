@@ -107,7 +107,7 @@ func (t *ReportTool) reject(problems []report.Problem, hint ...bool) error {
 	msg := report.FormatProblems(problems)
 	if len(hint) > 0 && hint[0] {
 		msg += "\nHint: the report proposes a follow-up in prose; expose each proposal " +
-			"as its own \"next\" block with status \"needs_action\" instead."
+			"as its own \"next\" block instead."
 	}
 	if attempt >= max {
 		msg += fmt.Sprintf("\n\nThat was attempt %d of %d. Stop repairing the report: "+
@@ -135,7 +135,7 @@ End every turn that %s with one Report call, as the last thing you do: the turn
 ends when the report is accepted, so say everything in the report rather than
 after it. Do not call it twice.
 
-A report is a one-sentence headline and typed blocks (task_status is optional: omitted means completed when the report asks nothing and needs_action when it does). The card
+A report is a one-sentence headline and typed blocks. The card
 the user sees shows the headline, then "What happened": one row per change,
 finding, warning and check, showing only its summary, with every other field
 and the details folded away until the user opens them. Then "Your call": each
@@ -150,14 +150,13 @@ sentence, and nothing the user must act on lives only in details.
 
 Rules the schema cannot enforce for you:
 
-- When the turn changed something, "completed" and "completed_with_notes" need
+- When the turn changed something, the report needs
   a check block saying how you checked it. If you ran nothing, say so with
   status "not_run" and a limitation, rather than putting an explanation in a
   check block that checked nothing. A turn that only read and explained puts
   its answer in a finding and needs no check; commands that only read, such
   as ls, grep or git diff, are reading.
-- Any block that asks the user something — question or next — makes the
-  report "needs_action" or "blocked", offers %d to %d options, and says why you
+- Any block that asks the user something — question or next — holds the turn until answered, offers %d to %d options, and says why you
   recommend the one you recommend. Recommend one block per report: set
   "recommendation" on the primary proposal only; further "next" blocks omit it
   and are secondary. A "dispatch" option's instruction is shown to the user and
@@ -169,7 +168,7 @@ Rules the schema cannot enforce for you:
   question is "dispatch"; leave out its instruction and picking it sends you
   its label as the answer. "resolve" tells you nothing, so use it only for an
   option that means stopping without an answer.
-- A "blocked" report says what stops the work in a warning or finding.
+- A blocked or failed turn says what stops the work in a warning or finding.
 - When part of the work could not be checked — the program was not run, or
   only the user can see the result — make that a "partial" or "not_run"
   check, and when the check can be done, propose it as a "next" block.
@@ -213,7 +212,6 @@ func (t *ReportTool) PromptSection() string {
 }
 
 const reportExample = "```json\n" + `{
-  "task_status": "needs_action",
   "headline": "Drag-and-drop ordering works; two follow-ups need a keypress.",
   "blocks": [
     {"type": "change", "id": "reorder-impl",

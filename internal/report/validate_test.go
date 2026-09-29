@@ -92,6 +92,8 @@ func TestNormalizeLeavesInnerFencesAlone(t *testing.T) {
 	}
 }
 
+// task_status is deprecated and coerced, so an unknown value is inferred
+// rather than reported: the problems below are all about the blocks.
 func TestEveryProblemIsReportedAtOnce(t *testing.T) {
 	r := &Report{
 		TaskStatus: "finished",
@@ -101,7 +103,7 @@ func TestEveryProblemIsReportedAtOnce(t *testing.T) {
 		},
 	}
 	ps := Validate(r, Rules{Mutated: true})
-	for _, want := range []string{"status_unknown", "headline_empty", "block_id_invalid", "summary_empty", "field_required"} {
+	for _, want := range []string{"headline_empty", "block_id_invalid", "summary_empty", "field_required"} {
 		if !hasCode(ps, want) {
 			t.Errorf("missing %s; got %v", want, codes(ps))
 		}
@@ -182,11 +184,16 @@ func TestPartialCheckNeedsALimitation(t *testing.T) {
 	}
 }
 
+// task_status never gates: a stale completed holding a question is coerced to
+// needs_action rather than rejected.
 func TestInteractiveBlockForcesTheStatus(t *testing.T) {
 	r := completedReport()
 	r.Blocks = append(r.Blocks, questionBlock())
-	if !hasCode(Validate(r, Rules{Mutated: true}), "interaction_needs_status") {
-		t.Error("a completed report holding a question was accepted")
+	if ps := Validate(r, Rules{Mutated: true}); len(ps) != 0 {
+		t.Fatalf("completed report holding a question rejected: %v", codes(ps))
+	}
+	if r.TaskStatus != StatusNeedsAction {
+		t.Fatalf("completed with a question coerced to %q, want needs_action", r.TaskStatus)
 	}
 
 	r.TaskStatus = StatusNeedsAction
@@ -195,10 +202,10 @@ func TestInteractiveBlockForcesTheStatus(t *testing.T) {
 	}
 }
 
-// An omitted task_status is inferred from the blocks rather than rejected:
-// asking nothing means completed, asking something means needs_action. The
-// card no longer shows a status chip, so forgetting the field must not cost a
-// repair round trip; blocked and failed still have to be said explicitly.
+// task_status is coerced from the blocks rather than rejected: asking nothing
+// means completed, asking something means needs_action. The card never showed
+// a status chip, so a stale or unknown label must not cost a repair round
+// trip; an explicit blocked or failed is preserved as sent.
 func TestOmittedStatusIsInferred(t *testing.T) {
 	r := completedReport()
 	r.TaskStatus = ""
@@ -221,28 +228,35 @@ func TestOmittedStatusIsInferred(t *testing.T) {
 		t.Fatalf("interactive report with omitted status rejected: %v", codes(ps))
 	}
 
-	// An invalid status is still rejected: inference only fills what was omitted.
+	// An unknown status is coerced, not rejected: it carries no meaning the
+	// blocks do not already convey.
 	r = completedReport()
 	r.TaskStatus = "finished"
-	if !hasCode(Validate(r, Rules{Mutated: true}), "status_unknown") {
-		t.Error("an invalid status was accepted")
+	if ps := Validate(r, Rules{Mutated: true}); len(ps) != 0 {
+		t.Fatalf("unknown status rejected: %v", codes(ps))
+	}
+	if r.TaskStatus != StatusCompleted {
+		t.Fatalf("unknown status coerced to %q, want completed", r.TaskStatus)
 	}
 }
 
+// No status demands a matching block: needs_action without a question is
+// coerced to completed, and an explicit blocked or failed without a
+// warning/finding is still accepted (the blocks say what happened; the label
+// only tints the headline dot).
 func TestStatusesNeedTheirBlock(t *testing.T) {
-	for _, tc := range []struct {
-		status Status
-		code   string
-	}{
-		{StatusNeedsAction, "status_needs_interaction"},
-		{StatusBlocked, "status_needs_blocked"},
-		{StatusFailed, "status_needs_explanation"},
-	} {
+	for _, status := range []Status{StatusNeedsAction, StatusBlocked, StatusFailed} {
 		r := completedReport()
-		r.TaskStatus = tc.status
-		if !hasCode(Validate(r, Rules{Mutated: true}), tc.code) {
-			t.Errorf("%s with no matching block was accepted", tc.status)
+		r.TaskStatus = status
+		if ps := Validate(r, Rules{Mutated: true}); len(ps) != 0 {
+			t.Errorf("%s without a matching block rejected: %v", status, codes(ps))
 		}
+	}
+	r := completedReport()
+	r.TaskStatus = StatusNeedsAction
+	Normalize(r)
+	if r.TaskStatus != StatusCompleted {
+		t.Errorf("needs_action with nothing to answer coerced to %q, want completed", r.TaskStatus)
 	}
 }
 

@@ -312,7 +312,7 @@ func TestShortPromptTeachesNextBlocks(t *testing.T) {
 		"one per proposal",
 		"What happened",
 		"two to four words",
-		"needs_action",
+		"holds the turn until answered",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("short prompt does not mention %q:\n%s", want, section)
