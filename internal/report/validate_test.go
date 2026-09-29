@@ -195,6 +195,40 @@ func TestInteractiveBlockForcesTheStatus(t *testing.T) {
 	}
 }
 
+// An omitted task_status is inferred from the blocks rather than rejected:
+// asking nothing means completed, asking something means needs_action. The
+// card no longer shows a status chip, so forgetting the field must not cost a
+// repair round trip; blocked and failed still have to be said explicitly.
+func TestOmittedStatusIsInferred(t *testing.T) {
+	r := completedReport()
+	r.TaskStatus = ""
+	Normalize(r)
+	if r.TaskStatus != StatusCompleted {
+		t.Fatalf("omitted status inferred as %q, want completed", r.TaskStatus)
+	}
+	if ps := Validate(r, Rules{Mutated: true}); len(ps) != 0 {
+		t.Fatalf("completed report with omitted status rejected: %v", codes(ps))
+	}
+
+	r = completedReport()
+	r.TaskStatus = ""
+	r.Blocks = append(r.Blocks, questionBlock())
+	Normalize(r)
+	if r.TaskStatus != StatusNeedsAction {
+		t.Fatalf("omitted status inferred as %q, want needs_action", r.TaskStatus)
+	}
+	if ps := Validate(r, Rules{Mutated: true}); len(ps) != 0 {
+		t.Fatalf("interactive report with omitted status rejected: %v", codes(ps))
+	}
+
+	// An invalid status is still rejected: inference only fills what was omitted.
+	r = completedReport()
+	r.TaskStatus = "finished"
+	if !hasCode(Validate(r, Rules{Mutated: true}), "status_unknown") {
+		t.Error("an invalid status was accepted")
+	}
+}
+
 func TestStatusesNeedTheirBlock(t *testing.T) {
 	for _, tc := range []struct {
 		status Status

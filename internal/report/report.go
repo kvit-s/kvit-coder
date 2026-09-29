@@ -51,6 +51,29 @@ var Statuses = []Status{
 	StatusFailed,
 }
 
+// InferStatus derives the task status from the blocks, so a report that omits
+// it still validates: a report that asks the user something needs action,
+// anything else counts as completed. Blocked and failed carry meaning the
+// blocks alone cannot convey (what stops the work, why it failed), so a turn
+// that means those still says so explicitly.
+func (r *Report) InferStatus() Status {
+	if r != nil && r.HasInteractive() {
+		return StatusNeedsAction
+	}
+	return StatusCompleted
+}
+
+// DefaultTaskStatus fills an empty task_status from the blocks. It is
+// normalization, not validation: an omitted status is completed when the
+// report asks nothing and needs_action when it does, while a status the model
+// did send is left alone for the validator to check.
+func (r *Report) DefaultTaskStatus() {
+	if r == nil || r.TaskStatus != "" {
+		return
+	}
+	r.TaskStatus = r.InferStatus()
+}
+
 // BlockType selects which shape a block has.
 type BlockType string
 
@@ -583,9 +606,10 @@ func JSONSchema(maxBlocks int) map[string]any {
 	return map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"task_status": enum("What this turn amounted to. A report that asks the user anything is 'needs_action' or 'blocked'. "+
-				"'completed' and 'completed_with_notes' need a check block. 'blocked' needs a warning or finding saying what "+
-				"stops the work. When there is an obvious continuation, "+
+			"task_status": enum("Optional: what this turn amounted to. Omitted means completed when the report asks nothing and needs_action when it asks something. " +
+				"Say blocked or failed explicitly when that is what happened: blocked needs a warning or finding saying what stops the work; " +
+				"'completed' and 'completed_with_notes' need a check block. A failed turn says why in a finding or warning. "+
+				"When there is an obvious continuation, "+
 				"prefer 'needs_action' with 'next' blocks over 'completed' with instructions in details.", statusStrings()),
 			"headline": str(fmt.Sprintf("One sentence, at most %d characters, no line break. It is the part that gets read, so put the "+
 				"material fact in it rather than a label for it.", HeadlineMax)),
@@ -596,7 +620,7 @@ func JSONSchema(maxBlocks int) map[string]any {
 				"items": block,
 			},
 		},
-		"required": []string{"task_status", "headline", "blocks"},
+		"required": []string{"headline", "blocks"},
 	}
 }
 

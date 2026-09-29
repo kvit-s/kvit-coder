@@ -54,6 +54,30 @@ func TestReportAcceptsAValidReport(t *testing.T) {
 	}
 }
 
+// task_status is optional: omitted means completed when the report asks
+// nothing and needs_action when it does, so forgetting a field the card no
+// longer shows does not cost a repair round trip.
+func TestReportInfersAnOmittedStatus(t *testing.T) {
+	tool, tc := newReportTool(t)
+	res, err := tool.Call(context.Background(), json.RawMessage(`{
+	  "headline": "Renamed the ordering helper and updated its callers.",
+	  "blocks": [
+	    {"type": "check", "id": "unit-tests",
+	     "summary": "All 14 tests in the package pass.",
+	     "status": "passed", "evidence": "go test ./internal/store"}
+	  ]
+	}`))
+	if err != nil {
+		t.Fatalf("a report with no task_status was rejected: %v", err)
+	}
+	if m, ok := res.(map[string]any); !ok || m["task_status"] != "completed" {
+		t.Fatalf("inferred status is %#v, want completed", res)
+	}
+	if rep := tc.AcceptedReport(); rep == nil || rep.TaskStatus != report.StatusCompleted {
+		t.Fatalf("stored status is %#v", rep)
+	}
+}
+
 // A rejection has to reach the conversation so the model can repair from it,
 // which is why it is a runtime error rather than the kind the loop discards
 // along with the message that produced it.
@@ -154,8 +178,8 @@ func TestSchemaAgreesWithTheLimits(t *testing.T) {
 		t.Errorf("the schema does not state the configured block limit: %v", blocks["description"])
 	}
 	required, _ := schema["required"].([]string)
-	if len(required) != 3 {
-		t.Errorf("schema requires %v, want task_status, headline and blocks", required)
+	if len(required) != 2 || required[0] != "headline" || required[1] != "blocks" {
+		t.Errorf("schema requires %v, want headline and blocks with task_status optional", required)
 	}
 }
 

@@ -27,7 +27,8 @@ var fencePattern = regexp.MustCompile("(?s)^```[a-zA-Z0-9_+-]*\n(.*)\n?```$")
 
 // Normalize cleans up what a model sent before it is checked: surrounding
 // whitespace everywhere, a code fence wrapped around a whole Markdown value,
-// and a block type under a name it used to have. It never changes meaning, so a report that only needed normalizing is
+// a block type under a name it used to have, and an omitted task_status
+// inferred from the blocks. It never changes meaning, so a report that only needed normalizing is
 // accepted rather than bounced for a formatting habit.
 func Normalize(r *Report) {
 	if r == nil {
@@ -70,6 +71,10 @@ func Normalize(r *Report) {
 			o.Preview = unfence(o.Preview)
 		}
 	}
+	// Block types are trimmed above, so interactivity is reliable here: an
+	// omitted status is completed when the report asks nothing and
+	// needs_action when it does.
+	r.DefaultTaskStatus()
 }
 
 func unfence(s string) string {
@@ -105,7 +110,10 @@ func Validate(r *Report, rules Rules) []Problem {
 	if r == nil {
 		return []Problem{{Path: "/", Code: "report_missing", Message: "The report is empty."}}
 	}
-
+	// Defensive: Normalize already fills an omitted status, but a caller that
+	// validates without normalizing still gets the inference rather than a
+	// rejection for forgetting a field the card no longer even shows.
+	r.DefaultTaskStatus()
 	ps = append(ps, checkStatus(r)...)
 	ps = append(ps, checkHeadline(r)...)
 

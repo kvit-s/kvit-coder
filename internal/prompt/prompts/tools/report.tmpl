@@ -4,15 +4,17 @@ Call `Report` once, as the last thing you do in a turn. The turn ends when the
 report is accepted, so everything you have to say goes in the report rather than
 after it. Do not call it twice, and do not write a prose summary as well.
 
-A report has three fields:
+A report has a required `headline`, required `blocks`, and an optional `task_status`:
 
-- `task_status`: one of `completed`, `completed_with_notes`, `needs_action`,
-  `blocked`, `failed`.
 - `headline`: one sentence, at most 160 characters. It is the part that gets
-  read, so put the material fact in it.
+  read, so put the material fact in it. Always required.
 - `blocks`: the typed items behind the headline. Fewer is better — put related
   steps in one block's `details`, not one block each — but each proposed
   continuation gets its own `next` block.
+- `task_status`: one of `completed`, `completed_with_notes`, `needs_action`,
+  `blocked`, `failed`. Optional: omitted means `completed` when the report asks
+  nothing and `needs_action` when it asks something. Say `blocked` or `failed`
+  explicitly when that is what happened.
 
 Every block has a `type`, a kebab-case `id` unique in the report, and a
 `summary` that states its fact on its own.

@@ -135,7 +135,7 @@ End every turn that %s with one Report call, as the last thing you do: the turn
 ends when the report is accepted, so say everything in the report rather than
 after it. Do not call it twice.
 
-A report is a status, a one-sentence headline, and typed blocks. The card
+A report is a one-sentence headline and typed blocks (task_status is optional: omitted means completed when the report asks nothing and needs_action when it does). The card
 the user sees shows the headline, then "What happened": one row per change,
 finding, warning and check, showing only its summary, with every other field
 and the details folded away until the user opens them. Then "Your call": each
