@@ -16,6 +16,7 @@ is set under `tools:` in `config.yaml`; every key is in
 | **Shell.start / Shell.output / Shell.status / Shell.list / Shell.kill / Shell.tune / Observe.wait / Observe.add** | Background processes that keep running while the turn continues: a dev server, a long test run, a build. |
 | **Batch** | Several independent tool calls in one request. |
 | **Subagent** | Delegate to a child agent with its own context (research read-only, or general which may edit; sequential, fresh context — inline every path/symbol/constraint; the child sees no parent history). Re-read discipline is structural: a general child must read a file before editing it, and the parent must re-read anything the child edited. With output_schema, the child must file its result through structured_output and it comes back as validated JSON. |
+| **Subagent.start / Subagent.status / Subagent.output / Subagent.wait / Subagent.kill** | Background fan-out for subagents: spawn children that run while the turn continues, then check, collect, block, or stop each handle. At most max_concurrent (default 8) run at once; one child's failure never cancels its siblings. |
 | **Question** | Ask the person a question rather than guessing, when there is somebody at the terminal. |
 | **Web.search / Web.fetch** | Search through the Brave API, and fetch one page as markdown. Both off by default; the search needs a key. |
 | **Web.browsing** | A real browser through a Playwright server, behind a tool group that hides its tools until opened. |

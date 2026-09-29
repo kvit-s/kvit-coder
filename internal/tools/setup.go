@@ -279,5 +279,22 @@ func SetupRegistry(sc SetupConfig) *Registry {
 		subagentTool.SetRegistry(registry)
 	}
 
+	// Phase-3 fan-out: Subagent.start spawns into the shared pool while the
+	// turn continues; Subagent.status/output/wait/kill collect from it. All
+	// five share the Subagent instance, so budgets, the concurrency cap and
+	// handles are one pool — no Batch changes, no new config keys.
+	if subagentTool != nil {
+		for _, tool := range []Tool{
+			NewSubagentStartTool(subagentTool),
+			NewSubagentStatusTool(subagentTool),
+			NewSubagentOutputTool(subagentTool),
+			NewSubagentWaitTool(subagentTool),
+			NewSubagentKillTool(subagentTool),
+		} {
+			registry.Enable(tool)
+			debug(fmt.Sprintf("Enabled tool: %s", tool.Name()))
+		}
+	}
+
 	return registry
 }

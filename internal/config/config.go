@@ -912,8 +912,9 @@ func (c SubagentToolConfig) ResolvedResultMaxChars() int {
 	return c.ResultMaxChars
 }
 
-// ResolvedMaxConcurrent returns max_concurrent, defaulting to 8. Phase 3
-// only; the permit is per concurrent Subagent.
+// ResolvedMaxConcurrent returns max_concurrent, defaulting to 8. The
+// permit is per concurrent Subagent: background children hold one from
+// spawn to collect/kill/exit, and blocking runs hold one while they run.
 func (c SubagentToolConfig) ResolvedMaxConcurrent() int {
 	if c.MaxConcurrent <= 0 {
 		return DefaultSubagentMaxConcurrent

@@ -81,6 +81,7 @@ type SubagentRunResult struct {
 	Text             string
 	BudgetExhausted  bool
 	TimedOut         bool
+	Killed           bool
 	Iterations       int
 	PromptTokens     int
 	CompletionTokens int
@@ -125,6 +126,7 @@ type SubagentCallResult struct {
 	OverflowPath     string `json:"overflow_path,omitempty"`
 	BudgetExhausted  bool   `json:"budget_exhausted,omitempty"`
 	TimedOut         bool   `json:"timed_out,omitempty"`
+	Killed           bool   `json:"killed,omitempty"`
 	Iterations       int    `json:"iterations,omitempty"`
 	Model            string `json:"model,omitempty"`
 	PromptTokens     int    `json:"prompt_tokens,omitempty"`
@@ -144,6 +146,11 @@ func (r *SubagentCallResult) ChildStats() *stats.AgentStats {
 
 // SubagentTool runs a child agent loop in-process with its own history and a
 // restricted tool set, returning only the final summary text to the parent.
+//
+// It also owns the background-child pool for phase-3 fan-out: Subagent.start
+// spawns into it, Subagent.status/output/wait/kill collect from it. The five
+// collect tools hold this same instance, so budgets, the concurrency cap and
+// handles are shared.
 type SubagentTool struct {
 	mu       sync.Mutex
 	cfg      *config.Config
@@ -154,6 +161,14 @@ type SubagentTool struct {
 
 	parentRemaining int
 	hasRemaining    bool
+
+	// Background-child pool (phase 3, spec/subagents.md 5.6). Handles live
+	// in memory only: one process per turn means they die with the turn,
+	// so there is nothing to persist and nothing to reap beyond cancelling.
+	poolMu  sync.Mutex
+	handles map[string]*subagentChild
+	seq     int
+	running int
 }
 
 // NewSubagentTool builds the tool. The parent registry it filters at Call
@@ -161,7 +176,7 @@ type SubagentTool struct {
 // holds this tool. The child-loop driver is set with SetRunner after the
 // agent Runner exists (turn setup), breaking the tools->agent import cycle.
 func NewSubagentTool(cfg *config.Config, toolCtx *ToolContext, tempMgr *TempFileManager) *SubagentTool {
-	return &SubagentTool{cfg: cfg, toolCtx: toolCtx, tempMgr: tempMgr}
+	return &SubagentTool{cfg: cfg, toolCtx: toolCtx, tempMgr: tempMgr, handles: make(map[string]*subagentChild)}
 }
 
 // SetRegistry gives the tool the parent registry it filters at Call time.
@@ -215,25 +230,32 @@ func (t *SubagentTool) Description() string {
 
 func (t *SubagentTool) JSONSchema() map[string]any {
 	return map[string]any{
-		"type":     "object",
-		"required": []string{"description", "prompt"},
-		"properties": map[string]any{
-			"description": map[string]any{
-				"type":        "string",
-				"description": "Short (3-5 words) description of the task. Shows in progress output.",
-			},
-			"prompt": map[string]any{
-				"type":        "string",
-				"description": "Detailed task prompt. The child starts fresh: inline every file path, symbol name and constraint it needs.",
-			},
-			"subagent_type": map[string]any{
-				"type":        "string",
-				"description": `"research" (read-only, default) or "general" (may edit files).`,
-			},
-			"output_schema": map[string]any{
-				"type":        "object",
-				"description": "Optional JSON Schema (type object) the child's final result must match. When set, the child gets a structured_output tool it must call with the result, and the result comes back as a validated JSON string.",
-			},
+		"type":       "object",
+		"required":   []string{"description", "prompt"},
+		"properties": subagentArgProperties(),
+	}
+}
+
+// subagentArgProperties is the shared argument shape for Subagent and
+// Subagent.start: what to do, in whose context, and what result shape to
+// demand. One copy so the two tools cannot drift apart.
+func subagentArgProperties() map[string]any {
+	return map[string]any{
+		"description": map[string]any{
+			"type":        "string",
+			"description": "Short (3-5 words) description of the task. Shows in progress output.",
+		},
+		"prompt": map[string]any{
+			"type":        "string",
+			"description": "Detailed task prompt. The child starts fresh: inline every file path, symbol name and constraint it needs.",
+		},
+		"subagent_type": map[string]any{
+			"type":        "string",
+			"description": `"research" (read-only, default) or "general" (may edit files).`,
+		},
+		"output_schema": map[string]any{
+			"type":        "object",
+			"description": "Optional JSON Schema (type object) the child's final result must match. When set, the child gets a structured_output tool it must call with the result, and the result comes back as a validated JSON string.",
 		},
 	}
 }
@@ -263,10 +285,21 @@ give each child disjoint files, and re-read anything a child edited before
 editing it yourself. All children share the turn's checkout — no worktrees,
 no nesting, no background processes, no questions.
 
-Independent subagents still save context tokens sequentially; wall-clock
-parallelism is a later change. Several Subagents in one Batch run their spawn
-calls in order. With output_schema set, the child must file its result through
-structured_output and the result comes back as validated JSON.`
+Several Subagents in one Batch run in order, but each is still its own
+delegation with its own summary. With output_schema set, the child must file
+its result through structured_output and the result comes back as validated
+JSON.
+
+For wall-clock parallelism, fan out with Subagent.start instead: one cheap
+spawn call per child (three sequential spawns still overlap, so a Batch of
+spawns works unchanged), then collect each handle with Subagent.output. At
+most max_concurrent (default 8) children run at once; a spawn beyond that
+fails closed — collect or kill one, then retry. Check progress with
+Subagent.status, block with Subagent.wait, stop one with Subagent.kill
+(killing one never touches the others). Stats fold into the turn totals on
+collect, and a general child that edited marks the parent stale the same way
+a blocking call does. Children die with the turn: wait for or collect every
+handle before the turn ends.`
 }
 
 type subagentArgs struct {
@@ -349,6 +382,63 @@ func (t *SubagentTool) Call(ctx context.Context, args json.RawMessage) (any, err
 		}
 	}
 
+	// The concurrency cap counts blocking runs too: while this child runs
+	// synchronously here, background children may be running alongside it.
+	if !t.acquirePermit() {
+		return nil, t.capExhaustedError("Subagent")
+	}
+	defer t.releasePermit(nil)
+
+	prep, err := t.prepareSpawn(parentReg, parsed, maxChild)
+	if err != nil {
+		return nil, err
+	}
+
+	sess, result, err := runner.StartSubagent(callCtx, SubagentRunParams{
+		System:      prep.system,
+		Prompt:      parsed.Prompt,
+		Description: parsed.Description,
+		MaxIters:    maxChild,
+		Registry:    prep.childReg,
+		ToolCtx:     prep.childCtx,
+	})
+	if err != nil {
+		// A child that exhausts its budget or its deadline returns its
+		// partial summary as a labeled result, not an error — half a
+		// transcript beats a bare error. Only a failure to run at all is
+		// an error here.
+		return nil, WrapAsRuntime(err)
+	}
+
+	if wantSchema {
+		result = t.enforceSchema(callCtx, runner, sess, prep.capture, result)
+	} else {
+		result = t.nudgeEmptySummary(callCtx, runner, sess, result)
+	}
+
+	t.finishCollect(prep.childCtx)
+
+	out := t.shapeResult(result, parsed)
+	return out, nil
+}
+
+// spawnPrep is everything a spawn needs before the child loop starts:
+// filtered registry, fresh context, session-local schema tool, system
+// prompt. No LLM call happens here, so spawning stays cheap and sequential
+// spawns still fan out.
+type spawnPrep struct {
+	childCfg   *config.Config
+	childCtx   *ToolContext
+	childReg   *Registry
+	capture    *StructuredOutputCapture
+	system     string
+	wantSchema bool
+	maxChild   int
+	timeoutS   int
+}
+
+func (t *SubagentTool) prepareSpawn(parentReg *Registry, parsed *subagentArgs, maxChild int) (*spawnPrep, error) {
+	wantSchema := hasOutputSchema(parsed.OutputSchema)
 	childCfg := FloorChildConfig(t.cfg, maxChild)
 	childCtx := t.newChildContext(maxChild)
 	childReg := t.childScope(parentReg, childCfg, childCtx, parsed.SubagentType)
@@ -373,32 +463,28 @@ func (t *SubagentTool) Call(ctx context.Context, args json.RawMessage) (any, err
 		system += "\n# STRUCTURED RESULT\nYou must call the structured_output tool with your complete final result, matching the required schema, instead of ending your turn with prose.\n"
 	}
 
-	sess, result, err := runner.StartSubagent(callCtx, SubagentRunParams{
-		System:      system,
-		Prompt:      parsed.Prompt,
-		Description: parsed.Description,
-		MaxIters:    maxChild,
-		Registry:    childReg,
-		ToolCtx:     childCtx,
-	})
-	if err != nil {
-		// A child that exhausts its budget or its deadline returns its
-		// partial summary as a labeled result, not an error — half a
-		// transcript beats a bare error. Only a failure to run at all is
-		// an error here.
-		return nil, WrapAsRuntime(err)
-	}
+	return &spawnPrep{
+		childCfg:   childCfg,
+		childCtx:   childCtx,
+		childReg:   childReg,
+		capture:    capture,
+		system:     system,
+		wantSchema: wantSchema,
+		maxChild:   maxChild,
+		timeoutS:   t.cfg.Tools.Subagent.ResolvedTimeoutS(),
+	}, nil
+}
 
-	if wantSchema {
-		result = t.enforceSchema(callCtx, runner, sess, capture, result)
-	} else {
-		result = t.nudgeEmptySummary(callCtx, runner, sess, result)
+// finishCollect performs the coarse change reporting a run owes when its
+// result is collected: if the child changed files, the parent counts as
+// mutating once, and the parent must re-read every file the child edited.
+// Never shares the context object itself. Blocking runs do this inline;
+// background children defer it to Subagent.output, so stats and staleness
+// land once, on collect.
+func (t *SubagentTool) finishCollect(childCtx *ToolContext) {
+	if childCtx == nil {
+		return
 	}
-
-	// Coarser-grain change reporting, mirroring Batch: if the child changed
-	// files, the parent counts as mutating once. Never share the context
-	// object itself — the child's counters must not flip the parent's
-	// report mode mid-turn for work the parent didn't do.
 	if childCtx.ChangedThisTurn() && t.toolCtx != nil {
 		t.toolCtx.NoteChange()
 	}
@@ -408,9 +494,6 @@ func (t *SubagentTool) Call(ctx context.Context, args json.RawMessage) (any, err
 	if t.toolCtx != nil {
 		t.toolCtx.RequireReRead(childCtx.EditedPaths())
 	}
-
-	out := t.shapeResult(result, parsed)
-	return out, nil
 }
 
 // enforceSchema runs the structured_output follow-up loop: up to maxNudges
@@ -465,6 +548,7 @@ func (t *SubagentTool) shapeResult(result SubagentRunResult, parsed *subagentArg
 		CompletionTokens: result.CompletionTokens,
 		BudgetExhausted:  result.BudgetExhausted,
 		TimedOut:         result.TimedOut,
+		Killed:           result.Killed,
 		stats: &stats.AgentStats{
 			TotalPromptTokens:     result.PromptTokens,
 			TotalCompletionTokens: result.CompletionTokens,
@@ -478,6 +562,9 @@ func (t *SubagentTool) shapeResult(result SubagentRunResult, parsed *subagentArg
 	}
 	if result.TimedOut {
 		text = "[timed_out: the child ran out of wall-clock; what follows is its partial summary]\n" + text
+	}
+	if result.Killed {
+		text = "[killed: the child was stopped before finishing; what follows is its partial summary]\n" + text
 	}
 	if maxChars > 0 && len(text) > maxChars {
 		head := text[:maxChars]

@@ -147,7 +147,7 @@ Each tool group has `enabled: true/false` plus tool-specific options:
 - **`subagent.max_child_iterations`** — Cap per child; child_max = min(this, parent remaining) (default 50)
 - **`subagent.timeout_s`** — Whole-Subagent.Call wall-clock via ctx.WithTimeout (default 300)
 - **`subagent.result_max_chars`** — Head kept inline; rest spills to tmp/ (default 8000)
-- **`subagent.max_concurrent`** — Phase 3 only; permit per concurrent Subagent (default 8)
+- **`subagent.max_concurrent`** — How many subagents may run at once, counting background children and blocking runs together; a spawn beyond it fails closed so the parent backs off, collects, and retries (default 8)
 
 ### Web search and page fetch
 
