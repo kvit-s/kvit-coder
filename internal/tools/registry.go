@@ -63,6 +63,7 @@ func (r *Registry) Disable(name string) {
 
 // Get retrieves a tool by name
 func (r *Registry) Get(name string) Tool {
+	name = strings.TrimSpace(name)
 	if tool := r.tools[name]; tool != nil {
 		return tool
 	}
@@ -82,6 +83,7 @@ func (r *Registry) ModelName(name string) string {
 
 // InternalName returns the registered internal name for a provider-facing alias.
 func (r *Registry) InternalName(name string) string {
+	name = strings.TrimSpace(name)
 	if r.tools[name] != nil {
 		return name
 	}
@@ -89,7 +91,37 @@ func (r *Registry) InternalName(name string) string {
 	if internalName, ok := modelToInternal[name]; ok {
 		return internalName
 	}
+	if stripped := r.stripNamespacePrefix(name, modelToInternal); stripped != "" {
+		return stripped
+	}
 	return name
+}
+
+// stripNamespacePrefix resolves a tool name carrying a leading namespace the
+// model invented, such as "default.Glob" for the registered tool "Glob" or
+// "default.Web.search" for "Web.search". Some models prefix every tool call
+// with a namespace like "default." or "global.", which is never advertised in
+// the specs. The longest suffix that names a registered tool (or one of its
+// provider-facing aliases) wins, so dotted tools keep their grouping and
+// nested prefixes ("a.b.Read" -> "Read") resolve as well. It returns "" when
+// no suffix matches.
+func (r *Registry) stripNamespacePrefix(name string, modelToInternal map[string]string) string {
+	for i := 0; i < len(name); i++ {
+		if name[i] != '.' {
+			continue
+		}
+		suffix := strings.TrimSpace(name[i+1:])
+		if suffix == "" {
+			continue
+		}
+		if r.tools[suffix] != nil {
+			return suffix
+		}
+		if internalName, ok := modelToInternal[suffix]; ok {
+			return internalName
+		}
+	}
+	return ""
 }
 
 // NormalizeToolCallName converts any known internal or provider-facing tool name

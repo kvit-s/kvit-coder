@@ -211,3 +211,22 @@ func TestBatchLimits(t *testing.T) {
 	}
 	mustFail("more calls than the limit", many)
 }
+
+func TestBatchAcceptsNamespacePrefix(t *testing.T) {
+	batch := newBatchTool(t, &batchTestTool{name: "Read", parallel: true})
+
+	raw, _ := json.Marshal(map[string]any{"calls": []map[string]any{
+		{"tool": "default.Read", "args": map[string]any{}},
+	}})
+	if err := batch.Check(context.Background(), raw); err != nil {
+		t.Fatalf("Check(default.Read) = %v, want it accepted", err)
+	}
+	result, err := batch.Call(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	results := result.(map[string]any)["results"].([]BatchResult)
+	if len(results) != 1 || !results[0].OK {
+		t.Fatalf("results = %+v, want one OK result", results)
+	}
+}

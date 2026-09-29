@@ -311,7 +311,25 @@ func findGroupMember(members []Tool, want string) Tool {
 			found = m
 		}
 	}
-	return found
+	if found != nil {
+		return found
+	}
+	// A model that prefixes every tool with a namespace it invented
+	// ("default.browser_click") means the member name. Try each suffix after
+	// a dot, longest first, against the same exact/label/short rules above.
+	for i := 0; i < len(want); i++ {
+		if want[i] != '.' {
+			continue
+		}
+		suffix := strings.TrimSpace(want[i+1:])
+		if suffix == "" {
+			continue
+		}
+		if member := findGroupMember(members, suffix); member != nil {
+			return member
+		}
+	}
+	return nil
 }
 
 // renderGroupMember writes one member as a compact signature. This is not JSON

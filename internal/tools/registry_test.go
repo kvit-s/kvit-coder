@@ -276,3 +276,64 @@ func TestRegistry_ExtractToolCallsFromText_JSONInToolCall(t *testing.T) {
 		})
 	}
 }
+
+func TestRegistry_NamespacePrefixStripped(t *testing.T) {
+	registry := NewRegistry()
+	registry.Enable(fakeCategoryTool{name: "Glob", category: "filesystem"})
+	registry.Enable(fakeCategoryTool{name: "Read", category: "filesystem"})
+	registry.Enable(fakeCategoryTool{name: "Web.search", category: "web"})
+	registry.Enable(fakeCategoryTool{name: "Shell.advanced", category: "shell"})
+	registry.Enable(fakeCategoryTool{name: "mcp.srv.tool", category: "mcp"})
+
+	cases := []struct {
+		input    string
+		internal string
+	}{
+		{"default.Glob", "Glob"},
+		{"global.Read", "Read"},
+		{"tools.Read", "Read"},
+		{"default.Web.search", "Web.search"},
+		{"default.Shell.advanced", "Shell.advanced"},
+		{"default.Shell_advanced", "Shell.advanced"},
+		{"a.b.Read", "Read"},
+		{"  default.Glob  ", "Glob"},
+		// Exact names still win and are not stripped.
+		{"Glob", "Glob"},
+		{"Shell.advanced", "Shell.advanced"},
+		{"Shell_advanced", "Shell.advanced"},
+		{"mcp.srv.tool", "mcp.srv.tool"},
+	}
+
+	for _, tc := range cases {
+		if got := registry.InternalName(tc.input); got != tc.internal {
+			t.Errorf("InternalName(%q) = %q, want %q", tc.input, got, tc.internal)
+		}
+		tool := registry.Get(tc.input)
+		if tool == nil {
+			t.Errorf("Get(%q) = nil, want %q", tc.input, tc.internal)
+			continue
+		}
+		if tool.Name() != tc.internal {
+			t.Errorf("Get(%q).Name() = %q, want %q", tc.input, tool.Name(), tc.internal)
+		}
+	}
+
+	// Unknown tools stay unknown, even with a namespace.
+	if got := registry.InternalName("default.Nope"); got != "default.Nope" {
+		t.Errorf("InternalName(%q) = %q, want it unchanged", "default.Nope", got)
+	}
+	if registry.Get("default.Nope") != nil {
+		t.Error("Get(default.Nope) should be nil")
+	}
+	if registry.Get("Nope") != nil {
+		t.Error("Get(Nope) should be nil")
+	}
+
+	// Normalization maps the namespaced spelling to the advertised one.
+	if got := registry.NormalizeToolCallName("default.Glob"); got != "Glob" {
+		t.Errorf("NormalizeToolCallName(default.Glob) = %q, want Glob", got)
+	}
+	if got := registry.NormalizeToolCallName("default.Shell.advanced"); got != "Shell_advanced" {
+		t.Errorf("NormalizeToolCallName(default.Shell.advanced) = %q, want Shell_advanced", got)
+	}
+}
