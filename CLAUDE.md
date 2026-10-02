@@ -70,6 +70,7 @@ See `internal/session/session.go` for the authoritative version of this.
 | Package | Lines | What it does |
 |---|---:|---|
 | `internal/tools` | 12,700 | Tool implementations: read, three edit modes, write, search, shell, batch, question, background processes |
+| `internal/office` | 9,900 | Word, Excel and PowerPoint to Markdown for Read. Copied from docstomd-go; see below |
 | `internal/benchmark` | 5,300 | Three benchmark harnesses. Reached only through `cmd/kvit-coder` flags; see `docs/bench-refactor.md` for the plan to split it out |
 | `internal/agent` | 2,600 | The run loop, plus the weak-model machinery: loop detection, backtracking, anomaly interrogation |
 | `internal/mcp` | 1,600 | Model Context Protocol client, stdio and HTTP transports |
@@ -141,6 +142,13 @@ cold. `session.RunIDFor` derives it from the session name.
 timestamped reports and full transcripts into `benchmarks/`. They were 49 MB of
 search noise before September 2026. `.gitignore` covers the patterns; do not
 add them back.
+
+**`internal/office` is copied code.** Apart from `office.go` and
+`model/log.go`, it is docstomd-go's office converters (MIT, notices in
+`NOTICE.md`), kept close to upstream so a newer version can be copied over
+it. `office.go` lists the commit and the few changes made; a fix inside the
+copied packages has to be added to that list or it will be lost on the next
+update.
 
 **`benchmarks/thinkbench/suite/` is vendored third-party data** (Thinkwright,
 Apache-2.0). Its graders and reference solutions must stay physically separate

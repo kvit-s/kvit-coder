@@ -3,7 +3,7 @@
 This page explains the design decisions that shape the program: why a turn is
 a process of its own, why a session is a directory, how input reaches a turn
 that is already running, how a shell command is judged, why some tools stay
-hidden until they are needed, and how PDFs are read. The reference detail for
+hidden until they are needed, and how PDFs and Office documents are read. The reference detail for
 each is in the other pages of [`docs/`](README.md), linked from each section.
 
 ## One process per turn
@@ -62,3 +62,28 @@ a tool result is appended like any other message. Groups are configured under
 A PDF is read inside the agent process through PDFium compiled to WebAssembly
 and run by wazero, with page ranges and a fallback that renders a page as an
 image when the page holds only scanned images with no extractable text.
+
+## Word, Excel and PowerPoint files
+
+A .docx, .xlsx or .pptx file is a zip archive of XML. Read converts it to
+Markdown with the code in `internal/office`: headings, lists, tables, one
+table per worksheet, slide text and speaker notes. That code is copied from
+docstomd-go, a Go port of the office converters in Firecrawl's anydoc. A Go
+copy was chosen over anydoc itself, which is Rust and would have to run as a
+second WebAssembly module, because on the documents both were tried on the
+output was identical and the Go version used a fifth of the memory. Only the
+office packages were copied; `internal/office/office.go` records the upstream
+commit, the changes made to the copy, and how to take a newer version.
+
+The converted Markdown is saved in the session's `tmp/` folder under a name
+derived from the document's path, size and modification time, and every read
+of the document is a line read of that file. Paging through a long spreadsheet
+is therefore one conversion, and an edited document is converted again.
+Conversion is refused above 16 MB of unpacked XML, because peak memory runs at
+11 to 19 times that figure.
+
+Only the zip-based formats Office has written since 2007 are converted. The
+older binary .doc, .xls and .ppt formats, OpenDocument, RTF and EPUB are named
+with a command that opens them, as before, because no maintained Go library
+reads .doc or .ppt text and these formats were 2 of 95 office files on the
+machine this was measured on.

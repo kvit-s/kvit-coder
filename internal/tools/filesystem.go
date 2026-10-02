@@ -431,6 +431,14 @@ you, with a marker before each page. Use ` + "`pages`" + ` to choose which pages
 page 1. ` + "`start`" + `, ` + "`limit`" + ` and ` + "`char_mode`" + ` do not apply to a PDF, and a PDF
 cannot be edited as text.
 
+**Word, Excel and PowerPoint files** (.docx, .xlsx, .pptx and their variants)
+are converted to Markdown: headings, lists, tables, one table per worksheet, and
+slide text with speaker notes. ` + "`start`" + ` and ` + "`limit`" + ` count lines of the converted
+text, and a long document comes with an outline of its headings to jump to. The
+converted text is also saved at ` + "`converted_path`" + ` for Search or Shell. These
+files cannot be edited as text. The older .doc, .xls and .ppt formats are not
+converted.
+
 **Other non-text files** — images, archives, databases, compiled output — are
 named rather than read, with the tool or command that opens them. That is the
 answer, not a failure to retry. Pass ` + "`char_mode: true`" + ` if you want the raw
@@ -520,6 +528,15 @@ func (t *ReadFileTool) Call(ctx context.Context, args json.RawMessage) (any, err
 	// appear anywhere in the file's bytes.
 	if headErr == nil && looksLikePDF(head) {
 		return t.readPDF(ctx, fullPath, params.Path, params.Pages)
+	}
+
+	// Word, Excel and PowerPoint files are converted to Markdown, and are not
+	// recorded as read for the same reason a PDF is not. char_mode still gets
+	// the bytes.
+	if headErr == nil && !params.CharMode {
+		if result, handled, err := t.readOffice(fullPath, params.Path, info, head, params.Start, params.Limit); handled {
+			return result, err
+		}
 	}
 
 	// Anything else that is not text is named rather than read. char_mode is
