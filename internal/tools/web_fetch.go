@@ -106,7 +106,7 @@ func (t *WebFetchTool) PromptSection() string {
 The page is converted to markdown and written to a file. A short page comes back
 whole in ` + "`content`" + `; a long one comes back as ` + "`head`" + ` plus an
 ` + "`outline`" + ` of its headings with line numbers, and you read the parts you
-want with ` + "`" + `Read {"path": ..., "offset": ..., "limit": ...}` + "`" + `.
+want with ` + "`" + `Read {"path": ..., "start": ..., "limit": ...}` + "`" + `.
 
 Only static HTML is retrieved. A page that builds its content with JavaScript,
 or one that answers with a bot check, comes back nearly empty and the result
@@ -293,7 +293,7 @@ func (t *WebFetchTool) present(requested, final string, status int, title, markd
 	result["truncated"] = true
 	if path != "" && t.config.Tools.Read.Enabled {
 		result["hint"] = fmt.Sprintf(
-			"The whole page is at that path. Read a section with Read {\"path\": %q, \"offset\": <line from outline>, \"limit\": %d}",
+			"The whole page is at that path. Read a section with Read {\"path\": %q, \"start\": <line from outline>, \"limit\": %d}",
 			path, maxLines)
 	}
 	return result

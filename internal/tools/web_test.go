@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -194,6 +196,50 @@ func TestWebFetchLargePageReturnsOutlineAndPath(t *testing.T) {
 		if !strings.Contains(lines[e.Line-1], e.Heading) {
 			t.Errorf("line %d is %q, but the outline says it holds %q", e.Line, lines[e.Line-1], e.Heading)
 		}
+	}
+}
+
+// The hint on a long page is followed by calling Read, so every parameter it
+// names has to be one Read accepts. Read ignores one it does not know, which
+// for a misnamed start parameter means reading from line 1 again.
+func TestWebFetchHintNamesParametersReadAccepts(t *testing.T) {
+	var body strings.Builder
+	body.WriteString("<html><head><title>Big</title></head><body>")
+	for i := 0; i < 40; i++ {
+		fmt.Fprintf(&body, "<h2>Section %d</h2>", i)
+		body.WriteString("<p>" + strings.Repeat("filler sentence for bulk. ", 30) + "</p>")
+	}
+	body.WriteString("</body></html>")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, body.String())
+	}))
+	defer srv.Close()
+
+	res := call(t, newFetchTool(t), map[string]any{"url": srv.URL})
+	hint, _ := res["hint"].(string)
+	path, _ := res["path"].(string)
+	outline, _ := res["outline"].([]outlineEntry)
+	if hint == "" || path == "" || len(outline) < 2 {
+		t.Fatalf("a long page should come with a hint, a path and an outline: %v", res)
+	}
+
+	cfg := newTestConfig()
+	cfg.Workspace.Root = filepath.Dir(path)
+	read := NewReadFileTool(cfg, NewToolContext())
+	accepted := read.JSONSchema()["properties"].(map[string]any)
+	for _, m := range regexp.MustCompile(`"(\w+)":`).FindAllStringSubmatch(hint, -1) {
+		if _, ok := accepted[m[1]]; !ok {
+			t.Errorf("hint names %q, which Read does not accept: %s", m[1], hint)
+		}
+	}
+
+	target := outline[len(outline)-1]
+	got := call(t, read, map[string]any{"path": path, "start": target.Line, "limit": 5})
+	content, _ := got["content"].(string)
+	first, _, _ := strings.Cut(content, "\n")
+	if !strings.Contains(first, target.Heading) {
+		t.Errorf("reading from outline line %d began with %q, want the heading %q", target.Line, first, target.Heading)
 	}
 }
 

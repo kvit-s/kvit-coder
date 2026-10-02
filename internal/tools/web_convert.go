@@ -121,8 +121,8 @@ type outlineEntry struct {
 }
 
 // buildOutline lists the markdown headings with the line numbers they occupy in
-// the file on disk, so a Read at the offset an entry gives lands where the
-// model expected. This is appendix A.1's index tool, and it is nearly free
+// the file on disk, so a Read starting at the line an entry gives lands where
+// the model expected. This is appendix A.1's index tool, and it is nearly free
 // here: the heading levels came from the page's own <h1>-<h6>, so building the
 // outline is counting '#' prefixes in output that already exists.
 //
