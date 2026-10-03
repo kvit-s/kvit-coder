@@ -405,6 +405,43 @@ func TestReadNamesAPasswordProtectedDocument(t *testing.T) {
 	}
 }
 
+// The pre-2007 formats are not converted. Each is named, and the hint converts
+// it to the newer format inside the session's tmp/ folder, which Read opens
+// without asking, with catdoc's tools as the fallback.
+func TestReadNamesOldOfficeFormatsWithAConversion(t *testing.T) {
+	compound := append(append([]byte{}, oleMagic...), make([]byte, 1016)...)
+	dir, tmp := t.TempDir(), t.TempDir()
+
+	for _, tc := range []struct{ name, wantType, wantConvert, wantFallback, wantConverted string }{
+		{"minutes.doc", "Word 97-2003 document", "--convert-to docx", "catdoc", "minutes.docx"},
+		{"budget.xls", "Excel 97-2003 workbook", "--convert-to xlsx", "xls2csv", "budget.xlsx"},
+		{"pitch.ppt", "PowerPoint 97-2003 presentation", "--convert-to pptx", "catppt", "pitch.pptx"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writeFileForGuard(t, dir, tc.name, compound)
+
+			got := readOfficeThroughTool(t, dir, tmp, map[string]any{"path": tc.name})
+
+			if got["error"] != "not_text" || got["file_type"] != tc.wantType {
+				t.Fatalf("error=%v file_type=%v, want not_text %q", got["error"], got["file_type"], tc.wantType)
+			}
+			hint, _ := got["hint"].(string)
+			converted := filepath.Join(tmp, tc.wantConverted)
+			for _, want := range []string{tc.wantConvert, fmt.Sprintf("--outdir %q", tmp), fmt.Sprintf(`Read {"path": %q}`, converted), tc.wantFallback} {
+				if !strings.Contains(hint, want) {
+					t.Errorf("hint missing %q:\n%s", want, hint)
+				}
+			}
+		})
+	}
+
+	// The container alone is not enough: other programs use it too.
+	writeFileForGuard(t, dir, "thumbs.bin", compound)
+	if got := readOfficeThroughTool(t, dir, tmp, map[string]any{"path": "thumbs.bin"}); got["file_type"] != "binary file" {
+		t.Errorf("a compound file without an Office extension was named %v", got["file_type"])
+	}
+}
+
 func TestCharModeStillReturnsAnOfficeDocumentsBytes(t *testing.T) {
 	dir := t.TempDir()
 	writeTestDocx(t, dir, "raw.docx", wordPara("Some text"))

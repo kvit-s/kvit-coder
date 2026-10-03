@@ -115,10 +115,7 @@ func (t *ReadFileTool) readOffice(fullPath, path string, info os.FileInfo, head 
 // an Office document that cannot be converted; an empty path with no failure
 // means it was not an Office document after all.
 func (t *ReadFileTool) convertOffice(fullPath, path string, info os.FileInfo, xmlBytes int64) (convertedPath, kind string, warnings []string, failure map[string]any) {
-	dir := t.toolCtx.SessionTmp()
-	if dir == "" {
-		dir = filepath.Join(os.TempDir(), "kvit-coder-office")
-	}
+	dir := t.officeDir()
 	key := sha256.Sum256(fmt.Appendf(nil, "%s\x00%d\x00%d", fullPath, info.Size(), info.ModTime().UnixNano()))
 	base := "office-" + hex.EncodeToString(key[:])[:12]
 
@@ -150,6 +147,16 @@ func (t *ReadFileTool) convertOffice(fullPath, path string, info os.FileInfo, xm
 		return "", "", nil, officeFailure(path, info, converted.Kind, fmt.Errorf("converted, but could not save the result: %w", err))
 	}
 	return convertedPath, converted.Kind, converted.Warnings, nil
+}
+
+// officeDir is where converted documents go: the session's tmp/ folder, which
+// the model may read without being asked about, or a fixed folder under the
+// system's temporary directory when there is no session.
+func (t *ReadFileTool) officeDir() string {
+	if dir := t.toolCtx.SessionTmp(); dir != "" {
+		return dir
+	}
+	return filepath.Join(os.TempDir(), "kvit-coder-office")
 }
 
 // readProtectedOffice answers for a password-protected document, which would

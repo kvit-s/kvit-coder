@@ -437,7 +437,8 @@ slide text with speaker notes. ` + "`start`" + ` and ` + "`limit`" + ` count lin
 text, and a long document comes with an outline of its headings to jump to. The
 converted text is also saved at ` + "`converted_path`" + ` for Search or Shell. These
 files cannot be edited as text. The older .doc, .xls and .ppt formats are not
-converted.
+converted; Read names them and gives the command that converts one to the
+newer format.
 
 **Other non-text files** — images, archives, databases, compiled output — are
 named rather than read, with the tool or command that opens them. That is the
@@ -542,6 +543,9 @@ func (t *ReadFileTool) Call(ctx context.Context, args json.RawMessage) (any, err
 	// Anything else that is not text is named rather than read. char_mode is
 	// the way out: a caller asking for bytes has said it means to have them.
 	if headErr == nil && !params.CharMode {
+		if kind, legacy := classifyLegacyOffice(params.Path, head, t.officeDir()); legacy {
+			return notTextResult(params.Path, fileSize, kind), nil
+		}
 		if kind, notText := classifyNotText(params.Path, head); notText {
 			return notTextResult(params.Path, fileSize, kind), nil
 		}

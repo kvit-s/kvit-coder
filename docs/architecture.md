@@ -82,8 +82,11 @@ is therefore one conversion, and an edited document is converted again.
 Conversion is refused above 16 MB of unpacked XML, because peak memory runs at
 11 to 19 times that figure.
 
-Only the zip-based formats Office has written since 2007 are converted. The
-older binary .doc, .xls and .ppt formats, OpenDocument, RTF and EPUB are named
-with a command that opens them, as before, because no maintained Go library
-reads .doc or .ppt text and these formats were 2 of 95 office files on the
-machine this was measured on.
+Only the zip-based formats Office has written since 2007 are converted,
+because no maintained Go library reads .doc or .ppt text, and the older formats
+were 2 of 95 office files on the machine this was measured on. A .doc, .xls or
+.ppt file is named, and the hint gives the LibreOffice command that converts it
+to the newer format in the session's `tmp/` folder, where Read can open it, or
+catdoc's text dump where LibreOffice is not installed. OpenDocument and EPUB
+files get a command that lists or extracts their XML, and RTF is read as the
+text it is.

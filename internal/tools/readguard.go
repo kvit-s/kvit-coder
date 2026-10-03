@@ -173,6 +173,41 @@ var zipMembers = map[string]fileKind{
 	".epub": {"EPUB book", "List its contents with Shell: unzip -l %q"},
 }
 
+// legacyOffice describes the binary formats Office used before 2007. They all
+// share one container, the compound file, so the extension is what tells them
+// apart. Each is named with the newer format Read converts and the catdoc
+// program that prints the same kind of file as text.
+var legacyOffice = map[string]struct{ name, modern, textCmd string }{
+	".doc": {"Word 97-2003 document", "docx", "catdoc"},
+	".dot": {"Word 97-2003 template", "docx", "catdoc"},
+	".xls": {"Excel 97-2003 workbook", "xlsx", "xls2csv"},
+	".xlt": {"Excel 97-2003 template", "xlsx", "xls2csv"},
+	".ppt": {"PowerPoint 97-2003 presentation", "pptx", "catppt"},
+	".pps": {"PowerPoint 97-2003 slide show", "pptx", "catppt"},
+	".pot": {"PowerPoint 97-2003 template", "pptx", "catppt"},
+}
+
+// classifyLegacyOffice names a pre-2007 Office file, which classifyNotText
+// would otherwise call an unknown binary file. Read cannot convert these, so
+// the advice is a conversion to the newer format, written into outDir where
+// Read can open it, with catdoc's text dump for a machine without LibreOffice.
+func classifyLegacyOffice(path string, head []byte, outDir string) (fileKind, bool) {
+	if !hasMagicAt(head, 0, oleMagic) {
+		return fileKind{}, false
+	}
+	format, ok := legacyOffice[strings.ToLower(filepath.Ext(path))]
+	if !ok {
+		return fileKind{}, false
+	}
+	base := filepath.Base(path)
+	converted := filepath.Join(outDir, strings.TrimSuffix(base, filepath.Ext(base))+"."+format.modern)
+	return fileKind{
+		Name: format.name,
+		Advice: fmt.Sprintf("Read converts the newer .%s format. Convert this file with Shell: soffice --headless --convert-to %s --outdir %q %q, then Read {\"path\": %q}. Without LibreOffice, %s %q prints its text.",
+			format.modern, format.modern, outDir, path, converted, format.textCmd, path),
+	}, true
+}
+
 // classifyNotText says what a file is when it is not text Read can return. The
 // second result is false for anything that should be read as usual.
 func classifyNotText(path string, head []byte) (fileKind, bool) {
