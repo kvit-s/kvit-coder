@@ -330,10 +330,13 @@ func TestRejectionHintsAtBuriedProposal(t *testing.T) {
 	    "summary": "Line 144 runs ls on a missing directory.",
 	    "details": "How to fix (pick one): delete the line. Say the word and I will apply it."}]
 	}`
-	tool, _ := newReportTool(t)
+	// The turn changed something, so a report with no check is rejected and
+	// the rejection is where the hint would appear.
+	tool, tc := newReportTool(t)
+	tc.NoteChange()
 	_, err := tool.Call(context.Background(), json.RawMessage(buried))
 	if err == nil {
-		t.Fatal("a finding without impact was accepted")
+		t.Fatal("a report with no check was accepted from a turn that changed something")
 	}
 	if !strings.Contains(err.Error(), `"next" block`) {
 		t.Errorf("rejection names no next-block hint:\n%v", err)
@@ -346,10 +349,11 @@ func TestRejectionHintsAtBuriedProposal(t *testing.T) {
 	    "summary": "Line 144 runs ls on a missing directory.",
 	    "details": "Checked the startup files; this is the only reference."}]
 	}`
-	tool, _ = newReportTool(t)
+	tool, tc = newReportTool(t)
+	tc.NoteChange()
 	_, err = tool.Call(context.Background(), json.RawMessage(plain))
 	if err == nil {
-		t.Fatal("a finding without impact was accepted")
+		t.Fatal("a report with no check was accepted from a turn that changed something")
 	}
 	if strings.Contains(err.Error(), "Hint:") {
 		t.Errorf("a report with no proposal drew the hint:\n%v", err)

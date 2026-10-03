@@ -375,12 +375,17 @@ func TestUnclassifiedMustSayWhy(t *testing.T) {
 	}
 }
 
-func TestFindingNeedsAnImpact(t *testing.T) {
+// impact is optional on a finding: its summary usually says why it matters,
+// and the card folds impact away. A warning still needs one.
+func TestFindingImpactIsOptional(t *testing.T) {
 	r := completedReport()
 	r.Blocks = append(r.Blocks, Block{Type: BlockFinding, ID: "root-cause", Summary: "The retry loop never terminates."})
-	ps := Validate(r, Rules{Mutated: true})
-	if !hasCode(ps, "field_required") {
-		t.Errorf("a finding with no impact was accepted: %v", codes(ps))
+	if ps := Validate(r, Rules{Mutated: true}); len(ps) != 0 {
+		t.Fatalf("a finding with no impact was rejected: %v", codes(ps))
+	}
+	r.Blocks[1] = Block{Type: BlockWarning, ID: "cert", Summary: "The signing certificate expires Friday.", Severity: "high"}
+	if !hasCode(Validate(r, Rules{Mutated: true}), "field_required") {
+		t.Error("a warning with no impact was accepted")
 	}
 }
 
@@ -543,6 +548,50 @@ func TestNormalizeTranslatesRenamedTypes(t *testing.T) {
 	}
 	if ps := Validate(r, Rules{Mutated: true}); len(ps) != 0 {
 		t.Fatalf("a translated report was rejected: %v", codes(ps))
+	}
+}
+
+// A block that leaves its type out gets the one its fields name, as when a
+// model adds a check block to answer a rejection and forgets "type". When the
+// fields name no type, or more than one, the block stays untyped and the
+// rejection lists the types.
+func TestNormalizeInfersAnOmittedType(t *testing.T) {
+	cases := []struct {
+		name  string
+		block Block
+		want  BlockType
+	}{
+		{"status", Block{Status: CheckPassed}, BlockCheck},
+		{"limitation", Block{Status: CheckNotRun, Limitation: "Nothing was run."}, BlockCheck},
+		{"severity", Block{Severity: "high", Impact: "Pushes fail."}, BlockWarning},
+		{"importance", Block{Importance: "low"}, BlockFinding},
+		{"reason", Block{ReasonUnclassified: "Fits nothing else."}, BlockUnclassified},
+		{"shared fields only", Block{Impact: "Callers change.", Details: "notes"}, ""},
+		{"two types", Block{Status: CheckPassed, Severity: "high"}, ""},
+		{"options", Block{Status: CheckPassed, Options: questionBlock().Options}, ""},
+	}
+	for _, c := range cases {
+		b := c.block
+		b.ID, b.Summary = "item", "Something about the turn."
+		r := &Report{Headline: "Checked the store package.", Blocks: []Block{b}}
+		Normalize(r)
+		if got := r.Blocks[0].Type; got != c.want {
+			t.Errorf("%s: type is %q, want %q", c.name, got, c.want)
+		}
+	}
+
+	r := completedReport()
+	r.Blocks[0].Type = ""
+	Normalize(r)
+	if ps := Validate(r, Rules{Mutated: true}); len(ps) != 0 {
+		t.Fatalf("a check block with its type left out was rejected: %v", codes(ps))
+	}
+
+	r = completedReport()
+	r.Blocks = append(r.Blocks, Block{ID: "note", Summary: "The helper had two callers."})
+	Normalize(r)
+	if !hasCode(Validate(r, Rules{Mutated: true}), "block_type_unknown") {
+		t.Error("a block whose fields name no type was accepted")
 	}
 }
 

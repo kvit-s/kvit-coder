@@ -27,9 +27,10 @@ var fencePattern = regexp.MustCompile("(?s)^```[a-zA-Z0-9_+-]*\n(.*)\n?```$")
 
 // Normalize cleans up what a model sent before it is checked: surrounding
 // whitespace everywhere, a code fence wrapped around a whole Markdown value,
-// a block type under a name it used to have, and a task_status coerced into
-// agreement with the blocks. It never changes meaning, so a report that only needed normalizing is
-// accepted rather than bounced for a formatting habit.
+// a block type under a name it used to have or left out where the block's
+// fields name it, and a task_status coerced into agreement with the blocks. It
+// never changes meaning, so a report that only needed normalizing is accepted
+// rather than bounced for a formatting habit.
 func Normalize(r *Report) {
 	if r == nil {
 		return
@@ -70,11 +71,43 @@ func Normalize(r *Report) {
 			o.Instruction = strings.TrimSpace(o.Instruction)
 			o.Preview = unfence(o.Preview)
 		}
+		if b.Type == "" {
+			b.Type = impliedType(b)
+		}
 	}
 	// Block types are trimmed above, so interactivity is reliable here: the
 	// deprecated status is coerced into agreement with the blocks rather than
 	// rejected, so a stale label never costs a repair round trip.
 	r.DefaultTaskStatus()
+}
+
+// impliedType is the type of a block that left its type out, when the fields
+// it did fill belong to exactly one type: a status is a check, a severity a
+// warning. Models drop the type most often on a block added in a hurry to
+// satisfy a rejection, whose other fields say plainly what it is. Options do
+// not decide between question and next, and summary, impact and details are
+// shared, so a block with only those stays untyped and is rejected.
+func impliedType(b *Block) BlockType {
+	if len(b.Options) > 0 || b.ResponseType != "" || b.RecommendationReason != "" {
+		return ""
+	}
+	var implied []BlockType
+	if b.Status != "" || b.Evidence != "" || b.Limitation != "" || b.RequiredToVerify != "" {
+		implied = append(implied, BlockCheck)
+	}
+	if b.Severity != "" {
+		implied = append(implied, BlockWarning)
+	}
+	if b.Importance != "" {
+		implied = append(implied, BlockFinding)
+	}
+	if b.ReasonUnclassified != "" || b.SuggestedType != "" {
+		implied = append(implied, BlockUnclassified)
+	}
+	if len(implied) != 1 {
+		return ""
+	}
+	return implied[0]
 }
 
 func unfence(s string) string {
@@ -206,7 +239,9 @@ func checkBlock(r *Report, i int, seen map[string]int) []Problem {
 
 	switch b.Type {
 	case BlockFinding:
-		ps = append(ps, required(at, "impact", b.Impact, "why this finding matters for the task")...)
+		// impact is optional: the card folds it away, a finding's summary
+		// usually says why it matters already, and requiring it was the most
+		// common reason a report was sent back.
 		if b.Importance != "" {
 			ps = append(ps, oneOf(at, "importance", b.Importance, Levels)...)
 		}

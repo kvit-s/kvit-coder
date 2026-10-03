@@ -608,7 +608,7 @@ func JSONSchema(maxBlocks int) map[string]any {
 			"id":      str("Short kebab-case name for this block, unique within the report, such as \"reorder-tests\"."),
 			"summary": str(fmt.Sprintf("The block's fact in one sentence that stands on its own, at most %d characters; aim for one line of about 90. On the card it is the block's whole row, with every other field folded away, so it never depends on them. On a 'question' it is the question itself; on a 'next', the proposal.", SummaryMax)),
 
-			"impact": str("Required on 'finding' (why it matters) and 'warning' (what breaks if ignored). Optional elsewhere: what changed for the user, in one line."),
+			"impact": str("Required on 'warning': what breaks if it is ignored. Optional on 'finding' (why it matters) and 'change' (what changed for the user), in one line."),
 
 			"recommendation": str("On 'next': the id of the option you recommend. Required on the primary proposal only — one recommended block per report; further 'next' blocks omit it and are secondary. On 'question': the same, when a safe default exists. On 'finding' and 'warning': free text saying what to do."),
 
