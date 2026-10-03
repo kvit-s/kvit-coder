@@ -405,20 +405,32 @@ func TestReadNamesAPasswordProtectedDocument(t *testing.T) {
 	}
 }
 
-// The pre-2007 formats are not converted. Each is named, and the hint converts
-// it to the newer format inside the session's tmp/ folder, which Read opens
-// without asking, with catdoc's tools as the fallback.
-func TestReadNamesOldOfficeFormatsWithAConversion(t *testing.T) {
+// The pre-2007 formats and OpenDocument are not converted. Each is named, and
+// the hint converts it to the newer format inside the session's tmp/ folder,
+// which Read opens without asking, with a way at the text as the fallback.
+func TestReadNamesConvertibleOfficeFormats(t *testing.T) {
 	compound := append(append([]byte{}, oleMagic...), make([]byte, 1016)...)
+	var odf bytes.Buffer
+	zw := zip.NewWriter(&odf)
+	f, _ := zw.Create("mimetype")
+	f.Write([]byte("application/vnd.oasis.opendocument.text"))
+	zw.Close()
 	dir, tmp := t.TempDir(), t.TempDir()
 
-	for _, tc := range []struct{ name, wantType, wantConvert, wantFallback, wantConverted string }{
-		{"minutes.doc", "Word 97-2003 document", "--convert-to docx", "catdoc", "minutes.docx"},
-		{"budget.xls", "Excel 97-2003 workbook", "--convert-to xlsx", "xls2csv", "budget.xlsx"},
-		{"pitch.ppt", "PowerPoint 97-2003 presentation", "--convert-to pptx", "catppt", "pitch.pptx"},
+	for _, tc := range []struct {
+		name                                               string
+		content                                            []byte
+		wantType, wantConvert, wantFallback, wantConverted string
+	}{
+		{"minutes.doc", compound, "Word 97-2003 document", "--convert-to docx", "catdoc", "minutes.docx"},
+		{"budget.xls", compound, "Excel 97-2003 workbook", "--convert-to xlsx", "xls2csv", "budget.xlsx"},
+		{"pitch.ppt", compound, "PowerPoint 97-2003 presentation", "--convert-to pptx", "catppt", "pitch.pptx"},
+		{"letter.odt", odf.Bytes(), "OpenDocument text", "--convert-to docx", "content.xml", "letter.docx"},
+		{"ledger.ods", odf.Bytes(), "OpenDocument spreadsheet", "--convert-to xlsx", "content.xml", "ledger.xlsx"},
+		{"deck.odp", odf.Bytes(), "OpenDocument presentation", "--convert-to pptx", "content.xml", "deck.pptx"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			writeFileForGuard(t, dir, tc.name, compound)
+			writeFileForGuard(t, dir, tc.name, tc.content)
 
 			got := readOfficeThroughTool(t, dir, tmp, map[string]any{"path": tc.name})
 
@@ -435,10 +447,15 @@ func TestReadNamesOldOfficeFormatsWithAConversion(t *testing.T) {
 		})
 	}
 
-	// The container alone is not enough: other programs use it too.
+	// The container alone is not enough, since other programs use it too, and
+	// the extension alone is not either.
 	writeFileForGuard(t, dir, "thumbs.bin", compound)
 	if got := readOfficeThroughTool(t, dir, tmp, map[string]any{"path": "thumbs.bin"}); got["file_type"] != "binary file" {
 		t.Errorf("a compound file without an Office extension was named %v", got["file_type"])
+	}
+	writeFileForGuard(t, dir, "fake.odt", compound)
+	if got := readOfficeThroughTool(t, dir, tmp, map[string]any{"path": "fake.odt"}); got["file_type"] == "OpenDocument text" {
+		t.Error("a compound file named .odt was taken for OpenDocument")
 	}
 }
 

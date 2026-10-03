@@ -164,8 +164,6 @@ var zipMembers = map[string]fileKind{
 	".docx": {"Word document (a ZIP container)", "Extract its text with Shell: unzip -p %q word/document.xml | sed -e 's/<[^>]*>/ /g'"},
 	".xlsx": {"Excel workbook (a ZIP container)", "Its sheets are XML inside the archive. Start with Shell: unzip -l %q"},
 	".pptx": {"PowerPoint deck (a ZIP container)", "Its slides are XML inside the archive. Start with Shell: unzip -l %q"},
-	".odt":  {"OpenDocument text (a ZIP container)", "Extract its text with Shell: unzip -p %q content.xml | sed -e 's/<[^>]*>/ /g'"},
-	".ods":  {"OpenDocument spreadsheet (a ZIP container)", "Start with Shell: unzip -p %q content.xml"},
 	".jar":  {"Java archive", "List its contents with Shell: unzip -l %q"},
 	".war":  {"Java web archive", "List its contents with Shell: unzip -l %q"},
 	".whl":  {"Python wheel", "List its contents with Shell: unzip -l %q"},
@@ -173,38 +171,48 @@ var zipMembers = map[string]fileKind{
 	".epub": {"EPUB book", "List its contents with Shell: unzip -l %q"},
 }
 
-// legacyOffice describes the binary formats Office used before 2007. They all
-// share one container, the compound file, so the extension is what tells them
-// apart. Each is named with the newer format Read converts and the catdoc
-// program that prints the same kind of file as text.
-var legacyOffice = map[string]struct{ name, modern, textCmd string }{
-	".doc": {"Word 97-2003 document", "docx", "catdoc"},
-	".dot": {"Word 97-2003 template", "docx", "catdoc"},
-	".xls": {"Excel 97-2003 workbook", "xlsx", "xls2csv"},
-	".xlt": {"Excel 97-2003 template", "xlsx", "xls2csv"},
-	".ppt": {"PowerPoint 97-2003 presentation", "pptx", "catppt"},
-	".pps": {"PowerPoint 97-2003 slide show", "pptx", "catppt"},
-	".pot": {"PowerPoint 97-2003 template", "pptx", "catppt"},
+// convertibleOffice describes the office formats Read does not convert itself
+// but LibreOffice turns into one that it does: the binary formats Office used
+// before 2007, which share one container, the compound file, and the
+// OpenDocument formats, which are zip archives. Within each container the
+// extension is what tells the formats apart. fallback gets at the text without
+// LibreOffice; its %q is the file's path.
+var convertibleOffice = map[string]struct {
+	name, modern, fallback string
+	zip                    bool
+}{
+	".doc": {"Word 97-2003 document", "docx", "catdoc %q prints its text", false},
+	".dot": {"Word 97-2003 template", "docx", "catdoc %q prints its text", false},
+	".xls": {"Excel 97-2003 workbook", "xlsx", "xls2csv %q prints its sheets", false},
+	".xlt": {"Excel 97-2003 template", "xlsx", "xls2csv %q prints its sheets", false},
+	".ppt": {"PowerPoint 97-2003 presentation", "pptx", "catppt %q prints its text", false},
+	".pps": {"PowerPoint 97-2003 slide show", "pptx", "catppt %q prints its text", false},
+	".pot": {"PowerPoint 97-2003 template", "pptx", "catppt %q prints its text", false},
+	".odt": {"OpenDocument text", "docx", "unzip -p %q content.xml | sed -e 's/<[^>]*>/ /g' extracts its text", true},
+	".ods": {"OpenDocument spreadsheet", "xlsx", "unzip -p %q content.xml shows its cells as XML", true},
+	".odp": {"OpenDocument presentation", "pptx", "unzip -p %q content.xml | sed -e 's/<[^>]*>/ /g' extracts its text", true},
 }
 
-// classifyLegacyOffice names a pre-2007 Office file, which classifyNotText
-// would otherwise call an unknown binary file. Read cannot convert these, so
-// the advice is a conversion to the newer format, written into outDir where
-// Read can open it, with catdoc's text dump for a machine without LibreOffice.
-func classifyLegacyOffice(path string, head []byte, outDir string) (fileKind, bool) {
-	if !hasMagicAt(head, 0, oleMagic) {
+// classifyConvertibleOffice names an office file that Read cannot convert,
+// which classifyNotText would otherwise call an unknown binary file or a plain
+// zip archive. The advice converts it to the newer format, written into outDir
+// where Read can open it, and gives a way at the text for a machine without
+// LibreOffice.
+func classifyConvertibleOffice(path string, head []byte, outDir string) (fileKind, bool) {
+	format, ok := convertibleOffice[strings.ToLower(filepath.Ext(path))]
+	if !ok {
 		return fileKind{}, false
 	}
-	format, ok := legacyOffice[strings.ToLower(filepath.Ext(path))]
-	if !ok {
+	isZip := hasMagicAt(head, 0, []byte("PK\x03\x04")) || hasMagicAt(head, 0, []byte("PK\x05\x06"))
+	if format.zip != isZip || (!format.zip && !hasMagicAt(head, 0, oleMagic)) {
 		return fileKind{}, false
 	}
 	base := filepath.Base(path)
 	converted := filepath.Join(outDir, strings.TrimSuffix(base, filepath.Ext(base))+"."+format.modern)
 	return fileKind{
 		Name: format.name,
-		Advice: fmt.Sprintf("Read converts the newer .%s format. Convert this file with Shell: soffice --headless --convert-to %s --outdir %q %q, then Read {\"path\": %q}. Without LibreOffice, %s %q prints its text.",
-			format.modern, format.modern, outDir, path, converted, format.textCmd, path),
+		Advice: fmt.Sprintf("Read converts the newer .%s format. Convert this file with Shell: soffice --headless --convert-to %s --outdir %q %q, then Read {\"path\": %q}. Without LibreOffice, %s.",
+			format.modern, format.modern, outDir, path, converted, fmt.Sprintf(format.fallback, path)),
 	}, true
 }
 
