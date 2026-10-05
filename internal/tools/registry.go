@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/kvit-s/kvit-coder/internal/llm"
 )
@@ -43,6 +44,19 @@ var modelToolNamePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 // Registry manages enabled tools
 type Registry struct {
 	tools map[string]Tool
+
+	// aliases holds the tables toolNameAliases builds. Name lookups run for
+	// every tool call and every message of a long conversation, so the
+	// tables are built once and dropped by Enable and Disable. The pointer
+	// is atomic because a Batch resolves names from several goroutines.
+	aliases atomic.Pointer[toolAliases]
+}
+
+// toolAliases maps internal tool names to the names the model sees and back.
+// Callers only read the maps.
+type toolAliases struct {
+	internalToModel map[string]string
+	modelToInternal map[string]string
 }
 
 func NewRegistry() *Registry {
@@ -54,11 +68,13 @@ func NewRegistry() *Registry {
 // Enable adds a tool to the registry (makes it available for use)
 func (r *Registry) Enable(t Tool) {
 	r.tools[t.Name()] = t
+	r.aliases.Store(nil)
 }
 
 // Disable removes a tool from the registry
 func (r *Registry) Disable(name string) {
 	delete(r.tools, name)
+	r.aliases.Store(nil)
 }
 
 // Get retrieves a tool by name
@@ -219,6 +235,9 @@ func (r *Registry) LooksLikeMalformedToolCall(content string) bool {
 }
 
 func (r *Registry) toolNameAliases() (map[string]string, map[string]string) {
+	if a := r.aliases.Load(); a != nil {
+		return a.internalToModel, a.modelToInternal
+	}
 	names := make([]string, 0, len(r.tools))
 	for name := range r.tools {
 		names = append(names, name)
@@ -253,6 +272,7 @@ func (r *Registry) toolNameAliases() (map[string]string, map[string]string) {
 		assign(name, modelName)
 	}
 
+	r.aliases.Store(&toolAliases{internalToModel: internalToModel, modelToInternal: modelToInternal})
 	return internalToModel, modelToInternal
 }
 

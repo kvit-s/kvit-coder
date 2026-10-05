@@ -129,14 +129,21 @@ func (r *Runner) executeSingleTool(
 	internalTC := tc
 	internalTC.Function.Name = internalName
 
-	// Analyze pending edit state from message history
-	var roles, contents, toolNames []string
-	for _, msg := range state.messages {
-		roles = append(roles, string(msg.Role))
-		contents = append(contents, msg.Content)
-		toolNames = append(toolNames, r.registry.InternalName(msg.Name))
+	// Analyze pending edit state from message history. The scan walks the
+	// whole conversation, and its answer only matters while this process
+	// holds a staged edit or write: with none, CheckPendingEditBlockWithState
+	// lets every tool through whatever the history says. The strong profile
+	// never stages one, so there the scan is skipped on every call.
+	var pendingState tools.PendingEditState
+	if r.toolCtx == nil || r.toolCtx.HasPendingEdit() || r.toolCtx.HasPendingWrite() {
+		var roles, contents, toolNames []string
+		for _, msg := range state.messages {
+			roles = append(roles, string(msg.Role))
+			contents = append(contents, msg.Content)
+			toolNames = append(toolNames, r.registry.InternalName(msg.Name))
+		}
+		pendingState = tools.AnalyzePendingEditState(roles, contents, toolNames)
 	}
-	pendingState := tools.AnalyzePendingEditState(roles, contents, toolNames)
 
 	if blockErr := tools.CheckPendingEditBlockWithState(internalName, pendingState, r.cfg, r.toolCtx); blockErr != nil {
 		// Anomaly: the model keeps issuing non-confirm/cancel calls while an edit is

@@ -2,6 +2,7 @@ package session
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -364,12 +365,18 @@ func (s *Session) LastSettingsModel() (string, error) {
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
 			continue
 		}
-		var ev Event
-		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		// Only two fields are wanted. Decoding into this rather than Event
+		// still rejects a malformed line, but leaves message text unread
+		// instead of copying every message of a long session.
+		var ev struct {
+			Kind  Kind   `json:"kind"`
+			Model string `json:"model"`
+		}
+		if err := json.Unmarshal(line, &ev); err != nil {
 			return "", fmt.Errorf("failed to parse session event: %w", err)
 		}
 		if ev.Kind == KindSettings && ev.Model != "" {

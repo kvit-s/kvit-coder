@@ -337,3 +337,27 @@ func TestRegistry_NamespacePrefixStripped(t *testing.T) {
 		t.Errorf("NormalizeToolCallName(default.Shell.advanced) = %q, want Shell_advanced", got)
 	}
 }
+
+// The name tables are built once and kept, so Enable and Disable must drop
+// them: a tool added after the first lookup still resolves, and a removed
+// one stops resolving.
+func TestRegistry_ModelToolNameAliasesFollowEnableAndDisable(t *testing.T) {
+	registry := NewRegistry()
+	registry.Enable(fakeCategoryTool{name: "Shell.advanced", category: "shell"})
+	if got := registry.ModelName("Shell.advanced"); got != "Shell_advanced" {
+		t.Fatalf("ModelName(Shell.advanced) = %q", got)
+	}
+
+	registry.Enable(fakeCategoryTool{name: "Edit.confirm", category: "filesystem"})
+	if got := registry.InternalName("Edit_confirm"); got != "Edit.confirm" {
+		t.Errorf("a tool enabled after the first lookup: InternalName(Edit_confirm) = %q", got)
+	}
+
+	registry.Disable("Shell.advanced")
+	if got := registry.InternalName("Shell_advanced"); got != "Shell_advanced" {
+		t.Errorf("a disabled tool still resolves: InternalName(Shell_advanced) = %q", got)
+	}
+	if registry.Get("Shell_advanced") != nil {
+		t.Error("a disabled tool is still returned by Get")
+	}
+}
