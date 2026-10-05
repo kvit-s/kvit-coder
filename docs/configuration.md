@@ -255,6 +255,8 @@ without a config edit. The last check is recorded in
 
 On Windows a running `.exe` cannot be overwritten, so the current files are
 renamed aside to `.old` and the staged `.new` files take their names; the
-`.old` files are removed on the next start. When even that fails, the
+`.old` files are removed on the next start. The short names `kc.exe` and
+`kcu.exe`, which the Windows installer and both `install.ps1` scripts put
+beside the programs, are replaced along with them. When even that fails, the
 verified `.new` files stay staged and `:update` prints the `move /Y` commands
 to run after quitting.

@@ -41,3 +41,36 @@ jobs:
         run: gh release upload "${{ github.ref_name }}" dist/portable/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  windows-installer:
+    # Inno Setup, which compiles the installer, is a Windows program. This
+    # waits for the release job because that job creates the GitHub release
+    # the installers are uploaded to.
+    needs: release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up Inno Setup
+        uses: ./.github/actions/inno-setup
+
+      - name: Build the Windows installers
+        shell: bash
+        run: scripts/package-installer.sh "${{ github.ref_name }}"
+
+      - name: Try the amd64 installer
+        shell: pwsh
+        run: scripts/test-installer.ps1 -Setup (Get-Item dist/installer/*_windows_amd64_setup.exe).FullName
+
+      - name: Upload the installers to the release
+        shell: bash
+        run: gh release upload "${{ github.ref_name }}" dist/installer/*_setup.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

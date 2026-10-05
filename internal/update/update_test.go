@@ -415,3 +415,100 @@ func TestInstallPair(t *testing.T) {
 		}
 	}
 }
+
+// TestInstallWindowsShortNames replaces a Windows install dir that has the
+// short names kc.exe and kcu.exe beside the binaries, with the UI started as
+// kcu.exe. The swap is plain renames, so it runs on any OS.
+func TestInstallWindowsShortNames(t *testing.T) {
+	binDir := t.TempDir()
+	write := func(name, content string) string {
+		p := filepath.Join(binDir, name)
+		if err := os.WriteFile(p, []byte(content), 0755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	coderDest := write("kvit-coder.exe", "old coder")
+	write("kvit-coder-ui.exe", "old ui")
+	write("kcu.exe", "old ui")
+	// kc.exe as the installer makes it, a hard link to kvit-coder.exe.
+	if err := os.Link(coderDest, filepath.Join(binDir, "kc.exe")); err != nil {
+		t.Fatal(err)
+	}
+	srcDir := t.TempDir()
+	coderSrc := filepath.Join(srcDir, "kvit-coder.exe")
+	uiSrc := filepath.Join(srcDir, "kvit-coder-ui.exe")
+	if err := os.WriteFile(coderSrc, []byte("new coder"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(uiSrc, []byte("new ui"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	uiDest := filepath.Join(binDir, "kcu.exe")
+	if err := installWindows([][2]string{{coderSrc, coderDest}, {uiSrc, uiDest}}); err != nil {
+		t.Fatalf("installWindows: %v", err)
+	}
+	want := map[string]string{
+		"kvit-coder.exe":    "new coder",
+		"kc.exe":            "new coder",
+		"kvit-coder-ui.exe": "new ui",
+		"kcu.exe":           "new ui",
+	}
+	for name, content := range want {
+		data, err := os.ReadFile(filepath.Join(binDir, name))
+		if err != nil || string(data) != content {
+			t.Errorf("%s = %q, %v; want %q", name, data, err, content)
+		}
+		if _, err := os.Stat(filepath.Join(binDir, name+".old")); err != nil {
+			t.Errorf("%s.old: %v", name, err)
+		}
+	}
+	// The new kc.exe is a hard link to the new kvit-coder.exe again.
+	a, errA := os.Stat(filepath.Join(binDir, "kc.exe"))
+	b, errB := os.Stat(coderDest)
+	if errA != nil || errB != nil || !os.SameFile(a, b) {
+		t.Errorf("kc.exe is not a hard link to kvit-coder.exe (%v, %v)", errA, errB)
+	}
+	if staged := PendingStaged(binDir); len(staged) != 0 {
+		t.Errorf("staged files left: %v", staged)
+	}
+
+	CleanupBackups(binDir)
+	entries, err := os.ReadDir(binDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	if got := strings.Join(names, " "); got != "kc.exe kcu.exe kvit-coder-ui.exe kvit-coder.exe" {
+		t.Errorf("after cleanup the dir holds %s", got)
+	}
+}
+
+// TestInstallWindowsWithoutShortNames leaves a dir without kc.exe and kcu.exe
+// as it was: an update adds no names the install did not have.
+func TestInstallWindowsWithoutShortNames(t *testing.T) {
+	binDir := t.TempDir()
+	coderDest := filepath.Join(binDir, "kvit-coder.exe")
+	uiDest := filepath.Join(binDir, "kvit-coder-ui.exe")
+	for _, d := range []string{coderDest, uiDest} {
+		if err := os.WriteFile(d, []byte("old"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	src := filepath.Join(t.TempDir(), "new")
+	if err := os.WriteFile(src, []byte("new"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := installWindows([][2]string{{src, coderDest}, {src, uiDest}}); err != nil {
+		t.Fatalf("installWindows: %v", err)
+	}
+	for _, name := range []string{"kc.exe", "kcu.exe"} {
+		if _, err := os.Stat(filepath.Join(binDir, name)); !os.IsNotExist(err) {
+			t.Errorf("%s exists after the update (%v)", name, err)
+		}
+	}
+}

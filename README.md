@@ -22,18 +22,28 @@ curl -fsSL https://raw.githubusercontent.com/kvit-s/kvit-coder/main/install.sh |
 
 To build from source, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-**Windows (native, 10/11).** Download the portable zip for your machine
-(`kvit-coder_<version>_windows_amd64_portable.zip`, or `arm64`) from the
-[latest release](https://github.com/kvit-s/kvit-coder/releases/latest),
-extract it where you want to keep it (e.g. `C:\apps\kvit-coder`), then run the
-`install.ps1` inside that folder — it adds the folder to your user PATH and
-seeds `%USERPROFILE%\.kvit-coder\config.yaml`:
+**Windows (native, 10/11).** Download the installer for your machine
+(`kvit-coder_<version>_windows_amd64_setup.exe`, or `arm64`) from the
+[latest release](https://github.com/kvit-s/kvit-coder/releases/latest) and run
+it. It installs for your user only, without an administrator prompt, into
+`%LOCALAPPDATA%\Programs\kvit-coder`, adds that folder to your user PATH, puts
+`kc.exe` and `kcu.exe` beside `kvit-coder.exe` and `kvit-coder-ui.exe` as the
+short names, and seeds `%USERPROFILE%\.kvit-coder\config.yaml` when there is
+none. Open a new terminal afterwards so it sees the new PATH. Uninstall it from
+Settings > Apps; that removes the PATH entry and leaves
+`%USERPROFILE%\.kvit-coder` alone.
+
+Without the installer, download the portable zip
+(`kvit-coder_<version>_windows_amd64_portable.zip`, or `arm64`), extract it
+where you want to keep it (e.g. `C:\apps\kvit-coder`), then run the
+`install.ps1` inside that folder. It does the same for the folder it runs from:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File install.ps1
 ```
 
-Or install a published release straight into `%USERPROFILE%\bin`:
+Or install a published release straight into `%USERPROFILE%\bin`, which the
+script also puts on the PATH:
 
 ```powershell
 irm https://raw.githubusercontent.com/kvit-s/kvit-coder/main/install.ps1 | iex
@@ -43,7 +53,7 @@ irm https://raw.githubusercontent.com/kvit-s/kvit-coder/main/install.ps1 | iex
 Windows Subsystem for Linux (WSL). The macOS builds compile and are published,
 but never tested. Native Windows (10/11, amd64 and arm64) builds, runs, and passes tests;
 it needs Git for Windows (for `sh.exe`, `grep`, and `git` itself) and installs
-via the portable zip or `install.ps1` (see above). WSL stays supported regardless; benchmarks stay
+via the installer, the portable zip or `install.ps1` (see above). WSL stays supported regardless; benchmarks stay
 WSL/unix-only (see `spec/windows.md`).
 
 ## Configure

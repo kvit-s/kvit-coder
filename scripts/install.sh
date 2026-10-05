@@ -14,8 +14,9 @@ set -euo pipefail
 # They are symlinks rather than copies, so scripts/build.sh is all that is
 # needed after a change; there is nothing to install again.
 #
-# On native Windows this symlink farm needs privilege; prefer .exe copies on
-# the PATH instead (install.ps1 does this for releases).
+# On native Windows a symlink needs privilege, so this script is not used
+# there: the installer (scripts/windows-installer.iss) and both install.ps1
+# scripts make kc.exe and kcu.exe as hard links beside the .exe files instead.
 #
 #   scripts/install.sh                    build, then link into ~/.local/bin
 #   scripts/install.sh --no-build         link what is already built

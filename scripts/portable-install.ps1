@@ -4,9 +4,9 @@
 #
 # This file ships INSIDE the portable zip as install.ps1: the folder it runs
 # from stays the install location, so extract the zip where you want to keep
-# it (e.g. C:\apps\kvit-coder) and run this there. It adds that folder to the
-# user's PATH so kvit-coder.exe and kvit-coder-ui.exe work in any terminal,
-# and seeds %USERPROFILE%\.kvit-coder\config.yaml from the bundled
+# it (e.g. C:\apps\kvit-coder) and run this there. It makes kc.exe and kcu.exe
+# beside the programs, adds that folder to the user's PATH so all four names
+# work in any terminal, and seeds %USERPROFILE%\.kvit-coder\config.yaml from the bundled
 # config.example.yaml when there is no configuration yet.
 #
 # This is not the downloader: the install.ps1 at the repository root downloads
@@ -104,6 +104,30 @@ if ($gitSh) {
   Say "NOTE: Git for Windows not found (https://git-scm.com/download/win). The agent needs its sh.exe: install Git and keep the default 'Git from the command line' PATH option."
 }
 
+# kc.exe and kcu.exe are the short names scripts/install.sh gives its symlinks
+# on unix. Windows needs privilege for a symlink, so here they are hard links
+# (copies where the disk cannot hold one), and kvit-coder-ui's :update replaces
+# them along with the programs. A running kc.exe cannot be deleted but can be
+# renamed, so an old one is moved aside to .old, which the next start of
+# kvit-coder-ui removes.
+function Set-ShortName([string]$dir, [string]$name, [string]$target) {
+  $link = Join-Path $dir $name
+  $existing = Join-Path $dir $target
+  if (Test-Path $link) {
+    try { Remove-Item -Force $link -ErrorAction Stop }
+    catch {
+      Remove-Item -Force "$link.old" -ErrorAction SilentlyContinue
+      Rename-Item $link "$name.old"
+    }
+  }
+  try { New-Item -ItemType HardLink -Path $link -Target $existing -ErrorAction Stop | Out-Null }
+  catch { Copy-Item $existing $link }
+}
+
+Set-ShortName $InstallDir 'kc.exe' 'kvit-coder.exe'
+Set-ShortName $InstallDir 'kcu.exe' 'kvit-coder-ui.exe'
+Say "made kc.exe and kcu.exe, the short names for kvit-coder.exe and kvit-coder-ui.exe"
+
 $path = [Environment]::GetEnvironmentVariable('PATH', 'User')
 if ($null -eq $path) { $path = '' }
 if (($path -split ';') -notcontains $InstallDir) {
@@ -132,5 +156,5 @@ try {
   if ($v) { Say $v }
 } catch { }
 
-Say "installed: kvit-coder.exe and kvit-coder-ui.exe run from $InstallDir"
-Say "open a NEW terminal (PATH reloads on launch), then run kvit-coder-ui"
+Say "installed: kvit-coder.exe and kvit-coder-ui.exe (kc and kcu) run from $InstallDir"
+Say "open a NEW terminal (PATH reloads on launch), then run kcu"

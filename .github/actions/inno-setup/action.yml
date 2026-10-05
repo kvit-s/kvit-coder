@@ -1,0 +1,30 @@
+name: Inno Setup
+description: >-
+  Unpacks Inno Setup 6, the compiler scripts/package-installer.sh runs, into
+  the runner's temp folder and sets KVIT_ISCC to its ISCC.exe. Windows runners
+  only.
+
+runs:
+  using: composite
+  steps:
+    - name: Install Inno Setup
+      shell: pwsh
+      # Pinned by version and SHA-256 for the same reason as GoReleaser in
+      # release.yml: a new release of the tool should not change what a tag
+      # produces. /PORTABLE=1 unpacks it without registering an uninstaller.
+      run: |
+        $version = '6.7.3'
+        $sha256 = '9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732'
+        $tag = 'is-' + $version.Replace('.', '_')
+        $setup = Join-Path $env:RUNNER_TEMP "innosetup-$version.exe"
+        Invoke-WebRequest -UseBasicParsing -OutFile $setup `
+          -Uri "https://github.com/jrsoftware/issrc/releases/download/$tag/innosetup-$version.exe"
+        $actual = (Get-FileHash -Path $setup -Algorithm SHA256).Hash.ToLower()
+        if ($actual -ne $sha256) { throw "innosetup-$version.exe has SHA-256 $actual, expected $sha256" }
+        $dir = Join-Path $env:RUNNER_TEMP 'inno-setup'
+        $p = Start-Process -FilePath $setup -Wait -PassThru -ArgumentList @(
+          '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-', '/PORTABLE=1', "/DIR=`"$dir`"")
+        if ($p.ExitCode -ne 0) { throw "the Inno Setup installer exited with $($p.ExitCode)" }
+        $iscc = Join-Path $dir 'ISCC.exe'
+        if (-not (Test-Path $iscc)) { throw "ISCC.exe is not in $dir" }
+        "KVIT_ISCC=$iscc" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8

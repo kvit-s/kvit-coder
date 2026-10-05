@@ -13,6 +13,11 @@
 // the current file is renamed aside to .old and the staged .new takes its
 // name; the .old is removed on the next start. No launcher shim or versioned
 // directories are needed on either platform.
+//
+// The short names kc and kcu are symlinks on unix, which Resolve follows to
+// the binaries. On Windows they are kc.exe and kcu.exe, hard links or copies
+// beside the binaries, so an update replaces them along with the binary they
+// stand for.
 package update
 
 import (
@@ -677,15 +682,66 @@ func replaceUnix(dest, src string) error {
 	return nil
 }
 
+// windowsShortNames pairs each Windows binary with its short name. The
+// installer (scripts/windows-installer.iss) and both install.ps1 scripts put
+// kc.exe and kcu.exe beside the binaries as hard links, or as copies where the
+// disk cannot hold a hard link. Windows needs privilege for a symlink, which is
+// what scripts/install.sh uses on unix.
+var windowsShortNames = [][2]string{
+	{"kvit-coder.exe", "kc.exe"},
+	{"kvit-coder-ui.exe", "kcu.exe"},
+}
+
+// otherNameOf returns the existing file that is the other name of dest's
+// binary: kc.exe for kvit-coder.exe and the reverse, kcu.exe and
+// kvit-coder-ui.exe likewise. The UI runs as whichever name it was started
+// by, so either can be the destination an update was given.
+func otherNameOf(dest string) string {
+	base := filepath.Base(dest)
+	for _, pair := range windowsShortNames {
+		for i, name := range pair {
+			if !strings.EqualFold(base, name) {
+				continue
+			}
+			other := filepath.Join(filepath.Dir(dest), pair[1-i])
+			if st, err := os.Stat(other); err == nil && !st.IsDir() {
+				return other
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
 func installWindows(pairs [][2]string) error {
-	// Stage both first, so a failed download never leaves one new binary.
+	// A binary's other name is replaced with it, or kc.exe would keep
+	// starting the old release after kvit-coder.exe was updated.
+	var all [][2]string
 	for _, pr := range pairs {
-		if err := copyFile(pr[0], pr[1]+".new", 0600); err != nil {
-			return fmt.Errorf("stage %s: %w", pr[1]+".new", err)
+		all = append(all, pr)
+		if other := otherNameOf(pr[1]); other != "" {
+			all = append(all, [2]string{pr[0], other})
+		}
+	}
+	// Stage everything first, so a failed download never leaves one new
+	// binary. The other name is staged as a hard link to the first staged
+	// copy of the same source, and copied where the disk refuses the link.
+	stagedFrom := map[string]string{}
+	for _, pr := range all {
+		newFile := pr[1] + ".new"
+		_ = os.Remove(newFile)
+		if first, ok := stagedFrom[pr[0]]; ok && os.Link(first, newFile) == nil {
+			continue
+		}
+		if err := copyFile(pr[0], newFile, 0600); err != nil {
+			return fmt.Errorf("stage %s: %w", newFile, err)
+		}
+		if _, ok := stagedFrom[pr[0]]; !ok {
+			stagedFrom[pr[0]] = newFile
 		}
 	}
 	var pending [][2]string
-	for _, pr := range pairs {
+	for _, pr := range all {
 		dest := pr[1]
 		if err := swapWindows(dest); err != nil {
 			pending = append(pending, [2]string{dest + ".new", dest})
@@ -713,12 +769,16 @@ func swapWindows(dest string) error {
 	return nil
 }
 
+// replacedNames are the files an update can replace, and so the names its
+// .old backups and staged .new files are made from.
+var replacedNames = []string{"kvit-coder", "kvit-coder-ui", "kvit-coder.exe", "kvit-coder-ui.exe", "kc.exe", "kcu.exe"}
+
 // CleanupBackups removes leftover .old files from a previous Windows swap.
 // Best effort: errors are ignored.
 func CleanupBackups(dirs ...string) {
 	for _, dir := range dirs {
-		for _, base := range []string{"kvit-coder.old", "kvit-coder-ui.old", "kvit-coder.exe.old", "kvit-coder-ui.exe.old"} {
-			_ = os.Remove(filepath.Join(dir, base))
+		for _, base := range replacedNames {
+			_ = os.Remove(filepath.Join(dir, base+".old"))
 		}
 	}
 }
@@ -727,8 +787,8 @@ func CleanupBackups(dirs ...string) {
 func PendingStaged(dirs ...string) []string {
 	var out []string
 	for _, dir := range dirs {
-		for _, base := range []string{"kvit-coder.new", "kvit-coder-ui.new", "kvit-coder.exe.new", "kvit-coder-ui.exe.new"} {
-			p := filepath.Join(dir, base)
+		for _, base := range replacedNames {
+			p := filepath.Join(dir, base+".new")
 			if st, err := os.Stat(p); err == nil && !st.IsDir() {
 				out = append(out, p)
 			}

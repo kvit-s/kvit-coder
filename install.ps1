@@ -5,8 +5,11 @@
 # It works out which build fits this machine (amd64 or arm64), downloads the
 # Windows zip from the GitHub release, checks it against the release's
 # checksums file, copies kvit-coder.exe and kvit-coder-ui.exe to a bin
-# directory on the user's PATH, and seeds %USERPROFILE%\.kvit-coder\config.yaml
-# from the bundled example when there is no configuration yet.
+# directory, makes kc.exe and kcu.exe beside them, adds that directory to the
+# user's PATH, and seeds %USERPROFILE%\.kvit-coder\config.yaml from the
+# bundled example when there is no configuration yet. The Windows installer
+# (kvit-coder_<version>_windows_<arch>_setup.exe on the release page) does the
+# same with an uninstaller.
 #
 # WSL stays supported via install.sh; this script is for native Windows, which
 # needs Git for Windows (for sh.exe, grep, and git itself) -- see
@@ -23,6 +26,26 @@ $Repo = 'kvit-s/kvit-coder'
 
 function Say([string]$msg) { Write-Host $msg }
 function Die([string]$msg) { Write-Error "install: $msg"; exit 1 }
+
+# kc.exe and kcu.exe are the short names scripts/install.sh gives its symlinks
+# on unix. Windows needs privilege for a symlink, so here they are hard links
+# (copies where the disk cannot hold one), and kvit-coder-ui's :update replaces
+# them along with the programs. A running kc.exe cannot be deleted but can be
+# renamed, so an old one is moved aside to .old, which the next start of
+# kvit-coder-ui removes.
+function Set-ShortName([string]$dir, [string]$name, [string]$target) {
+  $link = Join-Path $dir $name
+  $existing = Join-Path $dir $target
+  if (Test-Path $link) {
+    try { Remove-Item -Force $link -ErrorAction Stop }
+    catch {
+      Remove-Item -Force "$link.old" -ErrorAction SilentlyContinue
+      Rename-Item $link "$name.old"
+    }
+  }
+  try { New-Item -ItemType HardLink -Path $link -Target $existing -ErrorAction Stop | Out-Null }
+  catch { Copy-Item $existing $link }
+}
 
 function LatestVersion {
   try {
@@ -90,6 +113,8 @@ try {
     if (-not $src) { Die "$exe not found in $zipName" }
     Copy-Item $src.FullName (Join-Path $binDir $exe) -Force
   }
+  Set-ShortName $binDir 'kc.exe' 'kvit-coder.exe'
+  Set-ShortName $binDir 'kcu.exe' 'kvit-coder-ui.exe'
 
   # Seed config from the bundled example.
   $configDir = Join-Path $env:USERPROFILE '.kvit-coder'
@@ -103,10 +128,12 @@ try {
     }
   }
 
-  Say "installed kvit-coder.exe and kvit-coder-ui.exe to $binDir"
+  Say "installed kvit-coder.exe and kvit-coder-ui.exe (kc and kcu) to $binDir"
   $path = [Environment]::GetEnvironmentVariable('PATH', 'User')
-  if ($path -split ';' -notcontains $binDir) {
-    Say "NOTE: $binDir is not on your user PATH. Add it (System Properties > Environment Variables) or move the .exes somewhere it is."
+  if ($null -eq $path) { $path = '' }
+  if (($path -split ';') -notcontains $binDir) {
+    [Environment]::SetEnvironmentVariable('PATH', (($path.TrimEnd(';') + ';' + $binDir).TrimStart(';')), 'User')
+    Say "added $binDir to the user PATH; open a new terminal to use it"
   }
   Say "Prerequisite: Git for Windows (https://git-scm.com/download/win) for sh.exe, grep, and git."
 } finally {

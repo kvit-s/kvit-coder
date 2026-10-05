@@ -44,6 +44,15 @@ any directory. With no `-config`, both binaries take the first of
 section is skipped as another program's file. The directory the command runs in
 is the workspace, because `workspace.root` is `"."`.
 
+On Windows the release has an installer, built by `scripts/package-installer.sh`
+from `scripts/windows-installer.iss` with Inno Setup (a Windows program; the
+script runs under Git Bash or in WSL). It installs per user into
+`%LOCALAPPDATA%\Programs\kvit-coder`, adds that folder to the user PATH, and
+makes `kc.exe` and `kcu.exe` as hard links beside the two programs. Hard links
+are not followed by `update.Resolve`, so `:update` replaces both names of each
+program (`internal/update`, `windowsShortNames`). `scripts/test-installer.ps1`
+installs, checks and uninstalls it; CI runs it on every push.
+
 ## The two facts that shape everything
 
 **One operating-system process per turn.** The agent starts, reads the session

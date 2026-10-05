@@ -66,6 +66,21 @@ jobs:
         # job above is the test gate.
         run: go vet ./...
 
+      - name: Set up Inno Setup
+        uses: ./.github/actions/inno-setup
+
+      - name: Build the Windows installer
+        # The same script the release job uploads from, for amd64 only; the
+        # arm64 installer differs only in the programs it holds.
+        shell: bash
+        run: scripts/package-installer.sh --arch amd64
+
+      - name: Try the installer
+        # Installs, checks kc and kcu on the PATH, uninstalls, and checks the
+        # user PATH is back as it was.
+        shell: pwsh
+        run: scripts/test-installer.ps1 -Setup (Get-Item dist/installer/*_windows_amd64_setup.exe).FullName
+
   lint:
     runs-on: ubuntu-latest
     steps:
