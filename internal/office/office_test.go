@@ -116,9 +116,15 @@ func TestInspectPackage(t *testing.T) {
 	office := filepath.Join(dir, "a.docx")
 	other := filepath.Join(dir, "b.zip")
 	notZip := filepath.Join(dir, "c.txt")
-	os.WriteFile(office, wordPackage(t, `<w:p/>`, map[string]string{"word/media/photo.png": strings.Repeat("x", 5000)}), 0o644)
-	os.WriteFile(other, packageOf(t, map[string]string{"x.txt": "x"}), 0o644)
-	os.WriteFile(notZip, []byte("text"), 0o644)
+	for path, data := range map[string][]byte{
+		office: wordPackage(t, `<w:p/>`, map[string]string{"word/media/photo.png": strings.Repeat("x", 5000)}),
+		other:  packageOf(t, map[string]string{"x.txt": "x"}),
+		notZip: []byte("text"),
+	} {
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	isPackage, xmlBytes := InspectPackage(office)
 	if !isPackage {
@@ -136,7 +142,9 @@ func TestInspectPackage(t *testing.T) {
 
 func TestReadFileRefusesBeforeReading(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "big.docx")
-	os.WriteFile(path, make([]byte, 2048), 0o644)
+	if err := os.WriteFile(path, make([]byte, 2048), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := ReadFile(path, 1024); err == nil || !strings.Contains(err.Error(), "limit") {
 		t.Errorf("err = %v, want the size limit", err)
 	}

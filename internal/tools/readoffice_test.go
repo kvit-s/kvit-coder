@@ -367,8 +367,13 @@ func TestReadLeavesOtherZipFilesToTheGuard(t *testing.T) {
 
 	var plain bytes.Buffer
 	zw := zip.NewWriter(&plain)
-	f, _ := zw.Create("META-INF/MANIFEST.MF")
-	f.Write([]byte("Manifest-Version: 1.0\n"))
+	f, err := zw.Create("META-INF/MANIFEST.MF")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte("Manifest-Version: 1.0\n")); err != nil {
+		t.Fatal(err)
+	}
 	zw.Close()
 	writeFileForGuard(t, dir, "lib.jar", plain.Bytes())
 	writeOfficePackage(t, dir, "drawing.zip", "visio/document.xml", map[string]string{"visio/document.xml": `<VisioDocument/>`})
@@ -412,8 +417,13 @@ func TestReadNamesConvertibleOfficeFormats(t *testing.T) {
 	compound := append(append([]byte{}, oleMagic...), make([]byte, 1016)...)
 	var odf bytes.Buffer
 	zw := zip.NewWriter(&odf)
-	f, _ := zw.Create("mimetype")
-	f.Write([]byte("application/vnd.oasis.opendocument.text"))
+	f, err := zw.Create("mimetype")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write([]byte("application/vnd.oasis.opendocument.text")); err != nil {
+		t.Fatal(err)
+	}
 	zw.Close()
 	dir, tmp := t.TempDir(), t.TempDir()
 

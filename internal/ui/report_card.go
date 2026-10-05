@@ -631,15 +631,11 @@ func (m InputModel) cardBudgetWithHint(total int, hint string) (int, bool) {
 	return vis, true
 }
 
-// cardBelowRows counts the display rows the composer needs below the card:
-// the prompt line, the input, the footer hint, and whatever is staged under
-// the input. The budget above keeps the card window inside what is left.
-func (m InputModel) cardBelowRows() int {
-	return m.cardBelowRowsForHint(m.cardHint())
-}
-
-// cardBelowRowsForHint counts the rows below the card with an explicit footer
-// hint, so the budget can be computed while deciding what the hint says.
+// cardBelowRowsForHint counts the display rows the composer needs below the
+// card: the prompt line, the input, the footer hint, and whatever is staged
+// under the input. The budget above keeps the card window inside what is left.
+// The hint is passed in so the budget can be computed while deciding what the
+// hint says.
 func (m InputModel) cardBelowRowsForHint(hint string) int {
 	n := 1 + m.textarea.Height()
 	if m.pasteNotice != "" {
