@@ -98,7 +98,7 @@ type responsesResponse struct {
 
 // chatViaResponses answers a ChatRequest by calling /responses.
 func (c *Client) chatViaResponses(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
-	body, err := json.Marshal(c.buildResponsesRequest(req))
+	body, err := c.responsesRequestBody(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
@@ -117,6 +117,17 @@ func (c *Client) chatViaResponses(ctx context.Context, req ChatRequest) (*ChatRe
 	}
 
 	return responsesToChat(&resp), nil
+}
+
+// responsesRequestBody is the /responses request for req, with its input
+// items encoded as it is sent.
+func (c *Client) responsesRequestBody(req ChatRequest) (*requestBody, error) {
+	request := c.buildResponsesRequest(req)
+	input := request.Input
+	if len(request.Input) > 0 {
+		request.Input = []responsesItem{}
+	}
+	return newRequestBody(request, "input", len(input), func(i int) any { return &input[i] })
 }
 
 func (c *Client) buildResponsesRequest(req ChatRequest) responsesRequest {

@@ -121,7 +121,7 @@ func WithAPIKeyEnv(name string) Option {
 // Invalidate drops a cached credential so the next Authorize fetches a new
 // one; postJSON calls it once after a 401.
 type RequestAuthorizer interface {
-	Authorize(ctx context.Context, req *http.Request, body []byte) error
+	Authorize(ctx context.Context, req *http.Request) error
 	Invalidate()
 }
 
@@ -287,8 +287,9 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 
 	// Prepare request body. Messages are converted to their wire form, where
 	// attachments become content parts; text-only messages serialize exactly
-	// as before so the prompt cache keeps hitting.
-	body, err := json.Marshal(toChatWireRequest(req))
+	// as before so the prompt cache keeps hitting. They are encoded as the
+	// request is sent rather than all at once (requestBody).
+	body, err := chatRequestBody(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
@@ -316,6 +317,17 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, erro
 	return &chatResp, nil
 }
 
+// chatRequestBody is the chat-completions request for req, with its messages
+// encoded as it is sent.
+func chatRequestBody(req ChatRequest) (*requestBody, error) {
+	wire := toChatWireRequest(req)
+	messages := wire.Messages
+	if len(wire.Messages) > 0 {
+		wire.Messages = []chatWireMessage{}
+	}
+	return newRequestBody(wire, "messages", len(messages), func(i int) any { return &messages[i] })
+}
+
 // bodyPreview trims a response body down to something safe to put in an error.
 func bodyPreview(body []byte) string {
 	preview := string(body)
@@ -329,7 +341,7 @@ func bodyPreview(body []byte) string {
 // response body, retrying network failures, 429s and 5xx with exponential
 // backoff. The second return value reports that the body was read only
 // partially, which the caller may want to repair before parsing.
-func (c *Client) postJSON(ctx context.Context, path string, body []byte) ([]byte, bool, error) {
+func (c *Client) postJSON(ctx context.Context, path string, body *requestBody) ([]byte, bool, error) {
 	// Retry configuration
 	maxRetries := c.maxRetries
 	baseDelay := 1 * time.Second
@@ -366,16 +378,20 @@ func (c *Client) postJSON(ctx context.Context, path string, body []byte) ([]byte
 			}
 		}
 
-		// Create HTTP request (must create new one each attempt)
+		// Create HTTP request (must create new one each attempt). The body
+		// is encoded as the transport reads it; GetBody lets the transport
+		// start it again when it retries on a fresh connection by itself.
 		httpReq, err := http.NewRequestWithContext(
 			ctx,
 			"POST",
 			c.baseURL+path,
-			bytes.NewReader(body),
+			body.Open(),
 		)
 		if err != nil {
 			return nil, false, fmt.Errorf("create request: %w", err)
 		}
+		httpReq.ContentLength = body.Len()
+		httpReq.GetBody = func() (io.ReadCloser, error) { return body.Open(), nil }
 
 		// Set headers
 		httpReq.Header.Set("Content-Type", "application/json")
@@ -395,7 +411,7 @@ func (c *Client) postJSON(ctx context.Context, path string, body []byte) ([]byte
 			}
 		}
 		if c.auth != nil {
-			if err := c.auth.Authorize(ctx, httpReq, body); err != nil {
+			if err := c.auth.Authorize(ctx, httpReq); err != nil {
 				return nil, false, err
 			}
 		}
@@ -514,7 +530,7 @@ func (c *Client) GetGenerationStats(ctx context.Context, generationID string) (*
 		httpReq.Header.Set(k, v)
 	}
 	if c.auth != nil {
-		if err := c.auth.Authorize(ctx, httpReq, nil); err != nil {
+		if err := c.auth.Authorize(ctx, httpReq); err != nil {
 			return nil, err
 		}
 	}

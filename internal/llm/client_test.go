@@ -14,7 +14,7 @@ type flipAuth struct {
 	invalidated int
 }
 
-func (f *flipAuth) Authorize(_ context.Context, req *http.Request, _ []byte) error {
+func (f *flipAuth) Authorize(_ context.Context, req *http.Request) error {
 	if f.invalidated == 0 {
 		req.Header.Set("Authorization", "Bearer stale")
 	} else {

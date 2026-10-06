@@ -26,7 +26,7 @@ const anthropicThinkingID = "anthropic-thinking"
 const anthropicRedactedID = "anthropic-redacted"
 
 func (c *Client) chatViaMessages(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
-	body, err := json.Marshal(c.buildMessagesRequest(req))
+	body, err := c.messagesRequestBody(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
 	}
@@ -121,6 +121,17 @@ type messagesResponse struct {
 		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+// messagesRequestBody is the /v1/messages request for req, with its messages
+// encoded as it is sent.
+func (c *Client) messagesRequestBody(req ChatRequest) (*requestBody, error) {
+	request := c.buildMessagesRequest(req)
+	messages := request.Messages
+	if len(request.Messages) > 0 {
+		request.Messages = []messagesOut{}
+	}
+	return newRequestBody(request, "messages", len(messages), func(i int) any { return &messages[i] })
 }
 
 func (c *Client) buildMessagesRequest(req ChatRequest) messagesRequest {
