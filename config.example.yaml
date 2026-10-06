@@ -1,12 +1,13 @@
 # A short working configuration. Copy it to ~/.kvit-coder/config.yaml
-# (%USERPROFILE%\.kvit-coder\config.yaml on Windows) and point
-# the llm: block at whichever OpenAI-compatible endpoint you have.
+# (%USERPROFILE%\.kvit-coder\config.yaml on Windows) and point the llm: block
+# at whichever OpenAI-compatible endpoint you have, or list several models to
+# switch between under models: at the end.
 #
 # Every key is documented at
 # https://github.com/kvit-s/kvit-coder/blob/main/docs/configuration.md, which
-# also covers what this file leaves out: the models: catalog, Model Context
-# Protocol servers, tool groups, safety rules, backtracking, prompt templates,
-# diagnostics, and UI styling.
+# also covers what this file leaves out: Model Context Protocol servers, tool
+# groups, safety rules, backtracking, prompt templates, diagnostics, and UI
+# styling.
 
 llm:
   # A local llama.cpp, vLLM or Ollama server, or any hosted endpoint that
@@ -24,6 +25,14 @@ llm:
 
   context: 131072
   request_timeout: 600     # seconds for one request before it is retried
+
+  # Extra request headers, sent with every model. OpenCode wants these two: it
+  # asks a client to name itself, and rejects a request without a session id.
+  # ${KVIT_RUN_ID} is one id per conversation, so the conversation stays on the
+  # backend that holds its prompt cache.
+  #headers:
+  #  - "User-Agent=kvit-coder"
+  #  - "x-opencode-session=kvit-coder-${KVIT_RUN_ID}"
 
 workspace:
   root: "."                     # the directory the command starts in
@@ -90,8 +99,14 @@ tools:
 #  enabled: true          # false turns the background check off; :update --check still works
 #  interval_hours: 24     # minimum time between automatic checks
 
-# Several models to switch between, with :mN in the UI or --model headless.
-# Each row names an endpoint; see docs/models.md for OpenCode examples.
+# Several models to switch between: :m1, :m2, ... in the UI (in list order),
+# or --model headless. docs/models.md has more OpenCode rows. Give every row
+# its own base_url, model, api_backend, api_key_env and context: once models:
+# is used, the selected row supplies those, and llm: above keeps only what
+# applies to every model (headers, request_timeout, ...), so its base_url,
+# model, api_backend, api_key_env and context can be deleted. efforts: are the
+# levels offered as :e1, :e2, ...; a row without them is a model without
+# reasoning.
 #models:
 #  - id: spark-go
 #    name: "Muse Spark 1.3 Go"
@@ -99,10 +114,24 @@ tools:
 #    base_url: "https://opencode.ai/zen/go/v1"
 #    api_backend: "responses"
 #    api_key_env: "OPENCODE_API_KEY"
+#    context: 1048576
+#    efforts:
+#      - value: medium
+#      - value: high
+#      - value: xhigh
+#        default: true          # the level a session starts at
+#  - id: local
+#    name: "Local model"
+#    model: "your-model"
+#    base_url: "http://localhost:8080/v1"
+#    api_backend: "chat_completions"
+#    context: 131072
+#    profile: weak              # this row only: backtracking, fuzzy edit matching and other checks for a weaker model
 #
-# Which catalog row a fresh session starts on: an id, display name,
-# 1-based index, or wire model id from `models:` above. Empty means the row
-# matching llm.model, else the first row.
+# The row a new session starts on: an id, display name, 1-based index or model
+# id from the list above. Empty means the row whose model matches llm.model,
+# else the first row.
 #default_model: spark-go
-# Fallback effort when the selected entry has no `default: true` row.
+# The starting effort for a row with no `default: true` level, when
+# llm.reasoning_effort is empty too.
 #default_effort: medium

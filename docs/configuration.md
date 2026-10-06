@@ -23,6 +23,12 @@ Windows)` so transcripts say what ran. Benchmarks stay WSL/unix-only.
 
 ## `llm`
 
+With a `models:` list, the selected entry supplies `model`, `base_url`,
+`api_backend`, `api_key` / `api_key_env`, `context` and the reasoning effort,
+and the rest of this block applies to every entry; see
+[`models`](#models-default_model-default_effort). Without one, these keys
+describe the only model.
+
 | Key | Description |
 |-----|-------------|
 | `base_url` | OpenAI-compatible API endpoint |
@@ -32,6 +38,8 @@ Windows)` so transcripts say what ran. Benchmarks stay WSL/unix-only.
 | `headers` | Extra `Key=Value` request headers (`${VAR}` expanded; `${KVIT_RUN_ID}` = per-conversation ID) |
 | `reasoning_effort` | Thinking budget for a reasoning model (`minimal`, `low`, `medium`, `high`, `xhigh`) |
 | `effort_field` | Which field of a `chat_completions` request the effort travels in: `chat_template_kwargs` (default) or `reasoning_effort`. See below |
+| `reasoning_summary` | Readable text describing a reasoning model's thinking, `responses` backend only: `auto`, `concise` or `detailed`, or `off` to suppress it. Empty follows `merge_thinking` |
+| `request_timeout` | Seconds one request to the model may take before it is retried (default 600) |
 | `temperature` | Sampling temperature |
 | `max_output_tokens` | Max output tokens |
 | `context` | Max context size for display (0 = hide) |
@@ -73,6 +81,38 @@ same prompt cache. `${KVIT_RUN_ID}` in a header expands to an ID derived from
 the session name, which keeps concurrent conversations apart while sending
 every turn of one conversation to the backend that already holds its prompt
 cache. Setting `KVIT_RUN_ID` in the environment pins a value instead.
+
+## `models`, `default_model`, `default_effort`
+
+`models:` lists the models to switch between: `:m1`, `:m2`, ... in
+kvit-coder-ui, in list order, or `--model` headless, which also takes an
+entry's `id`, `name` or `model`. [`models.md`](models.md) has worked entries
+for OpenCode.
+
+| Entry key | Description |
+|-----|-------------|
+| `id` | Short name for `--model` / `-m` and `default_model` |
+| `name` | Display name in the UI |
+| `model` | Model id sent to the endpoint |
+| `base_url` / `api_backend` / `api_key` / `api_key_env` / `context` | As in `llm`, for this entry |
+| `effort_field` | As in `llm`, for this entry; empty uses the `llm` value |
+| `efforts` | The levels offered as `:e1`, `:e2`, ...: each has `value`, an optional `label` shown in its place, and `default: true` on the level to start at. An entry without `efforts` is a model without reasoning, and switching to it clears the effort |
+| `profile` | `strong` or `weak` for this entry; empty uses `agent.profile` |
+| `summarizer` | `true` on at most one entry, which writes each session's short title from its first prompt |
+
+The `llm` keys that an entry also has are not a dependable fallback for it.
+An entry without `api_key` / `api_key_env` is sent no key at all, and one
+without `base_url`, `api_backend` or `context` keeps the value already in
+effect, which is the `llm` value for the starting entry and the starting
+entry's after a switch. Give every entry all of them. The rest of `llm` —
+`headers`, `merge_thinking`, `reasoning_summary`, `request_timeout`,
+`temperature`, `max_output_tokens`, `verbose`, `generation_stats` — applies to
+whichever entry is selected.
+
+| Key | Description |
+|-----|-------------|
+| `default_model` | The entry a new session starts on: an `id`, `name`, 1-based index or `model`. Empty means the entry whose `model` matches `llm.model`, else the first |
+| `default_effort` | The starting effort for an entry with no `default: true` level when `llm.reasoning_effort` is empty too |
 
 ## `workspace`
 

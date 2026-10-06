@@ -3,9 +3,14 @@
 A model in kvit-coder is one row of the `models:` list in `config.yaml`. Each
 row names an endpoint, the model id that endpoint expects, the wire protocol,
 the context window, and the effort levels the UI offers as `:e1`, `:e2`, and
-so on. `:m1` is the first row. The row whose model id matches `llm.model` is
-the one a new session starts on. Every key is defined in
-[configuration.md](configuration.md). This page is how to fill a row from
+so on. `:m1` is the first row. `default_model` names the row a new session
+starts on; without it, that is the row whose model id matches `llm.model`, else
+the first. Every key is defined in [configuration.md](configuration.md).
+
+Give each row its own `base_url`, `model`, `api_backend`, `api_key_env` and
+`context`. While `models:` is present the `llm:` block's keys of those names
+are not a dependable fallback, and the `llm:` block holds what applies to
+every model, such as `headers`. This page is how to fill a row from
 OpenCode, which has a pay-per-request catalog (Zen) and a separate low-cost
 subscription (Go).
 
@@ -59,7 +64,6 @@ model. `${KVIT_RUN_ID}` is an id derived from the session name.
 
 ```yaml
 llm:
-  api_key_env: "OPENCODE_API_KEY"
   headers:
     - "User-Agent=kvit-coder"
     - "x-opencode-session=kvit-coder-${KVIT_RUN_ID}"
@@ -154,6 +158,8 @@ models:
       - value: high
         default: true
       - value: xhigh
+
+default_model: spark-go   # new sessions start on this row
 ```
 
 The other Go models follow the same pattern. Grok and the GPT Luna models on
