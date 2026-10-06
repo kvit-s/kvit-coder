@@ -30,11 +30,21 @@ import (
 // are absent from Registry.Specs() and from the system prompt, and the model
 // reaches them only through this tool.
 
-// GroupMemberSource resolves a group's members. It is a function so a group can
-// take its members from somewhere internal/tools must not import: cmd/kvit-coder
-// builds one over the MCP manager, which is also what keeps the members' dial
-// lazy. Nil means the group has only the members handed to it directly.
-type GroupMemberSource func(ctx context.Context) ([]Tool, error)
+// GroupMemberSource resolves a group's members, and any notes that come with
+// them. It is a function so a group can take its members from somewhere
+// internal/tools must not import: cmd/kvit-coder builds one over the MCP
+// manager, which is also what keeps the members' dial lazy. Nil means the
+// group has only the members handed to it directly.
+type GroupMemberSource func(ctx context.Context) ([]Tool, []GroupNote, error)
+
+// GroupNote is guidance that arrives with some of a group's members rather
+// than from the configuration: the instructions an MCP server sent for using
+// its tools. The group shows each one, under Source, after its own
+// instructions.
+type GroupNote struct {
+	Source string // what sent it, as the model should see it: "MCP server h3"
+	Text   string
+}
 
 // GroupTool is the single registered tool that stands in for a group.
 type GroupTool struct {
@@ -47,8 +57,9 @@ type GroupTool struct {
 	source GroupMemberSource
 
 	mu      sync.Mutex
-	local   []Tool // members handed over directly (built-in tools moved into the group)
-	members []Tool // resolved members, local first; nil until resolve runs
+	local   []Tool      // members handed over directly (built-in tools moved into the group)
+	members []Tool      // resolved members, local first; nil until resolve runs
+	notes   []GroupNote // from the source, alongside members
 	err     error
 }
 
@@ -165,7 +176,7 @@ func (t *GroupTool) Call(ctx context.Context, args json.RawMessage) (any, error)
 		}
 	}
 
-	members, err := t.resolve(ctx)
+	members, notes, err := t.resolve(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%s is unavailable: %w", t.name, err)
 	}
@@ -176,7 +187,7 @@ func (t *GroupTool) Call(ctx context.Context, args json.RawMessage) (any, error)
 	if strings.TrimSpace(parsed.Tool) == "" {
 		return map[string]any{
 			"success": true,
-			"content": t.reference(members),
+			"content": t.reference(members, notes),
 		}, nil
 	}
 
@@ -204,32 +215,35 @@ func (t *GroupTool) Call(ctx context.Context, args json.RawMessage) (any, error)
 
 // resolve builds the member list once per process. A turn is one process, so
 // the reveal and the calls that follow it in the same turn resolve once.
-func (t *GroupTool) resolve(ctx context.Context) ([]Tool, error) {
+func (t *GroupTool) resolve(ctx context.Context) ([]Tool, []GroupNote, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.members != nil || t.err != nil {
-		return t.members, t.err
+		return t.members, t.notes, t.err
 	}
 
 	members := make([]Tool, 0, len(t.local))
 	members = append(members, t.local...)
 
+	var notes []GroupNote
 	if t.source != nil {
-		sourced, err := t.source(ctx)
+		sourced, sourcedNotes, err := t.source(ctx)
 		if err != nil {
 			t.err = err
-			return nil, err
+			return nil, nil, err
 		}
 		members = append(members, sourced...)
+		notes = sourcedNotes
 	}
 
-	t.members = members
-	return t.members, nil
+	t.members, t.notes = members, notes
+	return t.members, t.notes, nil
 }
 
 // reference renders what the model gets when it opens the group: how to run a
-// member, the group's own instructions, then every member with its parameters.
-func (t *GroupTool) reference(members []Tool) string {
+// member, the group's own instructions, what the members' servers asked to be
+// told, then every member with its parameters.
+func (t *GroupTool) reference(members []Tool, notes []GroupNote) string {
 	labels := groupMemberLabels(members)
 
 	var sb strings.Builder
@@ -240,6 +254,12 @@ func (t *GroupTool) reference(members []Tool) string {
 		sb.WriteString("\n")
 		sb.WriteString(t.instructions)
 		sb.WriteString("\n")
+	}
+	for _, note := range notes {
+		if strings.TrimSpace(note.Text) == "" {
+			continue
+		}
+		fmt.Fprintf(&sb, "\nInstructions from %s:\n%s\n", note.Source, strings.TrimSpace(note.Text))
 	}
 
 	sb.WriteString("\n")

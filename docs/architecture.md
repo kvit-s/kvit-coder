@@ -54,8 +54,10 @@ When the model opens a group, the group's tools arrive as the result of that
 call rather than as new tool definitions. The tool definitions come before the
 whole conversation in each request, so adding tools partway through a session
 would make the endpoint's prompt cache miss for every message after them, while
-a tool result is appended like any other message. Groups are configured under
-`tool_groups:` in `config.yaml`; `Web.browsing` is the one shipped.
+a tool result is appended like any other message. Instructions an MCP server
+sends for its tools travel the same way: for a server behind a group they are
+part of that result rather than of the system prompt. Groups are configured
+under `tool_groups:` in `config.yaml`; `Web.browsing` is the one shipped.
 
 ## PDF reading without external programs
 

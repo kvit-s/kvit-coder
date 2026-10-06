@@ -93,6 +93,9 @@ type CallResult struct {
 type Client interface {
 	// Initialize performs the initialize → notifications/initialized handshake.
 	Initialize(ctx context.Context) error
+	// Instructions returns the guidance the server sent with its initialize
+	// result, or "" when it sent none or Initialize has not run.
+	Instructions() string
 	// ListTools returns every tool the server advertises (handling pagination).
 	ListTools(ctx context.Context) ([]ToolDescriptor, error)
 	// CallTool invokes a tool by its raw (server-side) name with the given

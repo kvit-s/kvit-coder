@@ -38,6 +38,12 @@ import (
 // that the cache is almost always the one that answers.
 const toolListCacheTTL = 7 * 24 * time.Hour
 
+// toolListCacheFormat is written into every cache file. A file with another
+// value is from a version that recorded less -- before format 2 the server's
+// instructions were not kept -- and is treated as missing, so the server is
+// asked once more rather than its instructions going unseen for a week.
+const toolListCacheFormat = 2
+
 // Defer marks servers as belonging to a tool group. Connect skips them, and
 // ToolsForServers builds their adapters on demand. Call it before Connect.
 func (m *Manager) Defer(names map[string]bool) {
@@ -54,17 +60,19 @@ func (m *Manager) isDeferred(name string) bool {
 }
 
 // ToolsForServers returns adapters for the named servers' tools, in the order
-// the names are given. Nothing is dialed here when the tool list is cached:
-// the adapters describe themselves from the cache and dial on their first call.
+// the names are given, with the instructions those servers sent (see
+// instructions.go). Nothing is dialed here when the tool list is cached: the
+// adapters describe themselves from the cache and dial on their first call.
 //
 // A server that has never been reached and is not in the cache is dialed now,
 // because there is no other way to learn what it offers.
-func (m *Manager) ToolsForServers(ctx context.Context, names []string) ([]tools.Tool, error) {
+func (m *Manager) ToolsForServers(ctx context.Context, names []string) ([]tools.Tool, []tools.GroupNote, error) {
 	var out []tools.Tool
+	var notes []tools.GroupNote
 	var failed []string
 
 	if !m.cfg.Enabled {
-		return nil, fmt.Errorf("MCP is switched off (mcp.enabled: false)")
+		return nil, nil, fmt.Errorf("MCP is switched off (mcp.enabled: false)")
 	}
 
 	for si, name := range names {
@@ -78,7 +86,7 @@ func (m *Manager) ToolsForServers(ctx context.Context, names []string) ([]tools.
 			continue
 		}
 
-		descs, err := m.descriptorsFor(ctx, sc)
+		descs, instructions, err := m.descriptorsFor(ctx, sc)
 		if err != nil {
 			m.logger.Warn(fmt.Sprintf("mcp: server %q: %v", name, err))
 			failed = append(failed, fmt.Sprintf("%s (%v)", name, err))
@@ -96,12 +104,17 @@ func (m *Manager) ToolsForServers(ctx context.Context, names []string) ([]tools.
 				m.cfg.SanitizeSchemas, m.tempFileMgr))
 			ti++
 		}
+		// Instructions for a server whose tools are all filtered out would
+		// describe tools the model cannot run.
+		if instructions != "" && ti > 0 {
+			notes = append(notes, tools.GroupNote{Source: "MCP server " + sc.Name, Text: instructions})
+		}
 	}
 
 	if len(out) == 0 && len(failed) > 0 {
-		return nil, fmt.Errorf("no tools available: %s", strings.Join(failed, "; "))
+		return nil, nil, fmt.Errorf("no tools available: %s", strings.Join(failed, "; "))
 	}
-	return out, nil
+	return out, notes, nil
 }
 
 // serverConfig finds a configured server by name.
@@ -149,7 +162,7 @@ func (m *Manager) lazyClientFor(sc config.MCPServerConfig) *lazyClient {
 			m.logger.Debug(fmt.Sprintf("mcp: server %q dialed on demand in %s, %d tools",
 				sc.Name, time.Since(started).Round(time.Millisecond), len(conn.descs)))
 			// A real answer supersedes whatever was cached.
-			m.writeToolListCache(sc, conn.descs)
+			m.writeToolListCache(sc, conn.descs, conn.instructions)
 			return conn.client, nil
 		},
 	}
@@ -157,31 +170,35 @@ func (m *Manager) lazyClientFor(sc config.MCPServerConfig) *lazyClient {
 	return c
 }
 
-// descriptorsFor returns what a server offers, from the on-disk cache when it
-// is there and recent, and from the server itself otherwise.
-func (m *Manager) descriptorsFor(ctx context.Context, sc config.MCPServerConfig) ([]ToolDescriptor, error) {
-	if descs, ok := m.readToolListCache(sc); ok {
-		return descs, nil
+// descriptorsFor returns what a server offers and the instructions it sent,
+// from the on-disk cache when it is there and recent, and from the server
+// itself otherwise.
+func (m *Manager) descriptorsFor(ctx context.Context, sc config.MCPServerConfig) ([]ToolDescriptor, string, error) {
+	if cached, ok := m.readToolListCache(sc); ok {
+		return cached.Tools, cached.Instructions, nil
 	}
 
 	client := m.lazyClientFor(sc)
 	if _, err := client.get(ctx); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	if descs, ok := m.readToolListCache(sc); ok {
-		return descs, nil
+	if cached, ok := m.readToolListCache(sc); ok {
+		return cached.Tools, cached.Instructions, nil
 	}
 	// The dial worked but the cache could not be written (read-only home, say).
 	// Ask the live connection instead of failing.
-	return client.ListTools(ctx)
+	descs, err := client.ListTools(ctx)
+	return descs, client.Instructions(), err
 }
 
 // toolListCache is what is written per server.
 type toolListCache struct {
-	Server  string           `json:"server"`
-	Key     string           `json:"key"`
-	Written time.Time        `json:"written"`
-	Tools   []ToolDescriptor `json:"tools"`
+	Format       int              `json:"format"`
+	Server       string           `json:"server"`
+	Key          string           `json:"key"`
+	Written      time.Time        `json:"written"`
+	Tools        []ToolDescriptor `json:"tools"`
+	Instructions string           `json:"instructions,omitempty"`
 }
 
 // toolListCachePath names the cache file for a server. The key is the resolved
@@ -208,36 +225,41 @@ func toolListCachePath(sc config.MCPServerConfig) (string, string, error) {
 	return filepath.Join(home, ".kvit-coder", "mcp", "tools-"+key+".json"), key, nil
 }
 
-// readToolListCache returns a cached tools/list when one is present and within
-// the time-to-live. Any problem reading it is a cache miss, never an error:
-// the server itself is always the fallback.
-func (m *Manager) readToolListCache(sc config.MCPServerConfig) ([]ToolDescriptor, bool) {
+// readToolListCache returns a cached tools/list, with the server's
+// instructions, when one is present, in the current format and within the
+// time-to-live. Any problem reading it is a cache miss, never an error: the
+// server itself is always the fallback.
+func (m *Manager) readToolListCache(sc config.MCPServerConfig) (toolListCache, bool) {
 	path, key, err := toolListCachePath(sc)
 	if err != nil {
-		return nil, false
+		return toolListCache{}, false
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, false
+		return toolListCache{}, false
 	}
 	var cached toolListCache
 	if err := json.Unmarshal(data, &cached); err != nil {
-		return nil, false
+		return toolListCache{}, false
 	}
 	if cached.Key != key || len(cached.Tools) == 0 {
-		return nil, false
+		return toolListCache{}, false
+	}
+	if cached.Format != toolListCacheFormat {
+		m.logger.Debug(fmt.Sprintf("mcp: cached tool list for %q is from an older version, will re-dial", sc.Name))
+		return toolListCache{}, false
 	}
 	if time.Since(cached.Written) > toolListCacheTTL {
 		m.logger.Debug(fmt.Sprintf("mcp: cached tool list for %q is stale, will re-dial", sc.Name))
-		return nil, false
+		return toolListCache{}, false
 	}
-	return cached.Tools, true
+	return cached, true
 }
 
 // writeToolListCache records what a server answered. Failures are logged and
 // ignored: the cache is an optimisation, and a run with an unwritable home
 // directory should dial every turn rather than stop working.
-func (m *Manager) writeToolListCache(sc config.MCPServerConfig, descs []ToolDescriptor) {
+func (m *Manager) writeToolListCache(sc config.MCPServerConfig, descs []ToolDescriptor, instructions string) {
 	if len(descs) == 0 {
 		return
 	}
@@ -250,10 +272,12 @@ func (m *Manager) writeToolListCache(sc config.MCPServerConfig, descs []ToolDesc
 		return
 	}
 	data, err := json.MarshalIndent(toolListCache{
-		Server:  sc.Name,
-		Key:     key,
-		Written: time.Now(),
-		Tools:   descs,
+		Format:       toolListCacheFormat,
+		Server:       sc.Name,
+		Key:          key,
+		Written:      time.Now(),
+		Tools:        descs,
+		Instructions: instructions,
 	}, "", "  ")
 	if err != nil {
 		return
@@ -297,6 +321,17 @@ func (l *lazyClient) get(ctx context.Context) (Client, error) {
 func (l *lazyClient) Initialize(ctx context.Context) error {
 	_, err := l.get(ctx)
 	return err
+}
+
+// Instructions are the connected server's, or "" before it has been dialed.
+// It never dials: the cached copy is what describes an undialed server.
+func (l *lazyClient) Instructions() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.real == nil {
+		return ""
+	}
+	return l.real.Instructions()
 }
 
 func (l *lazyClient) ListTools(ctx context.Context) ([]ToolDescriptor, error) {

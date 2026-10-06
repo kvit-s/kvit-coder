@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // rpcConn is the transport-level request/response surface the MCP protocol
@@ -18,9 +19,10 @@ type rpcConn interface {
 // proto implements the MCP method calls (initialize, tools/list, tools/call) on
 // top of any rpcConn. Both transports embed it.
 type proto struct {
-	conn       rpcConn
-	logger     Logger
-	negotiated string // protocol version the server agreed to
+	conn         rpcConn
+	logger       Logger
+	negotiated   string // protocol version the server agreed to
+	instructions string // what the server said about using it; see instructions.go
 }
 
 // initializeParams / initializeResult model the handshake.
@@ -42,6 +44,8 @@ type initializeResult struct {
 		Version string `json:"version"`
 	} `json:"serverInfo"`
 	Capabilities map[string]any `json:"capabilities"`
+	// Instructions is optional guidance on using the server, for the model.
+	Instructions string `json:"instructions,omitempty"`
 }
 
 // Initialize runs initialize → notifications/initialized. A negotiated version
@@ -62,6 +66,7 @@ func (p *proto) Initialize(ctx context.Context) error {
 		return fmt.Errorf("initialize: decode result: %w", err)
 	}
 	p.negotiated = res.ProtocolVersion
+	p.instructions = strings.TrimSpace(res.Instructions)
 	if res.ProtocolVersion != "" && res.ProtocolVersion != ProtocolVersion {
 		p.logger.Debug(fmt.Sprintf("mcp: server %q negotiated protocol %s (client offered %s)",
 			res.ServerInfo.Name, res.ProtocolVersion, ProtocolVersion))
@@ -73,6 +78,10 @@ func (p *proto) Initialize(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Instructions returns what the server sent in its initialize result for the
+// model, or "" when it sent nothing or the handshake has not run.
+func (p *proto) Instructions() string { return p.instructions }
 
 type listToolsParams struct {
 	Cursor string `json:"cursor,omitempty"`

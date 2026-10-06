@@ -59,6 +59,8 @@ type serverConn struct {
 	timeout   time.Duration
 	descs     []ToolDescriptor
 	filter    config.MCPToolFilter
+	// instructions is what the server sent at initialize for the model.
+	instructions string
 }
 
 // ServerStatus is a snapshot of one server for surfacing (e.g. a /mcp view).
@@ -220,13 +222,14 @@ func (m *Manager) connectOne(ctx context.Context, sc config.MCPServerConfig) (*s
 	}
 
 	return &serverConn{
-		name:      sc.Name,
-		transport: transport,
-		client:    client,
-		confirm:   sc.GetConfirm(&m.cfg),
-		timeout:   time.Duration(sc.GetCallTimeout(&m.cfg)) * time.Second,
-		descs:     descs,
-		filter:    sc.Tools,
+		name:         sc.Name,
+		transport:    transport,
+		client:       client,
+		confirm:      sc.GetConfirm(&m.cfg),
+		timeout:      time.Duration(sc.GetCallTimeout(&m.cfg)) * time.Second,
+		descs:        descs,
+		filter:       sc.Tools,
+		instructions: client.Instructions(),
 	}, nil
 }
 

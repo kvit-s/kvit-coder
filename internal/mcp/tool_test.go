@@ -22,6 +22,7 @@ type fakeClient struct {
 }
 
 func (f *fakeClient) Initialize(ctx context.Context) error { return nil }
+func (f *fakeClient) Instructions() string                 { return "" }
 func (f *fakeClient) ListTools(ctx context.Context) ([]ToolDescriptor, error) {
 	return f.listResult, nil
 }

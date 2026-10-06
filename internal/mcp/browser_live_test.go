@@ -184,7 +184,7 @@ func TestBrowserGroupLive(t *testing.T) {
 
 	group := tools.NewGroupTool("Web.browsing", "Drive a real browser.",
 		"Work from a snapshot.", "web", 900,
-		func(ctx context.Context) ([]tools.Tool, error) {
+		func(ctx context.Context) ([]tools.Tool, []tools.GroupNote, error) {
 			return mgr.ToolsForServers(ctx, []string{"playwright"})
 		})
 
@@ -207,7 +207,7 @@ func TestBrowserGroupLive(t *testing.T) {
 	cached.Defer(map[string]bool{"playwright": true})
 	defer cached.Close()
 	cachedGroup := tools.NewGroupTool("Web.browsing", "d", "", "web", 900,
-		func(ctx context.Context) ([]tools.Tool, error) {
+		func(ctx context.Context) ([]tools.Tool, []tools.GroupNote, error) {
 			return cached.ToolsForServers(ctx, []string{"playwright"})
 		})
 	started = time.Now()

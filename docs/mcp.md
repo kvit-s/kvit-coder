@@ -63,6 +63,13 @@ mcp:
 
 In a headless/benchmark run with no controlling terminal, `ask_*` falls back to `block` rather than hanging — use `confirm: trust` for trusted servers there.
 
+**Server instructions.** A server can send instructions with its `initialize` result: how its tools fit together, what to call first, what to avoid. kvit-coder passes them to the model, in one of two places:
+
+- A server the model sees directly is started at the beginning of every turn, so its instructions are current. They are added to the system prompt under "Instructions from MCP servers", one subsection per server, in server-name order.
+- A server behind a tool group (`tool_groups:`) is not started until one of its tools runs. Its instructions are saved with its cached tool list in `~/.kvit-coder/mcp/tools-<hash>.json` and shown, under "Instructions from MCP server <name>", in what the group returns when it is opened, after the group's own `instructions`. The cache is rewritten whenever the server starts, so the text the model sees is from the last turn that ran one of the server's tools. Cache files written by versions that did not keep instructions are treated as missing, so the server is started once more to fill them in.
+
+A server whose tools are all removed by `tools.allow` / `tools.deny` has its instructions left out. Instructions that change from turn to turn, such as ones carrying a timestamp, change the system prompt and make the endpoint's prompt cache miss on that turn's first request.
+
 **Behavior notes.** Connections are made concurrently at startup; a server that fails or times out is logged and skipped, never fatal. MCP calls are exempt from the 15s blanket tool timeout and use `call_timeout` instead. Large text results are spilled to a temp file with a truncated preview; binary/image blocks are summarized rather than inlined. A server tool reporting an error is recoverable (the model can retry differently); a transport failure is not.
 
 ## Project instructions

@@ -66,7 +66,7 @@ func TestToolsForServersDialsOnceAndCachesTheToolList(t *testing.T) {
 	m.Defer(map[string]bool{"echo": true})
 	defer m.Close()
 
-	got, err := m.ToolsForServers(context.Background(), []string{"echo"})
+	got, _, err := m.ToolsForServers(context.Background(), []string{"echo"})
 	if err != nil {
 		t.Fatalf("ToolsForServers: %v", err)
 	}
@@ -98,9 +98,9 @@ func TestToolsForServersAnswersFromCacheWithoutDialing(t *testing.T) {
 		Name:        "ghost",
 		Description: "Only in the cache",
 		InputSchema: map[string]any{"type": "object"},
-	}})
+	}}, "")
 
-	got, err := m.ToolsForServers(context.Background(), []string{"echo"})
+	got, _, err := m.ToolsForServers(context.Background(), []string{"echo"})
 	if err != nil {
 		t.Fatalf("ToolsForServers: %v", err)
 	}
@@ -121,7 +121,7 @@ func TestStaleCacheIsRefreshedFromTheServer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.writeToolListCache(sc, []ToolDescriptor{{Name: "ghost", InputSchema: map[string]any{"type": "object"}}})
+	m.writeToolListCache(sc, []ToolDescriptor{{Name: "ghost", InputSchema: map[string]any{"type": "object"}}}, "")
 
 	// Age it past the time-to-live. A server launched as @latest can change
 	// its tools whenever it is updated, so the cache must not be forever.
@@ -145,7 +145,7 @@ func TestStaleCacheIsRefreshedFromTheServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := m.ToolsForServers(context.Background(), []string{"echo"})
+	got, _, err := m.ToolsForServers(context.Background(), []string{"echo"})
 	if err != nil {
 		t.Fatalf("ToolsForServers: %v", err)
 	}
@@ -194,9 +194,9 @@ func TestLazyClientDialsOnTheFirstCall(t *testing.T) {
 		Name:        "echo",
 		Description: "Echoes its message back",
 		InputSchema: map[string]any{"type": "object"},
-	}})
+	}}, "")
 
-	got, err := m.ToolsForServers(context.Background(), []string{"echo"})
+	got, _, err := m.ToolsForServers(context.Background(), []string{"echo"})
 	if err != nil {
 		t.Fatalf("ToolsForServers: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestToolsForServersReportsAnUnknownServer(t *testing.T) {
 	m, _ := deferredTestManager(t)
 	defer m.Close()
 
-	_, err := m.ToolsForServers(context.Background(), []string{"nope"})
+	_, _, err := m.ToolsForServers(context.Background(), []string{"nope"})
 	if err == nil || !strings.Contains(err.Error(), "not configured") {
 		t.Fatalf("got %v, want an error naming the missing server", err)
 	}
@@ -233,7 +233,7 @@ func TestToolsForServersAppliesTheServerFilter(t *testing.T) {
 	m.Defer(map[string]bool{"echo": true})
 	defer m.Close()
 
-	got, err := m.ToolsForServers(context.Background(), []string{"echo"})
+	got, _, err := m.ToolsForServers(context.Background(), []string{"echo"})
 	if err != nil {
 		t.Fatalf("ToolsForServers: %v", err)
 	}
@@ -251,7 +251,7 @@ func TestToolsForServersRefusesWhenMCPIsOff(t *testing.T) {
 	if m.ServerUsable("echo") {
 		t.Error("a server is usable with MCP switched off")
 	}
-	_, err := m.ToolsForServers(context.Background(), []string{"echo"})
+	_, _, err := m.ToolsForServers(context.Background(), []string{"echo"})
 	if err == nil || !strings.Contains(err.Error(), "switched off") {
 		t.Fatalf("got %v, want a refusal naming the setting", err)
 	}
@@ -267,7 +267,7 @@ func TestToolsForServersRefusesADisabledServer(t *testing.T) {
 	if m.ServerUsable("echo") {
 		t.Error("a disabled server reports as usable")
 	}
-	_, err := m.ToolsForServers(context.Background(), []string{"echo"})
+	_, _, err := m.ToolsForServers(context.Background(), []string{"echo"})
 	if err == nil || !strings.Contains(err.Error(), "switched off in mcp.servers") {
 		t.Fatalf("got %v, want a refusal naming the server", err)
 	}

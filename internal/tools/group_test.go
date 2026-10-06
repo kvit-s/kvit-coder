@@ -50,7 +50,7 @@ func (f *fakeMember) PromptOrder() int           { return 0 }
 func (f *fakeMember) PromptTemplateName() string { return "" }
 
 func staticSource(members ...Tool) GroupMemberSource {
-	return func(context.Context) ([]Tool, error) { return members, nil }
+	return func(context.Context) ([]Tool, []GroupNote, error) { return members, nil, nil }
 }
 
 func callGroup(t *testing.T, g *GroupTool, args string) (any, error) {
@@ -240,9 +240,9 @@ func TestGroupDisambiguatesCollidingShortNames(t *testing.T) {
 
 func TestGroupResolvesMembersOnce(t *testing.T) {
 	calls := 0
-	g := NewGroupTool("G", "d", "", "mcp", 900, func(context.Context) ([]Tool, error) {
+	g := NewGroupTool("G", "d", "", "mcp", 900, func(context.Context) ([]Tool, []GroupNote, error) {
 		calls++
-		return []Tool{&fakeMember{name: "mcp.s.t", desc: "d"}}, nil
+		return []Tool{&fakeMember{name: "mcp.s.t", desc: "d"}}, nil, nil
 	})
 
 	revealText(t, g)
@@ -256,7 +256,7 @@ func TestGroupResolvesMembersOnce(t *testing.T) {
 
 func TestGroupSourceFailureIsReported(t *testing.T) {
 	g := NewGroupTool("Web.browsing", "d", "", "web", 900,
-		func(context.Context) ([]Tool, error) { return nil, errors.New("npx not found") })
+		func(context.Context) ([]Tool, []GroupNote, error) { return nil, nil, errors.New("npx not found") })
 
 	_, err := callGroup(t, g, "{}")
 	if err == nil || !strings.Contains(err.Error(), "npx not found") ||
@@ -372,5 +372,28 @@ func TestSetupRegistryWithoutGroupsIsUnchanged(t *testing.T) {
 	}
 	if len(reg.ListTools()) == 0 {
 		t.Error("no tools registered at all")
+	}
+}
+
+// What a member's server sent comes after the group's own instructions and
+// before the tools, under the name of what sent it. A blank note adds nothing.
+func TestGroupReferenceShowsNotesFromItsSource(t *testing.T) {
+	g := NewGroupTool("Heroes3", "Play the game.", "Group instructions.", "mcp", 900,
+		func(context.Context) ([]Tool, []GroupNote, error) {
+			return []Tool{&fakeMember{name: "mcp.h3.move", desc: "Moves a hero."}},
+				[]GroupNote{{Source: "MCP server h3", Text: "Read the map first.\nThen move."}, {Source: "MCP server blank", Text: "  "}}, nil
+		})
+	text := revealText(t, g)
+	own := strings.Index(text, "Group instructions.")
+	note := strings.Index(text, "Instructions from MCP server h3:\nRead the map first.\nThen move.")
+	tool := strings.Index(text, "move")
+	if own < 0 || note < 0 || own > note {
+		t.Fatalf("want the group's instructions, then the server's:\n%s", text)
+	}
+	if tool < 0 || strings.LastIndex(text, "Moves a hero.") < note {
+		t.Errorf("the tools should follow the notes:\n%s", text)
+	}
+	if strings.Contains(text, "MCP server blank") {
+		t.Errorf("a blank note was shown:\n%s", text)
 	}
 }

@@ -525,7 +525,7 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 
 		var source tools.GroupMemberSource
 		if len(servers) > 0 {
-			source = func(ctx context.Context) ([]tools.Tool, error) {
+			source = func(ctx context.Context) ([]tools.Tool, []tools.GroupNote, error) {
 				return mcpMgr.ToolsForServers(ctx, servers)
 			}
 		}
@@ -553,6 +553,11 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 	systemPrompt, err := promptGen.GenerateSystemPrompt()
 	if err != nil {
 		return nil, promptSetupError{fmt.Sprintf("Error generating system prompt: %v", err)}
+	}
+	// What the MCP servers connected at startup sent for the model. A server
+	// behind a tool group sends its instructions through the group instead.
+	if section := mcpMgr.PromptSection(); section != "" {
+		systemPrompt += "\n\n" + section
 	}
 	if cfg.Agent.AgentFile != "" {
 		agentContent, err := os.ReadFile(cfg.Agent.AgentFile)

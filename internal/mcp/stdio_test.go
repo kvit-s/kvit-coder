@@ -47,11 +47,16 @@ func runEchoServer() {
 		}
 		switch msg.Method {
 		case "initialize":
-			respond(msg.ID, map[string]any{
+			result := map[string]any{
 				"protocolVersion": ProtocolVersion,
 				"serverInfo":      map[string]any{"name": "echo-server", "version": "1.0"},
 				"capabilities":    map[string]any{"tools": map[string]any{}},
-			})
+			}
+			// A test that wants server instructions sets them here.
+			if text := os.Getenv("ECHO_INSTRUCTIONS"); text != "" {
+				result["instructions"] = text
+			}
+			respond(msg.ID, result)
 		case "tools/list":
 			respond(msg.ID, map[string]any{
 				"tools": []any{
