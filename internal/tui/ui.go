@@ -48,6 +48,12 @@ type Options struct {
 	// effort, so Options{Config: cfg} behaves as before.
 	InitialEffortSet bool
 	InitialEffort    string
+	// StatePath is kcu-state.json, where the model and effort last chosen
+	// are kept so the next start opens on them. Empty keeps nothing, which
+	// is what tests want.
+	StatePath string
+	// OpenSetup opens :setup before the first prompt (kcu -setup).
+	OpenSetup bool
 }
 
 // UI manages the interactive terminal interface
@@ -92,6 +98,14 @@ type UI struct {
 	// which is why this is re-read rather than taken once at startup.
 	sessionTitle  string
 	titledSession string
+	// ask draws the lists and questions of :setup, :models and :keys.
+	ask asker
+	// statePath is kcu-state.json; see Options.StatePath.
+	statePath string
+	// openSetup is Options.OpenSetup, used once at startup.
+	openSetup bool
+	// failureHinted keeps the hint after a failed turn to once per run.
+	failureHinted bool
 }
 
 // New creates a new UI instance
@@ -122,6 +136,9 @@ func New(opts Options) *UI {
 		structured:     opts.Structured,
 		history:        history,
 		historyFile:    historyFile,
+		ask:            termAsker{},
+		statePath:      opts.StatePath,
+		openSetup:      opts.OpenSetup,
 	}
 	// Snapshot the catalog and start on the default row (the llm.model row,
 	// else the first), or on the -m/--model row when one was given. A
@@ -130,6 +147,11 @@ func New(opts Options) *UI {
 	u.currentModel = opts.Config.DefaultModelIndex()
 	if u.currentModel < 0 || u.currentModel >= len(u.models) {
 		u.currentModel = 0
+	}
+	// The model last chosen in kcu comes before default_model, as it does in
+	// maki; -m below still comes before both.
+	if !opts.InitialModelSet {
+		u.restoreChoice()
 	}
 	if opts.InitialModelSet && opts.InitialModel >= 0 && opts.InitialModel < len(u.models) {
 		u.currentModel = opts.InitialModel
@@ -201,7 +223,11 @@ func (u *UI) Run() error {
 
 	// Show startup info
 	fmt.Printf("\033[38;5;136mkvit-coder-ui %s\033[0m\n", u.bannerVersion())
-	fmt.Printf("\033[38;5;136mModel: %s @ %s\033[0m\n", u.activeDisplay(), u.activeBaseURL())
+	if u.hasModel() {
+		fmt.Printf("\033[38;5;136mModel: %s @ %s\033[0m\n", u.activeDisplay(), u.activeBaseURL())
+	} else {
+		fmt.Println("\033[38;5;136mModel: none set up yet (:setup adds one)\033[0m")
+	}
 	if u.currentSession != "" {
 		if u.sessionMgr.SessionExists(u.currentSession) {
 			fmt.Printf("\033[38;5;136mSession: %s (continuing)\033[0m\n", u.currentSession)
@@ -222,6 +248,10 @@ func (u *UI) Run() error {
 		u.updateNoted = true
 	}
 	u.maybeStartUpdateCheck()
+
+	// No model, or a starting model without its key: offer :setup or the
+	// key before the first prompt is typed against it.
+	u.startupCheck(u.openSetup)
 
 	for {
 		// The background check reports here, never inside the composer.
@@ -577,6 +607,16 @@ func (u *UI) handleCommand(input string) bool {
 		if u.currentSession != "" {
 			fmt.Printf("Session: %s\n", u.currentSession)
 		}
+		if path, err := config.SavedModelsPath(); err == nil {
+			if _, err := os.Stat(path); err == nil {
+				fmt.Printf("Models saved by :setup: %s\n", path)
+			}
+		}
+		if path, err := config.CredentialsPath(); err == nil {
+			if _, err := os.Stat(path); err == nil {
+				fmt.Printf("Keys saved by :setup and :keys: %s\n", path)
+			}
+		}
 		fmt.Println("Models:")
 		for i, e := range u.models {
 			marker := ""
@@ -618,6 +658,15 @@ func (u *UI) handleCommand(input string) bool {
 		}
 		u.pendingImages = append(u.pendingImages, path)
 		fmt.Printf("Staged for next turn: [image%d: %s]\n\n", len(u.pendingImages), path)
+
+	case "setup":
+		u.runSetup()
+
+	case "models":
+		u.showModelPicker()
+
+	case "keys":
+		u.showKeys()
 
 	case "version":
 		u.showVersion()
@@ -685,6 +734,7 @@ func (u *UI) switchModel(n int) {
 	u.currentModel = n - 1
 
 	u.currentEffort = ""
+	u.rememberChoice()
 
 	e := u.currentEntry()
 
@@ -745,6 +795,7 @@ func (u *UI) setEffortIndex(n int) {
 		return
 	}
 	u.currentEffort = menu[n-1].Value
+	u.rememberChoice()
 	fmt.Printf("Effort set to %s for %s\n\n", menu[n-1].Value, e.Name)
 }
 
@@ -758,6 +809,7 @@ func (u *UI) setEffortValue(value string) {
 		return
 	}
 	u.currentEffort = v
+	u.rememberChoice()
 	if v == "" {
 		fmt.Printf("Effort cleared for %s\n\n", e.Name)
 		return
@@ -834,6 +886,9 @@ func (u *UI) showHelp() {
 	fmt.Println("  :config          Show configuration")
 	fmt.Println("  :image <path>..  Stage image files for the next turn")
 	fmt.Println("  :paste           Stage the clipboard image for the next turn")
+	fmt.Println("  :setup           Add models: choose a provider, give its key, tick models")
+	fmt.Println("  :models          Choose a model from a list, or remove one :setup added")
+	fmt.Println("  :keys            Show where each API key comes from; save or forget one")
 	fmt.Println("  :mN              Switch model (e.g. :m1; the list follows)")
 	fmt.Println("  :eN, :e <level>  Set reasoning effort for the current model")
 	fmt.Println("  :version         Show build versions and the latest release")
@@ -890,7 +945,7 @@ func (u *UI) agentArgs(prompt string, images []string) []string {
 	// omitted: with --model the agent falls back to the entry default (which
 	// is empty for a model with no menu), without it the config is unchanged.
 	entry := u.currentEntry()
-	args = append(args, "--model", entry.Model)
+	args = append(args, "--model", u.modelRef(entry))
 	if base := u.activeBaseURL(); base != "" {
 		args = append(args, "--base-url", base)
 	}
@@ -919,6 +974,11 @@ func (u *UI) agentArgs(prompt string, images []string) []string {
 }
 
 func (u *UI) runAgent(prompt string, images []string) {
+	if !u.hasModel() {
+		fmt.Println("\033[38;5;136mNo model is set up, so nothing was sent. :setup adds one.\033[0m")
+		fmt.Println()
+		return
+	}
 	// The turn is what the window title is for: a window that is not on
 	// screen still says whether the agent is working. The session's title
 	// is re-read on the way out because the first turn is what creates it.
@@ -969,6 +1029,8 @@ func (u *UI) runAgent(prompt string, images []string) {
 			// exits with it after a second ctrl-c.
 			if code := exitErr.ExitCode(); code == 2 || code == 130 {
 				fmt.Println("[cancelled]")
+			} else {
+				defer u.afterFailedTurn()
 			}
 		} else {
 			fmt.Fprintf(os.Stderr, "\033[31m[error] Agent failed: %v\033[0m\n", err)

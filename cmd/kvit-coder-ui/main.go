@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"log"
@@ -8,7 +9,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 
+	kvitcoder "github.com/kvit-s/kvit-coder"
 	"github.com/kvit-s/kvit-coder/internal/config"
 	"github.com/kvit-s/kvit-coder/internal/session"
 	"github.com/kvit-s/kvit-coder/internal/tui"
@@ -40,6 +43,7 @@ func main() {
 	yolo := flag.Bool("yolo", false, "read and write anywhere on the filesystem, without asking")
 	structured := flag.Bool("structured", true, "end each turn with a structured report, shown as a card at the prompt (--structured=false for prose)")
 	showVersion := flag.Bool("version", false, "show version information and exit")
+	openSetup := flag.Bool("setup", false, "open :setup before the first prompt, to add models")
 
 	// Session management flags (pass-through to kvit-coder)
 	sessionList := flag.Bool("sessions", false, "list all sessions and exit")
@@ -108,6 +112,11 @@ func main() {
 	resolvedConfig, note, err := config.ResolvePath(*configPath)
 	if note != "" {
 		fmt.Fprintln(os.Stderr, note)
+	}
+	if err != nil && *configPath == "" && os.Getenv(config.ConfigPathEnv) == "" {
+		// Nothing to start from. Rather than stop at the first run, write
+		// the example and carry on; it names no model, so :setup opens next.
+		resolvedConfig, err = offerExampleConfig(err)
 	}
 	if err != nil {
 		log.Fatalf("%v", err)
@@ -229,9 +238,47 @@ func main() {
 		InitialModel:     initialModel,
 		InitialEffortSet: initialEffortSet,
 		InitialEffort:    initialEffort,
+		StatePath:        statePath(),
+		OpenSetup:        *openSetup,
 	})
 
 	if err := ui.Run(); err != nil {
 		log.Fatalf("UI error: %v", err)
 	}
+}
+
+// statePath is ~/.kvit-coder/kcu-state.json, or "" without a home directory.
+func statePath() string {
+	dir, err := config.UserDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, tui.StateName)
+}
+
+// offerExampleConfig asks whether to write the example configuration to
+// ~/.kvit-coder/config.yaml when no configuration was found, and returns its
+// path when it was written. notFound is the search's own error, returned
+// when the answer is no.
+func offerExampleConfig(notFound error) (string, error) {
+	dir, err := config.UserDir()
+	if err != nil {
+		return "", notFound
+	}
+	path := filepath.Join(dir, config.DefaultConfigName)
+	fmt.Fprintln(os.Stderr, notFound)
+	fmt.Fprintf(os.Stderr, "Write a starting configuration to %s? [Y/n] ", path)
+	answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	if answer != "" && answer != "y" && answer != "yes" {
+		return "", notFound
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(path, kvitcoder.ExampleConfig, 0o644); err != nil {
+		return "", err
+	}
+	fmt.Fprintf(os.Stderr, "Wrote %s.\n", path)
+	return path, nil
 }

@@ -146,8 +146,11 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 		return nil, err
 	}
 
-	// Load config
-	cfg, err := config.Load(actualConfigPath)
+	// Load config. A benchmark run leaves out the model rows kvit-coder-ui
+	// saved in ~/.kvit-coder/models.yaml, so its results do not depend on
+	// what was set up on the machine it ran on.
+	benchmarking := opts.BenchmarkMode != "" || opts.HaystackEnabled || opts.ThinkbenchEnabled
+	cfg, err := config.LoadWith(actualConfigPath, config.LoadOptions{SkipSavedModels: benchmarking})
 	if err != nil {
 		return nil, fmt.Errorf("Failed to load config: %v", err)
 	}
@@ -169,6 +172,11 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 		effort = &stringFlag{}
 	}
 	resolveModelSelection(cfg, opts.ModelRef, effort, opts.APIBackend, opts.BaseURL)
+	// A fresh install names no model until one is set up. Saying so here
+	// beats the endpoint's answer to a request for a model called "".
+	if cfg.LLM.Model == "" {
+		return nil, fmt.Errorf("no model is configured: run kvit-coder-ui (kcu) and use :setup, or add a models: entry to %s (see docs/models.md)", actualConfigPath)
+	}
 	if opts.AgentFile != "" {
 		cfg.Agent.AgentFile = opts.AgentFile
 	}

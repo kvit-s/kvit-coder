@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
@@ -46,8 +45,8 @@ func ValidBackend(b string) bool {
 // presentation order; Default marks the entry's effort default.
 type EffortOption struct {
 	Value   string `yaml:"value"`
-	Label   string `yaml:"label"`
-	Default bool   `yaml:"default"`
+	Label   string `yaml:"label,omitempty"`
+	Default bool   `yaml:"default,omitempty"`
 }
 
 // Display returns the menu text: the label when set, else the value.
@@ -64,14 +63,14 @@ func (e EffortOption) Display() string {
 // profile, which an entry may override per model (see ProfileFor).
 type ModelEntry struct {
 	ID         string         `yaml:"id"`
-	Name       string         `yaml:"name"`
+	Name       string         `yaml:"name,omitempty"`
 	Model      string         `yaml:"model"`
-	BaseURL    string         `yaml:"base_url"`
-	APIBackend string         `yaml:"api_backend"`
-	APIKey     string         `yaml:"api_key"`
-	APIKeyEnv  string         `yaml:"api_key_env"`
-	Context    int            `yaml:"context"`
-	Efforts    []EffortOption `yaml:"efforts"`
+	BaseURL    string         `yaml:"base_url,omitempty"`
+	APIBackend string         `yaml:"api_backend,omitempty"`
+	APIKey     string         `yaml:"api_key,omitempty"`
+	APIKeyEnv  string         `yaml:"api_key_env,omitempty"`
+	Context    int            `yaml:"context,omitempty"`
+	Efforts    []EffortOption `yaml:"efforts,omitempty"`
 
 	// EffortField names which field of a chat-completions request carries
 	// the reasoning effort for this endpoint: "chat_template_kwargs" (the
@@ -81,7 +80,7 @@ type ModelEntry struct {
 	// that wants one spelling ignores the other silently, so a wrong value
 	// means the effort picked with :eN does nothing at all. The "responses"
 	// backend ignores this.
-	EffortField string `yaml:"effort_field"`
+	EffortField string `yaml:"effort_field,omitempty"`
 
 	// Profile overrides agent.profile for this entry: "strong" (the default)
 	// or "weak". Empty inherits the global agent.profile. A weak entry keeps
@@ -89,14 +88,22 @@ type ModelEntry struct {
 	// switch, the edit confirm handshake, fuzzy matching, anomaly
 	// interrogation, prose scraping, empty-answer retries, interpreter
 	// one-liner rules); a strong one skips it.
-	Profile string `yaml:"profile"`
+	Profile string `yaml:"profile,omitempty"`
 
 	// Summarizer marks the entry used to generate session titles: a short
 	// 3-6 word summary of the first prompt, stored in meta.json. At most
 	// one entry may set it; when none does (or the call fails) the title
 	// falls back to the first words of the prompt. It never affects model
 	// switching — see SummarizerEntry.
-	Summarizer bool `yaml:"summarizer"`
+	Summarizer bool `yaml:"summarizer,omitempty"`
+
+	// Headers are extra "Key=Value" request headers for this entry only, in
+	// the form of llm.headers and with the same ${VAR} expansion. They are
+	// sent on top of llm.headers, and one with the same name replaces the
+	// llm.headers value. A gateway that wants headers of its own, such as
+	// OpenCode's User-Agent and x-opencode-session, can then be described by
+	// its rows alone, without changing what every other model sends.
+	Headers []string `yaml:"headers,omitempty"`
 }
 
 // IsStrongProfile reports whether a profile value selects the strong
@@ -125,9 +132,10 @@ func (c *Config) ProfileFor(entry ModelEntry) string {
 // weak-model compensation machinery.
 func (c *Config) IsStrongFor(entry ModelEntry) bool { return IsStrongProfile(c.ProfileFor(entry)) }
 
-// ModelList returns the catalog: `models:` in file order, or one entry
-// synthesized from the `llm:` block when `models:` is absent. It never
-// returns an empty slice, so callers can index [DefaultModelIndex()].
+// ModelList returns the catalog: `models:` in file order followed by the rows
+// saved in models.yaml (see mergeSavedModels), or one entry synthesized from
+// the `llm:` block when there are none. It never returns an empty slice, so
+// callers can index [DefaultModelIndex()].
 func (c *Config) ModelList() []ModelEntry {
 	if len(c.Models) > 0 {
 		return c.Models
@@ -345,12 +353,13 @@ func (c *Config) ResolveEffort(entry ModelEntry, token string) (string, error) {
 	return "", fmt.Errorf("unknown effort level %q; use one of: %s", token, strings.Join(offered, ", "))
 }
 
-// EntryAPIKey resolves which key an entry authenticates with: its env var
-// when set, else its literal, else none (a local endpoint needs no key, and
-// the client omits the Authorization header then).
+// EntryAPIKey resolves which key an entry authenticates with: the variable
+// its api_key_env names when that is set, else the key saved under the same
+// name in credentials.json, else its literal api_key, else none (a local
+// endpoint needs no key, and the client omits the Authorization header then).
 func EntryAPIKey(entry ModelEntry) string {
-	if entry.APIKeyEnv != "" {
-		return os.Getenv(entry.APIKeyEnv)
+	if key := LookupKey(entry.APIKeyEnv); key != "" {
+		return key
 	}
 	return entry.APIKey
 }
@@ -402,6 +411,11 @@ func (c *Config) ApplyModel(entry ModelEntry, effort string) {
 		c.LLM.APIKeyEnv = ""
 		c.LLM.APIKey = ""
 	}
+
+	// Assigned on every call, for the same reason as EffortField: the second
+	// ApplyModel of a turn must not keep the first entry's headers. llm.headers
+	// is left as the file wrote it, and LLMHeaders lays these over it.
+	c.entryHeaders = entry.Headers
 
 	c.LLM.ReasoningEffort = effort
 
@@ -478,16 +492,22 @@ func (c *Config) validateModels(configPath string) error {
 
 		e := &c.Models[i]
 
-		where := fmt.Sprintf("%s: models entry %d", configPath, i+1)
+		where := c.rowSource(configPath, i)
 
 		if e.ID == "" {
 			return fmt.Errorf("%s: missing id", where)
 		}
 
 		if key := strings.ToLower(e.ID); seen[key] > 0 {
-			return fmt.Errorf("%s: duplicate id %q", configPath, e.ID)
+			return fmt.Errorf("%s: duplicate id %q", where, e.ID)
 		} else {
 			seen[key] = i + 1
+		}
+
+		for _, h := range e.Headers {
+			if k, _, ok := strings.Cut(h, "="); !ok || strings.TrimSpace(k) == "" {
+				return fmt.Errorf("%s (%s): header %q is not Key=Value", where, e.ID, h)
+			}
 		}
 
 		if e.Model == "" {

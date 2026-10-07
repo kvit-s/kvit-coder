@@ -35,6 +35,11 @@ the environment, not into the file:
 export OPENCODE_API_KEY="the key from the console"
 ```
 
+Instead of exporting it, the key can be saved in
+`~/.kvit-coder/credentials.json` under the same name, which needs no change to
+a shell profile; see
+[Models and keys saved beside the config](configuration.md#models-and-keys-saved-beside-the-config).
+
 A Go subscription is started from that same console. OpenCode allows one Go
 subscriber per workspace. After the Go usage included in the month is spent,
 the free models on the account still answer. The model ids and which URL
@@ -59,8 +64,9 @@ set `effort_field: reasoning_effort`. The responses protocol sends
 
 OpenCode Go asks a client to name itself and to send a stable session id on
 `x-opencode-session`, one value per conversation, so a prompt cache stays on
-one backend. Put both on the `llm:` block. Headers there are sent with every
-model. `${KVIT_RUN_ID}` is an id derived from the session name.
+one backend. Put both on the `llm:` block, where they are sent with every
+model, or under `headers:` on each OpenCode row, where they go only to that
+row's requests. `${KVIT_RUN_ID}` is an id derived from the session name.
 
 ```yaml
 llm:

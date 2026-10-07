@@ -149,6 +149,17 @@ type Config struct {
 	// key to the wrong endpoint.
 	fileBaseURL string
 
+	// entryHeaders are the headers of the entry ApplyModel last made active.
+	// LLMHeaders sends them on top of llm.headers, which stays as the file
+	// wrote it so that switching to an entry without headers drops them.
+	entryHeaders []string
+
+	// savedModelsPath is models.yaml when Load appended rows from it, and
+	// savedModelsStart is the index of the first of them in Models. Both stay
+	// empty when it added none. See mergeSavedModels.
+	savedModelsPath  string
+	savedModelsStart int
+
 	// profileRaw snapshots the file's weak-model machinery settings before
 	// any profile is applied, so switching profiles (at load for the
 	// default model, per turn in ApplyModel) restores rather than destroys.
@@ -1064,28 +1075,58 @@ func (c *Config) ReasoningSummaryOrDefault() string {
 	}
 }
 
-// LLMHeaders parses llm.headers into the header map the LLM client wants,
-// expanding ${VAR} references against the environment so a session or routing
-// header can come from a secret the config does not contain. ${KVIT_RUN_ID}
-// expands to an ID unique to this process unless the environment already sets
-// one.
+// LLMHeaders parses llm.headers, with the active entry's own headers laid
+// over them, into the header map the LLM client wants. ${VAR} references are
+// expanded against the environment so a session or routing header can come
+// from a secret the config does not contain. ${KVIT_RUN_ID} expands to an ID
+// unique to this process unless the environment already sets one.
 func (c *Config) LLMHeaders() map[string]string {
-	if len(c.LLM.Headers) == 0 {
-		return nil
-	}
-	ensureRunID()
-	headers := make(map[string]string, len(c.LLM.Headers))
-	for _, h := range c.LLM.Headers {
-		k, v, ok := strings.Cut(h, "=")
-		if !ok {
-			continue
+	return parseHeaders(c.LLM.Headers, c.entryHeaders)
+}
+
+// HeadersFor is LLMHeaders for an entry other than the active one, such as
+// the summarizer entry that writes session titles: llm.headers with that
+// entry's headers laid over them.
+func (c *Config) HeadersFor(entry ModelEntry) map[string]string {
+	return parseHeaders(c.LLM.Headers, entry.Headers)
+}
+
+// parseHeaders turns "Key=Value" lists into a header map, later lists
+// replacing a header of the same name from earlier ones. Names compare the
+// way HTTP compares them, without regard to case, so an entry's "user-agent"
+// replaces llm.headers' "User-Agent" instead of both being sent.
+func parseHeaders(lists ...[]string) map[string]string {
+	var headers map[string]string
+	for _, list := range lists {
+		for _, h := range list {
+			k, v, ok := strings.Cut(h, "=")
+			if !ok {
+				continue
+			}
+			k = strings.TrimSpace(k)
+			if headers == nil {
+				ensureRunID()
+				headers = make(map[string]string)
+			}
+			for existing := range headers {
+				if strings.EqualFold(existing, k) {
+					delete(headers, existing)
+				}
+			}
+			headers[k] = os.ExpandEnv(strings.TrimSpace(v))
 		}
-		headers[strings.TrimSpace(k)] = os.ExpandEnv(strings.TrimSpace(v))
 	}
 	return headers
 }
 
+// Load reads a config file, together with the model rows and API keys
+// kvit-coder-ui saved beside it in ~/.kvit-coder (see userfiles.go).
 func Load(path string) (*Config, error) {
+	return LoadWith(path, LoadOptions{})
+}
+
+// LoadWith is Load with options; see LoadOptions.
+func LoadWith(path string, opts LoadOptions) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -1096,11 +1137,28 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 
-	// Apply environment overrides
-	if cfg.LLM.APIKeyEnv != "" {
-		if key := os.Getenv(cfg.LLM.APIKeyEnv); key != "" {
-			cfg.LLM.APIKey = key
+	cfg.dropExamplePlaceholder()
+
+	// Without a home directory there is no models.yaml to read, which is
+	// not a reason to refuse a config file that works on its own.
+	if !opts.SkipSavedModels {
+		if saved, err := SavedModelsPath(); err == nil {
+			if err := cfg.mergeSavedModels(saved); err != nil {
+				return nil, err
+			}
 		}
+	}
+
+	// A malformed credentials.json would otherwise read as "no saved key"
+	// and surface as a refused request, far from its cause.
+	if _, err := readCredentials(); err != nil {
+		return nil, err
+	}
+
+	// The key: the variable llm.api_key_env names, else the key saved under
+	// that name, else the literal llm.api_key already decoded above.
+	if key := LookupKey(cfg.LLM.APIKeyEnv); key != "" {
+		cfg.LLM.APIKey = key
 	}
 
 	// Convert workspace root to absolute path

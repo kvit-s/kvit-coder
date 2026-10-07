@@ -99,20 +99,68 @@ for OpenCode.
 | `efforts` | The levels offered as `:e1`, `:e2`, ...: each has `value`, an optional `label` shown in its place, and `default: true` on the level to start at. An entry without `efforts` is a model without reasoning, and switching to it clears the effort |
 | `profile` | `strong` or `weak` for this entry; empty uses `agent.profile` |
 | `summarizer` | `true` on at most one entry, which writes each session's short title from its first prompt |
+| `headers` | Extra `Key=Value` request headers for this entry, as in `llm.headers` and with the same `${VAR}` expansion. They are sent on top of `llm.headers`, and one with the same name (in any case) replaces the `llm.headers` value |
 
 The `llm` keys that an entry also has are not a dependable fallback for it.
 An entry without `api_key` / `api_key_env` is sent no key at all, and one
 without `base_url`, `api_backend` or `context` keeps the value already in
 effect, which is the `llm` value for the starting entry and the starting
 entry's after a switch. Give every entry all of them. The rest of `llm` —
-`headers`, `merge_thinking`, `reasoning_summary`, `request_timeout`,
-`temperature`, `max_output_tokens`, `verbose`, `generation_stats` — applies to
-whichever entry is selected.
+`headers` (under the entry's own), `merge_thinking`, `reasoning_summary`,
+`request_timeout`, `temperature`, `max_output_tokens`, `verbose`,
+`generation_stats` — applies to whichever entry is selected.
+
+An entry's key is the variable its `api_key_env` names when that is set, else
+the key saved under that variable's name in `credentials.json` (below), else
+its literal `api_key`. `llm.api_key_env` is looked up the same way.
 
 | Key | Description |
 |-----|-------------|
-| `default_model` | The entry a new session starts on: an `id`, `name`, 1-based index or `model`. Empty means the entry whose `model` matches `llm.model`, else the first |
+| `default_model` | The entry a new session starts on: an `id`, `name`, 1-based index or `model`, including an entry from `models.yaml`. Empty means the entry whose `model` matches `llm.model`, else the first |
 | `default_effort` | The starting effort for an entry with no `default: true` level when `llm.reasoning_effort` is empty too |
+
+### Models and keys saved beside the config
+
+Two files in `~/.kvit-coder/` (`%USERPROFILE%\.kvit-coder\` on Windows) are
+read together with whichever `config.yaml` is used, by kvit-coder-ui and by
+every turn of the agent. They are meant for kvit-coder-ui to write when a
+model is set up from inside it, which is not built yet; until then they can be
+written by hand, and `config.yaml` is never written by a program.
+
+`models.yaml` holds entries in the format above, under a `models:` key and
+nothing else; any other key is an error naming the file. Its entries are
+added after the `models:` entries of `config.yaml`, so `:m1`, `:m2`, ... keep
+pointing where they did, and an entry whose `id` `config.yaml` already uses is
+left out. When `config.yaml` has no `models:` list but its `llm:` block names
+a model, that model stays the first entry and the saved ones follow it. The
+benchmark modes do not read this file.
+
+```yaml
+models:
+  - id: kimi-k3-go
+    name: "Kimi K3 (Go)"
+    model: "kimi-k3"
+    base_url: "https://opencode.ai/zen/go/v1"
+    api_backend: "chat_completions"
+    effort_field: "reasoning_effort"
+    api_key_env: "OPENCODE_API_KEY"
+    context: 1048576
+    headers:
+      - "User-Agent=kvit-coder"
+      - "x-opencode-session=kvit-coder-${KVIT_RUN_ID}"
+```
+
+`credentials.json` holds API keys under the name of the environment variable
+an `api_key_env` gives, and is used only when that variable is not set:
+
+```json
+{ "OPENCODE_API_KEY": "the key from the console" }
+```
+
+The agent reads the key from the file itself, so it is not placed in the
+environment that the commands it runs inherit. Keep the file readable only by
+you (`chmod 600 ~/.kvit-coder/credentials.json`). A file that is not valid
+JSON stops kvit-coder at startup with the file's name.
 
 ## `workspace`
 

@@ -485,13 +485,24 @@ func (c *Client) postJSON(ctx context.Context, path string, body *requestBody) (
 	return nil, false, fmt.Errorf("after %d retries: %w", maxRetries, c.statusError(lastStatusCode, lastRespBody))
 }
 
+// StatusError is an answer with an HTTP status other than 200. Its text is the
+// one this client has always printed; the type exists so that a caller that
+// has to act on the code, such as kvit-coder-ui telling a refused key from a
+// protocol the endpoint does not serve, can find it with errors.As.
+type StatusError struct {
+	Code int
+	Body []byte
+}
+
+func (e *StatusError) Error() string { return fmt.Sprintf("API error %d: %s", e.Code, e.Body) }
+
 // statusError describes a request the endpoint refused. For 401 and 403 it
 // adds what to do about it: the provider's own message says the key is missing
 // or wrong in its words, not in terms of this program's configuration, so a
 // first run against a fresh checkout ends in a message that does not say which
 // variable was expected.
 func (c *Client) statusError(status int, body []byte) error {
-	err := fmt.Errorf("API error %d: %s", status, body)
+	var err error = &StatusError{Code: status, Body: body}
 	if status != http.StatusUnauthorized && status != http.StatusForbidden {
 		return err
 	}
@@ -500,11 +511,11 @@ func (c *Client) statusError(status int, body []byte) error {
 	}
 	switch {
 	case c.apiKey == "" && c.apiKeyEnv != "":
-		return fmt.Errorf("%w (no API key was sent: $%s is not set)", err, c.apiKeyEnv)
+		return fmt.Errorf("%w (no API key was sent: $%s is not set, and no key is saved under that name in ~/.kvit-coder/credentials.json)", err, c.apiKeyEnv)
 	case c.apiKey == "":
 		return fmt.Errorf("%w (no API key was sent: name the variable holding it in llm.api_key_env)", err)
 	case c.apiKeyEnv != "":
-		return fmt.Errorf("%w (the key in $%s was refused)", err, c.apiKeyEnv)
+		return fmt.Errorf("%w (the key for %s was refused)", err, c.apiKeyEnv)
 	}
 	return err
 }

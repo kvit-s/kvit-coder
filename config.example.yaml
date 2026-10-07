@@ -1,7 +1,11 @@
-# A short working configuration. Copy it to ~/.kvit-coder/config.yaml
-# (%USERPROFILE%\.kvit-coder\config.yaml on Windows) and point the llm: block
-# at whichever OpenAI-compatible endpoint you have, or list several models to
-# switch between under models: at the end.
+# A short working configuration. The installers copy it to
+# ~/.kvit-coder/config.yaml (%USERPROFILE%\.kvit-coder\config.yaml on Windows).
+#
+# It names no model on purpose. Run kcu and it opens :setup, where you choose
+# a provider, paste its key and tick the models you want; it saves them to
+# ~/.kvit-coder/models.yaml and the key to ~/.kvit-coder/credentials.json, and
+# never edits this file. To write a model here by hand instead, fill in the
+# llm: keys below for one model, or list several under models: at the end.
 #
 # Every key is documented at
 # https://github.com/kvit-s/kvit-coder/blob/main/docs/configuration.md, which
@@ -10,26 +14,29 @@
 # styling.
 
 llm:
-  # A local llama.cpp, vLLM or Ollama server, or any hosted endpoint that
-  # speaks the same protocol.
-  base_url: "http://localhost:8080/v1"
-  model: "your-model"
-
+  # One model written by hand: a local llama.cpp, vLLM or Ollama server, or
+  # any hosted endpoint that speaks the same protocol.
+  #base_url: "http://localhost:8080/v1"
+  #model: "the model id the endpoint expects"
+  #
   # "chat_completions" for /v1/chat/completions, "responses" for an endpoint
-  # that only serves OpenAI's /responses.
-  api_backend: "chat_completions"
-
+  # that only serves OpenAI's /responses, "messages" for Claude's API.
+  #api_backend: "chat_completions"
+  #
   # The environment variable holding the API key. A local server usually needs
-  # none; a hosted one does, and a refused request names this variable.
-  api_key_env: "OPENAI_API_KEY"
+  # none; a hosted one does, and a refused request names this variable. A key
+  # saved by :setup or :keys under the same name is used when it is not set.
+  #api_key_env: "OPENAI_API_KEY"
+  #
+  #context: 131072
 
-  context: 131072
   request_timeout: 600     # seconds for one request before it is retried
 
   # Extra request headers, sent with every model. OpenCode wants these two: it
   # asks a client to name itself, and rejects a request without a session id.
   # ${KVIT_RUN_ID} is one id per conversation, so the conversation stays on the
-  # backend that holds its prompt cache.
+  # backend that holds its prompt cache. :setup puts them on each OpenCode row
+  # it saves, so they are needed here only for OpenCode rows written by hand.
   #headers:
   #  - "User-Agent=kvit-coder"
   #  - "x-opencode-session=kvit-coder-${KVIT_RUN_ID}"
@@ -100,11 +107,11 @@ tools:
 #  interval_hours: 24     # minimum time between automatic checks
 
 # Several models to switch between: :m1, :m2, ... in the UI (in list order),
-# or --model headless. docs/models.md has more OpenCode rows. Give every row
-# its own base_url, model, api_backend, api_key_env and context: once models:
-# is used, the selected row supplies those, and llm: above keeps only what
-# applies to every model (headers, request_timeout, ...), so its base_url,
-# model, api_backend, api_key_env and context can be deleted. efforts: are the
+# or --model headless. The rows :setup saves in ~/.kvit-coder/models.yaml come
+# after these, in the same format. docs/models.md has more OpenCode rows. Give
+# every row its own base_url, model, api_backend, api_key_env and context: once
+# models: is used, the selected row supplies those, and llm: above keeps only
+# what applies to every model (headers, request_timeout, ...). efforts: are the
 # levels offered as :e1, :e2, ...; a row without them is a model without
 # reasoning.
 #models:
@@ -122,7 +129,7 @@ tools:
 #        default: true          # the level a session starts at
 #  - id: local
 #    name: "Local model"
-#    model: "your-model"
+#    model: "qwen3-coder"
 #    base_url: "http://localhost:8080/v1"
 #    api_backend: "chat_completions"
 #    context: 131072

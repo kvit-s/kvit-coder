@@ -136,8 +136,9 @@ func summarizerTitle(ctx context.Context, cfg *config.Config, entry config.Model
 
 // summarizerClientFor builds the lightweight client the title call runs on.
 // Endpoint fields come from the entry, falling back to the `llm:` block when
-// the entry leaves them empty; anything else (headers, timeouts) always
-// comes from `llm:`, exactly as ApplyModel leaves non-endpoint settings.
+// the entry leaves them empty. Headers are the `llm:` block's with the
+// entry's own laid over them, which is what ApplyModel would send for it;
+// anything else (timeouts) always comes from `llm:`.
 func summarizerClientFor(cfg *config.Config, entry config.ModelEntry) *llm.Client {
 	baseURL := entry.BaseURL
 	if baseURL == "" {
@@ -161,7 +162,7 @@ func summarizerClientFor(cfg *config.Config, entry config.ModelEntry) *llm.Clien
 		baseURL,
 		apiKey,
 		llm.WithBackend(backend),
-		llm.WithHeaders(cfg.LLMHeaders()),
+		llm.WithHeaders(cfg.HeadersFor(entry)),
 		llm.WithReasoningEffort(effort),
 		llm.WithEffortField(effortField),
 		llm.WithTimeout(titleTimeout),
