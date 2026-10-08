@@ -128,6 +128,18 @@ func (u *UI) hasModel() bool {
 	return u.cfg != nil && (len(u.cfg.Models) > 0 || u.cfg.LLM.Model != "")
 }
 
+// sayNoModel tells a command that needs a model there is none, and reports
+// whether it did. Without the check the command would act on the empty row
+// and print a model with no name.
+func (u *UI) sayNoModel() bool {
+	if u.hasModel() {
+		return false
+	}
+	fmt.Println("No model is set up yet; :setup adds one.")
+	fmt.Println()
+	return true
+}
+
 // hasKey reports whether a row can find its key: it names no variable, or the
 // variable is set, or a key is saved under its name, or the row has one.
 func (u *UI) hasKey(e config.ModelEntry) bool {
@@ -155,12 +167,15 @@ func isLoopback(base string) bool {
 }
 
 // startupCheck runs before the first prompt. It opens :setup when asked to
-// or when no model is configured, and offers to save a key when the starting
-// model names a variable that is not set and has no saved key. Nothing here
-// touches the network.
+// or when no model is configured, offers web search once that setup has
+// saved a model, and offers to save a key when the starting model names a
+// variable that is not set and has no saved key. Nothing here touches the
+// network.
 func (u *UI) startupCheck(openSetup bool) {
 	if openSetup {
-		u.runSetup()
+		if u.runSetup() {
+			u.offerWebSearch("Turn on web search too?")
+		}
 		return
 	}
 	if !u.hasModel() {
@@ -173,7 +188,9 @@ func (u *UI) startupCheck(openSetup bool) {
 			},
 		})
 		if ok && res.Index == 0 {
-			u.runSetup()
+			if u.runSetup() {
+				u.offerWebSearch("Turn on web search too?")
+			}
 		} else {
 			u.ask.say("")
 		}
@@ -241,6 +258,9 @@ func (u *UI) enterKey(env string) bool {
 // showModelPicker is :models: every row in a list, Enter to switch to one and
 // Delete to remove one that :setup added.
 func (u *UI) showModelPicker() {
+	if u.sayNoModel() {
+		return
+	}
 	for {
 		items := make([]pickItem, len(u.models))
 		for i, e := range u.models {
@@ -317,7 +337,10 @@ type keyUse struct {
 }
 
 // keyUses lists the variables the rows read keys from, in row order, then
-// the saved keys no row reads.
+// the one web search reads, then the saved keys nothing reads. The web search
+// variable is listed while search is off too, as one of the places to enter
+// its key. With no model set up, the empty row's variable is not listed: no
+// model reads it.
 func (u *UI) keyUses() []keyUse {
 	var uses []keyUse
 	index := map[string]int{}
@@ -335,8 +358,15 @@ func (u *UI) keyUses() []keyUse {
 			uses[i].models = append(uses[i].models, model)
 		}
 	}
-	for _, e := range u.models {
-		add(e.APIKeyEnv, e.Name)
+	if u.hasModel() {
+		for _, e := range u.models {
+			add(e.APIKeyEnv, e.Name)
+		}
+	}
+	if u.webState().search {
+		add(u.cfg.WebSearchKeyEnv(), "web search")
+	} else {
+		add(u.cfg.WebSearchKeyEnv(), "web search, which is off")
 	}
 	if path, err := config.CredentialsPath(); err == nil {
 		if data, err := os.ReadFile(path); err == nil {
@@ -351,16 +381,11 @@ func (u *UI) keyUses() []keyUse {
 	return uses
 }
 
-// showKeys is :keys: each variable the models read a key from, where its
-// value comes from, and a way to save or forget one.
+// showKeys is :keys: each variable the models and web search read a key
+// from, where its value comes from, and a way to save or forget one.
 func (u *UI) showKeys() {
 	for {
 		uses := u.keyUses()
-		if len(uses) == 0 {
-			u.ask.say("No model reads a key from a variable, and no key is saved.")
-			u.ask.say("")
-			return
-		}
 		items := make([]pickItem, len(uses))
 		for i, use := range uses {
 			items[i] = pickItem{Label: use.env, Detail: keyDetail(use)}
@@ -411,7 +436,9 @@ func (u *UI) keyActions(env string) {
 		return
 	}
 	if res.Index == 0 {
-		u.enterKey(env)
+		if u.enterKey(env) && env == u.cfg.WebSearchKeyEnv() {
+			u.offerWebSearch("Turn on web search now?")
+		}
 		return
 	}
 	if _, err := config.DeleteCredential(env); err != nil {

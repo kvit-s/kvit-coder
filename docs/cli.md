@@ -85,7 +85,7 @@ and writes its output into its tool result.
 | `-c` | Continue the most recent session | - |
 | `--yolo` | Read and write anywhere, and run anything that would have asked (passed to each turn) | false |
 | `--structured` | End each turn with a structured report, drawn as a card at the prompt (`--structured=false` for prose) | true |
-| `-setup` | Open [`:setup`](#setting-up-models) before the first prompt, to add models | false |
+| `-setup` | Open [`:setup`](#setting-up-models) before the first prompt, to add models or turn on web search | false |
 
 #### Setting up models
 
@@ -120,7 +120,19 @@ first new model. `config.yaml` is never written. Both files, and how they
 combine with `config.yaml`, are described in
 [configuration.md](configuration.md#models-and-keys-saved-beside-the-config).
 
-kvit-coder-ui opens `:setup` by itself when no model is configured. When the
+Below the providers, `:setup` lists **web search**, which shows whether the
+agent may search the web (`Web.search`, through the Brave Search API) and read
+pages (`Web.fetch`), and switches each on or off. Turning search on asks for a
+Brave Search API key when none is found, and opens the page that issues them;
+the key goes to `credentials.json` and page fetch is turned on with search,
+because a search result is only a title, an address and a sentence or two. The
+switches are saved to `~/.kvit-coder/tools.yaml` and apply from the next
+prompt. A switch that `config.yaml` sets itself is shown as set there and
+cannot be changed from kvit-coder-ui. See
+[web search and page fetch](configuration.md#web-search-and-page-fetch).
+
+kvit-coder-ui opens `:setup` by itself when no model is configured, and once a
+model is saved there it asks whether to turn on web search too. When the
 starting model reads its key from a variable that is not set and has no saved
 key, it offers to save one; a model at an address on this machine is not asked
 about, because a local server rarely needs a key.
@@ -128,9 +140,11 @@ about, because a local server rarely needs a key.
 `:models` lists every model with its protocol, context size and the file it
 came from. Enter switches to one, and Delete removes one that `:setup` added
 (a model written in `config.yaml` is removed there). `:keys` lists each
-variable the models read a key from and where its value comes from: the
-environment, a saved key (shown as `sk-ab…wxyz`), or nowhere. It saves or
-forgets a key. An exported variable is always used before a saved key.
+variable the models and web search read a key from and where its value comes
+from: the environment, a saved key (shown as `sk-ab…wxyz`), or nowhere. It
+saves or forgets a key, and after the web search key is entered while search
+is off it offers to turn search on. An exported variable is always used before
+a saved key.
 
 kvit-coder-ui remembers the model and effort you last chose in
 `~/.kvit-coder/kcu-state.json` and starts on them next time, ahead of

@@ -136,6 +136,7 @@ func setupHome(t *testing.T, config string) (*UI, string) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("OPENCODE_API_KEY", "")
+	t.Setenv("BRAVE_API_KEY", "") // the web search key, listed by :keys
 	t.Setenv("KVIT_RUN_ID", "run1")
 	dir := filepath.Join(home, ".kvit-coder")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -154,7 +155,9 @@ func loadUI(t *testing.T, path, dir string) *UI {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return New(Options{Config: cfg, ConfigPath: path, StatePath: filepath.Join(dir, StateName)})
+	u := New(Options{Config: cfg, ConfigPath: path, StatePath: filepath.Join(dir, StateName)})
+	u.openBrowser = func(string) bool { return false }
+	return u
 }
 
 // scripted is a setup run with its network calls replaced.

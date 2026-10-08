@@ -43,7 +43,7 @@ func main() {
 	yolo := flag.Bool("yolo", false, "read and write anywhere on the filesystem, without asking")
 	structured := flag.Bool("structured", true, "end each turn with a structured report, shown as a card at the prompt (--structured=false for prose)")
 	showVersion := flag.Bool("version", false, "show version information and exit")
-	openSetup := flag.Bool("setup", false, "open :setup before the first prompt, to add models")
+	openSetup := flag.Bool("setup", false, "open :setup before the first prompt, to add models or turn on web search")
 
 	// Session management flags (pass-through to kvit-coder)
 	sessionList := flag.Bool("sessions", false, "list all sessions and exit")

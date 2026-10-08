@@ -121,7 +121,7 @@ its literal `api_key`. `llm.api_key_env` is looked up the same way.
 
 ### Models and keys saved beside the config
 
-Two files in `~/.kvit-coder/` (`%USERPROFILE%\.kvit-coder\` on Windows) are
+Three files in `~/.kvit-coder/` (`%USERPROFILE%\.kvit-coder\` on Windows) are
 read together with whichever `config.yaml` is used, by kvit-coder-ui and by
 every turn of the agent. kvit-coder-ui's [`:setup`](cli.md#setting-up-models),
 `:models` and `:keys` write them; they can also be written by hand, and
@@ -164,6 +164,21 @@ The agent reads the key from the file itself, so it is not placed in the
 environment that the commands it runs inherit. Keep the file readable only by
 you (`chmod 600 ~/.kvit-coder/credentials.json`). A file that is not valid
 JSON stops kvit-coder at startup with the file's name.
+
+`tools.yaml` says whether [web search and page fetch](#web-search-and-page-fetch)
+are on, in the same form as the `tools:` block of `config.yaml` and with
+nothing else in it; any other key is an error naming the file. A tool whose
+`enabled:` is written in `config.yaml`, `true` or `false`, follows
+`config.yaml`, and kvit-coder-ui shows it as set there. The benchmark modes do
+not read this file.
+
+```yaml
+web:
+  search:
+    enabled: true
+  fetch:
+    enabled: true
+```
 
 ## `workspace`
 
@@ -230,7 +245,7 @@ Each tool group has `enabled: true/false` plus tool-specific options:
 - **`procs.kill_on_exit`** — Stop everything the session started when a turn is interrupted (default true)
 - **`question.enabled`** — Let the model ask you a question and wait for the answer
 - **`question.timeout`** — Seconds a run with no terminal waits for an answer (default 0: fall back at once)
-- **`web.api_key_env`** — Name of the environment variable holding the search API key (default `BRAVE_API_KEY`). The key is named rather than written into the file because it is usually shared with other programs
+- **`web.api_key_env`** — Name of the environment variable holding the search API key (default `BRAVE_API_KEY`); when it is unset, the key saved under that name in `credentials.json` is used. The key is named rather than written into the file because it is usually shared with other programs
 - **`web.search.max_attempts`** — Tries before giving up on a rate-limit refusal (default 4). The provider allows one request per second shared across everything using the key, and refuses the excess rather than queueing it; a refusal costs no quota, so retrying is cheap next to handing the model a failure
 - **`web.usage_log`** — JSONL record of what was searched and when. Not a counter: the quota is account-wide and only the provider can see what other machines spent, which is why the response's `x-ratelimit-*` headers are read instead
 - **`web.fetch.max_bytes`** / **`web.fetch.timeout`** — Ceiling on HTML read, and seconds for one page (defaults 5 MB and 30)
@@ -244,7 +259,14 @@ Each tool group has `enabled: true/false` plus tool-specific options:
 
 `Web.search` queries the Brave Search API and returns titles, URLs and short
 descriptions. `Web.fetch` reads one page as markdown and needs no key. Both
-are off unless enabled; enabling them lets the agent reach the network:
+are off unless enabled; enabling them lets the agent reach the network.
+
+In kvit-coder-ui, `:setup` lists web search below the model providers. Turning
+it on there asks for the Brave key when none is found, saves it to
+`credentials.json`, and turns page fetch on with it; the switches are saved to
+[`tools.yaml`](#models-and-keys-saved-beside-the-config) and apply from the
+next prompt. A first setup offers web search once a model is saved, and `:keys`
+offers it after the search key is entered there. By hand, in `config.yaml`:
 
 ```yaml
 tools:
@@ -262,10 +284,13 @@ Then set the key before starting the agent:
 export BRAVE_API_KEY="your-key"
 ```
 
+or save it with `:keys` in kvit-coder-ui. As for a model, the variable is used
+when it is set, else the key saved under its name in `credentials.json`.
+
 To get a key, sign up on the Brave Search API page
 (https://brave.com/search/api/), choose a plan (there is a free tier), and
-copy the API key from the dashboard. The key stays in the environment rather
-than in the file because it is usually shared with other programs.
+copy the API key from the dashboard. The key is named rather than written into
+`config.yaml` because it is usually shared with other programs.
 
 ## `backtrack`
 

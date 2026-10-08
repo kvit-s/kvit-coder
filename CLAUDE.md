@@ -146,8 +146,10 @@ cold. `session.RunIDFor` derives it from the session name.
 
 **`config.Load` reads more than the file it is given.** It also reads
 `~/.kvit-coder/models.yaml` (model rows kcu's `:setup` saved, appended after
-the file's own) and `~/.kvit-coder/credentials.json` (keys by variable name,
-used when the variable is unset), in `internal/config/userfiles.go`. A test
+the file's own), `~/.kvit-coder/credentials.json` (keys by variable name,
+used when the variable is unset, for models and for `Web.search`) and
+`~/.kvit-coder/tools.yaml` (whether `Web.search` and `Web.fetch` are on,
+unless the file sets `enabled:` itself), in `internal/config/userfiles.go`. A test
 that calls `Load` would see the machine's own files, which is why
 `internal/config` and `internal/tui` have a `TestMain` that points `HOME` at
 an empty directory. kcu never writes `config.yaml`. An `llm:` block still

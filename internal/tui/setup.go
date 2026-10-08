@@ -53,24 +53,31 @@ func (u *UI) newSetupRun() *setupRun {
 		return modelsetup.LoadCatalog(ctx, nil, s.catalogDir, time.Now())
 	}
 	s.probe = modelsetup.Probe
-	s.openBrowser = func(url string) bool {
-		return modelsetup.CanOpenBrowser() && modelsetup.OpenBrowser(url) == nil
-	}
+	s.openBrowser = u.openBrowser
 	return s
 }
 
-// runSetup is :setup. It reports whether anything was saved.
+// runSetup is :setup. It reports whether models were saved.
 func (u *UI) runSetup() bool {
 	return u.newSetupRun().run()
 }
 
 func (s *setupRun) run() bool {
+	webSaved := false
 	for {
-		p, ok := s.chooseProvider()
+		p, web, ok := s.chooseProvider()
 		if !ok {
-			s.ask.say("Setup closed; nothing was saved.")
+			if webSaved {
+				s.ask.say("Setup closed.")
+			} else {
+				s.ask.say("Setup closed; nothing was saved.")
+			}
 			s.ask.say("")
 			return false
+		}
+		if web {
+			webSaved = s.u.setUpWeb() || webSaved
+			continue
 		}
 		if s.setUpProvider(p) {
 			return true
@@ -91,8 +98,10 @@ func keySource(env string) string {
 	return "no key yet"
 }
 
-func (s *setupRun) chooseProvider() (modelsetup.Provider, bool) {
-	items := make([]pickItem, len(modelsetup.Providers))
+// chooseProvider is the first list of :setup: the model providers, and web
+// search below them. web reports that web search was chosen.
+func (s *setupRun) chooseProvider() (p modelsetup.Provider, web, ok bool) {
+	items := make([]pickItem, len(modelsetup.Providers), len(modelsetup.Providers)+1)
 	for i, p := range modelsetup.Providers {
 		detail := ""
 		switch p.Kind {
@@ -105,17 +114,21 @@ func (s *setupRun) chooseProvider() (modelsetup.Provider, bool) {
 		}
 		items[i] = pickItem{Label: p.Name, Detail: detail}
 	}
+	items = append(items, pickItem{Label: "Web search", Detail: s.u.webSummary() + " · lets the agent search the web and read pages"})
 	res, ok := s.ask.pick(pickSpec{
-		Title: "Set up a model provider",
-		Hint:  "↑↓ to move · Enter to choose · Esc to leave without saving",
+		Title: "Set up a model provider or web search",
+		Hint:  "↑↓ to move · Enter to choose · Esc to leave",
 		Items: items,
 	})
 	if !ok {
-		return modelsetup.Provider{}, false
+		return modelsetup.Provider{}, false, false
 	}
-	p := modelsetup.Providers[res.Index]
+	if res.Index == len(modelsetup.Providers) {
+		return modelsetup.Provider{}, true, true
+	}
+	p = modelsetup.Providers[res.Index]
 	s.ask.say("Provider: %s", p.Name)
-	return p, true
+	return p, false, true
 }
 
 // setUpProvider asks what the provider needs, then for its models. It

@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kvit-s/kvit-coder/internal/config"
+	"github.com/kvit-s/kvit-coder/internal/modelsetup"
 	"github.com/kvit-s/kvit-coder/internal/procutil"
 	"github.com/kvit-s/kvit-coder/internal/report"
 	"github.com/kvit-s/kvit-coder/internal/session"
@@ -106,6 +107,9 @@ type UI struct {
 	openSetup bool
 	// failureHinted keeps the hint after a failed turn to once per run.
 	failureHinted bool
+	// openBrowser opens a page where a provider issues keys and reports
+	// whether it did; tests replace it so nothing opens.
+	openBrowser func(url string) bool
 }
 
 // New creates a new UI instance
@@ -139,6 +143,9 @@ func New(opts Options) *UI {
 		ask:            termAsker{},
 		statePath:      opts.StatePath,
 		openSetup:      opts.OpenSetup,
+		openBrowser: func(url string) bool {
+			return modelsetup.CanOpenBrowser() && modelsetup.OpenBrowser(url) == nil
+		},
 	}
 	// Snapshot the catalog and start on the default row (the llm.model row,
 	// else the first), or on the -m/--model row when one was given. A
@@ -600,8 +607,12 @@ func (u *UI) handleCommand(input string) bool {
 
 	case "config":
 		fmt.Printf("Config: %s\n", u.configPath)
-		fmt.Printf("Model: %s\n", u.activeDisplay())
-		fmt.Printf("Base URL: %s\n", u.activeBaseURL())
+		if u.hasModel() {
+			fmt.Printf("Model: %s\n", u.activeDisplay())
+			fmt.Printf("Base URL: %s\n", u.activeBaseURL())
+		} else {
+			fmt.Println("Model: none set up yet (:setup adds one)")
+		}
 		fmt.Printf("Agent: %s\n", u.agentPath)
 		fmt.Printf("%s\n", u.updateConfigLine())
 		if u.currentSession != "" {
@@ -617,16 +628,24 @@ func (u *UI) handleCommand(input string) bool {
 				fmt.Printf("Keys saved by :setup and :keys: %s\n", path)
 			}
 		}
-		fmt.Println("Models:")
-		for i, e := range u.models {
-			marker := ""
-			if i == u.currentModel {
-				marker = " *"
+		fmt.Printf("Web search: %s\n", u.webSummary())
+		if path, err := config.SavedToolsPath(); err == nil {
+			if _, err := os.Stat(path); err == nil {
+				fmt.Printf("Web search saved by :setup: %s\n", path)
 			}
-			if e.Summarizer {
-				marker += " [summarizer]"
+		}
+		if u.hasModel() {
+			fmt.Println("Models:")
+			for i, e := range u.models {
+				marker := ""
+				if i == u.currentModel {
+					marker = " *"
+				}
+				if e.Summarizer {
+					marker += " [summarizer]"
+				}
+				fmt.Printf("  :m%d %s (%s)%s\n", i+1, e.Name, config.EntryDisplay(e, u.effortFor(i)), marker)
 			}
-			fmt.Printf("  :m%d %s (%s)%s\n", i+1, e.Name, config.EntryDisplay(e, u.effortFor(i)), marker)
 		}
 		fmt.Println()
 
@@ -726,6 +745,10 @@ func (u *UI) activeBaseURL() string {
 // also drop the shared prefix.
 func (u *UI) switchModel(n int) {
 
+	if u.sayNoModel() {
+		return
+	}
+
 	if n < 1 || n > len(u.models) {
 		fmt.Printf("unknown model :m%d; use one of :m1-:m%d\n\n", n, len(u.models))
 		return
@@ -779,6 +802,9 @@ func (u *UI) profileDisplay(e config.ModelEntry) string {
 // setEffortIndex handles :eN: the Nth row of the current model's menu, in
 // config order.
 func (u *UI) setEffortIndex(n int) {
+	if u.sayNoModel() {
+		return
+	}
 	e := u.currentEntry()
 	menu := u.cfg.EffortOptions(e)
 	if len(menu) == 0 {
@@ -802,6 +828,9 @@ func (u *UI) setEffortIndex(n int) {
 // setEffortValue handles :e <value>: the same menu by canonical value, for
 // scripts and menus longer than :e9 is comfortable for.
 func (u *UI) setEffortValue(value string) {
+	if u.sayNoModel() {
+		return
+	}
 	e := u.currentEntry()
 	v, err := u.cfg.ResolveEffort(e, strings.TrimSpace(value))
 	if err != nil {
@@ -821,6 +850,11 @@ func (u *UI) setEffortValue(value string) {
 // list :h promises. Numbering is 1-based config-file order, with * on the
 // active row like :sessions.
 func (u *UI) showModels() {
+
+	if !u.hasModel() {
+		fmt.Println("Models: none set up yet (:setup adds one)")
+		return
+	}
 
 	fmt.Println("Models (:mN to switch):")
 
@@ -886,7 +920,8 @@ func (u *UI) showHelp() {
 	fmt.Println("  :config          Show configuration")
 	fmt.Println("  :image <path>..  Stage image files for the next turn")
 	fmt.Println("  :paste           Stage the clipboard image for the next turn")
-	fmt.Println("  :setup           Add models: choose a provider, give its key, tick models")
+	fmt.Println("  :setup           Add models (choose a provider, give its key, tick models),")
+	fmt.Println("                   or turn on web search")
 	fmt.Println("  :models          Choose a model from a list, or remove one :setup added")
 	fmt.Println("  :keys            Show where each API key comes from; save or forget one")
 	fmt.Println("  :mN              Switch model (e.g. :m1; the list follows)")

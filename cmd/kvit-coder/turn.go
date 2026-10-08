@@ -146,11 +146,11 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 		return nil, err
 	}
 
-	// Load config. A benchmark run leaves out the model rows kvit-coder-ui
-	// saved in ~/.kvit-coder/models.yaml, so its results do not depend on
-	// what was set up on the machine it ran on.
+	// Load config. A benchmark run leaves out the model rows and web tool
+	// switches kvit-coder-ui saved in ~/.kvit-coder, so its results do not
+	// depend on what was set up on the machine it ran on.
 	benchmarking := opts.BenchmarkMode != "" || opts.HaystackEnabled || opts.ThinkbenchEnabled
-	cfg, err := config.LoadWith(actualConfigPath, config.LoadOptions{SkipSavedModels: benchmarking})
+	cfg, err := config.LoadWith(actualConfigPath, config.LoadOptions{SkipSavedModels: benchmarking, SkipSavedTools: benchmarking})
 	if err != nil {
 		return nil, fmt.Errorf("Failed to load config: %v", err)
 	}

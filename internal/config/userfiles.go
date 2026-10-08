@@ -14,13 +14,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Two files beside the config in ~/.kvit-coder hold what kvit-coder-ui saves
-// when a model is set up from inside it, so that nobody has to edit
-// config.yaml to add a model or export a key in a shell profile
-// (spec/configing.md). Both are read here, by Load, because the agent is a new
-// process every turn and finds its model by reading the configuration again:
-// a row the front end kept only in memory would be refused by the agent.
-// config.yaml itself is only ever written by a person.
+// Three files beside the config in ~/.kvit-coder hold what kvit-coder-ui saves
+// when a model or web search is set up from inside it, so that nobody has to
+// edit config.yaml to add a model or export a key in a shell profile
+// (spec/configing.md). All three are read here, by Load, because the agent is
+// a new process every turn and finds its model and tools by reading the
+// configuration again: a row the front end kept only in memory would be
+// refused by the agent. config.yaml itself is only ever written by a person.
 const (
 	// SavedModelsName holds model rows in the same format as the models: list
 	// of config.yaml. Load appends them after the rows of the config file.
@@ -33,6 +33,11 @@ const (
 	// command the agent's Shell tool runs inherits the environment, so a key
 	// placed there could be printed by any command the model chooses to run.
 	CredentialsName = "credentials.json"
+
+	// SavedToolsName holds whether Web.search and Web.fetch are on, in the
+	// same form as the tools: block of config.yaml. A setting config.yaml
+	// writes itself takes precedence over the one here.
+	SavedToolsName = "tools.yaml"
 )
 
 // LoadOptions changes what Load reads besides the config file itself.
@@ -41,6 +46,11 @@ type LoadOptions struct {
 	// benchmark modes set it, so a run does not depend on the models someone
 	// set up on the machine it runs on.
 	SkipSavedModels bool
+
+	// SkipSavedTools leaves out ~/.kvit-coder/tools.yaml, for the same
+	// reason: web search turned on in kvit-coder-ui would change the tools a
+	// benchmark run offers its model.
+	SkipSavedTools bool
 }
 
 // UserDir is ~/.kvit-coder (%USERPROFILE%\.kvit-coder on Windows), where the
@@ -69,6 +79,15 @@ func CredentialsPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, CredentialsName), nil
+}
+
+// SavedToolsPath is ~/.kvit-coder/tools.yaml.
+func SavedToolsPath() (string, error) {
+	dir, err := UserDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, SavedToolsName), nil
 }
 
 // savedModelsFile is the whole of models.yaml: a models: list and nothing
@@ -163,6 +182,78 @@ func (c *Config) rowSource(configPath string, i int) string {
 		return fmt.Sprintf("%s: models entry %d", c.savedModelsPath, i-c.savedModelsStart+1)
 	}
 	return fmt.Sprintf("%s: models entry %d", configPath, i+1)
+}
+
+// savedToolsFile is the whole of tools.yaml: the part of config.yaml's tools:
+// block kvit-coder-ui can change, which is whether each web tool is on. It is
+// decoded with unknown keys refused, like models.yaml. The same shape decodes
+// config.yaml's own tools: block to find which of the two it sets itself,
+// which a plain bool cannot tell from leaving it out.
+type savedToolsFile struct {
+	Web struct {
+		Search toolSwitch `yaml:"search,omitempty"`
+		Fetch  toolSwitch `yaml:"fetch,omitempty"`
+	} `yaml:"web,omitempty"`
+}
+
+// toolSwitch is one tool's enabled: key; nil when the file leaves it out.
+type toolSwitch struct {
+	Enabled *bool `yaml:"enabled,omitempty"`
+}
+
+// readSavedTools returns what tools.yaml says, or nothing when the file does
+// not exist.
+func readSavedTools(path string) (savedToolsFile, error) {
+	var file savedToolsFile
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return file, nil
+	}
+	if err != nil {
+		return file, err
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	dec.KnownFields(true)
+	if err := dec.Decode(&file); err != nil && !errors.Is(err, io.EOF) {
+		return savedToolsFile{}, fmt.Errorf("%s: %w", path, err)
+	}
+	return file, nil
+}
+
+// mergeSavedTools turns Web.search and Web.fetch on or off as tools.yaml says,
+// except where configData, the config file Load read, sets enabled: for that
+// tool itself: what a person wrote takes precedence over what a program saved.
+// path is "" when tools.yaml is not to be read; the config file is still
+// looked at, because WebSetInConfig reports on it either way.
+func (c *Config) mergeSavedTools(path string, configData []byte) error {
+	// configData decoded once already, so this cannot fail where that did not.
+	var own struct {
+		Tools savedToolsFile `yaml:"tools"`
+	}
+	_ = yaml.Unmarshal(configData, &own)
+	c.webSearchInConfig = own.Tools.Web.Search.Enabled != nil
+	c.webFetchInConfig = own.Tools.Web.Fetch.Enabled != nil
+	if path == "" {
+		return nil
+	}
+	saved, err := readSavedTools(path)
+	if err != nil {
+		return err
+	}
+	if v := saved.Web.Search.Enabled; v != nil && !c.webSearchInConfig {
+		c.Tools.Web.Search.Enabled = *v
+	}
+	if v := saved.Web.Fetch.Enabled; v != nil && !c.webFetchInConfig {
+		c.Tools.Web.Fetch.Enabled = *v
+	}
+	return nil
+}
+
+// WebSetInConfig reports which of Web.search and Web.fetch the config file
+// turns on or off itself. tools.yaml cannot change those, so kvit-coder-ui
+// shows them as decided there.
+func (c *Config) WebSetInConfig() (search, fetch bool) {
+	return c.webSearchInConfig, c.webFetchInConfig
 }
 
 // readCredentials returns the keys in credentials.json, or none when the file
@@ -287,6 +378,44 @@ func RemoveSavedModel(id string) (bool, error) {
 		return false, nil
 	}
 	return true, WriteSavedModels(kept)
+}
+
+// savedToolsHeader opens every tools.yaml kvit-coder-ui writes.
+const savedToolsHeader = `# Written by kvit-coder-ui (:setup). Whether the agent may search the web
+# (Web.search) and read pages (Web.fetch), in the same form as the tools:
+# block of config.yaml. A tool's enabled: written in config.yaml takes
+# precedence over the one here. kvit-coder-ui rewrites the whole file the next
+# time it saves.
+`
+
+// SaveWebTools records in ~/.kvit-coder/tools.yaml whether Web.search and
+// Web.fetch are on. A nil value leaves that tool as the file has it.
+func SaveWebTools(search, fetch *bool) error {
+	path, err := SavedToolsPath()
+	if err != nil {
+		return err
+	}
+	file, err := readSavedTools(path)
+	if err != nil {
+		return err
+	}
+	if search != nil {
+		file.Web.Search.Enabled = search
+	}
+	if fetch != nil {
+		file.Web.Fetch.Enabled = fetch
+	}
+	var buf bytes.Buffer
+	buf.WriteString(savedToolsHeader)
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(file); err != nil {
+		return err
+	}
+	if err := enc.Close(); err != nil {
+		return err
+	}
+	return writeFileAtomic(path, buf.Bytes(), 0o644)
 }
 
 // SaveCredential stores key under an environment variable name in
