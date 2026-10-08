@@ -433,7 +433,7 @@ models:
 	u.ask = ask
 	u.startupCheck(false) // nothing to ask now
 	u.selectModel(1)
-	config.DeleteCredential("KVIT_TUI_TEST_KEY")
+	_, _ = config.DeleteCredential("KVIT_TUI_TEST_KEY")
 	u.startupCheck(false) // a loopback address is not asked about
 	ask.done()
 }

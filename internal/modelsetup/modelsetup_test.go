@@ -186,7 +186,7 @@ func TestLoadCatalogCache(t *testing.T) {
 			http.Error(w, "down", http.StatusBadGateway)
 			return
 		}
-		w.Write(fixture)
+		_, _ = w.Write(fixture)
 	}))
 	defer srv.Close()
 	old := CatalogURL
@@ -221,9 +221,9 @@ func TestListModels(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/models":
 			gotAuth, gotSession = r.Header.Get("Authorization"), r.Header.Get("X-Opencode-Session")
-			io.WriteString(w, `{"object":"list","data":[{"id":"b"},{"id":"a","max_model_len":32768},{"id":"b"}]}`)
+			_, _ = io.WriteString(w, `{"object":"list","data":[{"id":"b"},{"id":"a","max_model_len":32768},{"id":"b"}]}`)
 		case "/props":
-			io.WriteString(w, `{"default_generation_settings":{"n_ctx":65536}}`)
+			_, _ = io.WriteString(w, `{"default_generation_settings":{"n_ctx":65536}}`)
 		default:
 			http.NotFound(w, r)
 		}
@@ -262,15 +262,15 @@ func fakeEndpoint(t *testing.T, serve map[string]bool) *httptest.Server {
 			return
 		}
 		var body map[string]any
-		json.NewDecoder(r.Body).Decode(&body)
+		_ = json.NewDecoder(r.Body).Decode(&body)
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/v1/chat/completions":
-			io.WriteString(w, `{"id":"x","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"OK"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
+			_, _ = io.WriteString(w, `{"id":"x","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"OK"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}`)
 		case "/v1/responses":
-			io.WriteString(w, `{"id":"r","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"OK"}]}],"usage":{"input_tokens":1,"output_tokens":1}}`)
+			_, _ = io.WriteString(w, `{"id":"r","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"OK"}]}],"usage":{"input_tokens":1,"output_tokens":1}}`)
 		case "/v1/messages":
-			io.WriteString(w, `{"id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"OK"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
+			_, _ = io.WriteString(w, `{"id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"OK"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}`)
 		}
 	}))
 }
