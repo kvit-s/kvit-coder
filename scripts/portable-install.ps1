@@ -147,7 +147,7 @@ if (-not (Test-Path $configPath)) {
   if (Test-Path $example) {
     New-Item -ItemType Directory -Force -Path $configDir | Out-Null
     Copy-Item $example $configPath
-    Say "wrote $configPath (edit it to configure the model)"
+    Say "wrote $configPath (run kcu and it opens :setup to choose a model)"
   }
 }
 

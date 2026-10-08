@@ -85,6 +85,57 @@ and writes its output into its tool result.
 | `-c` | Continue the most recent session | - |
 | `--yolo` | Read and write anywhere, and run anything that would have asked (passed to each turn) | false |
 | `--structured` | End each turn with a structured report, drawn as a card at the prompt (`--structured=false` for prose) | true |
+| `-setup` | Open [`:setup`](#setting-up-models) before the first prompt, to add models | false |
+
+#### Setting up models
+
+`:setup` adds models without editing a file. It lists the providers
+kvit-coder-ui knows: OpenCode Zen, OpenCode Go, a local server (llama.cpp,
+vLLM, Ollama or LM Studio), and any other endpoint that speaks chat
+completions, responses or messages. After you pick one it goes through four
+steps:
+
+1. **The key.** It asks for the provider's API key, unless the environment
+   variable the key is read from (`OPENCODE_API_KEY` for both OpenCode
+   gateways) is set or a key is already saved under that name. For a local
+   server it asks for the address instead, and for another endpoint its name,
+   address and key variable.
+2. **The model list.** It asks the endpoint which models it serves
+   (`GET /models`). For OpenCode it also fetches the
+   [models.dev](https://models.dev) catalog, kept for a day in
+   `~/.kvit-coder/cache/models-dev.json`, which says each model's protocol,
+   context size, effort levels and price.
+3. **Choosing.** The list shows those details beside each model. Space ticks
+   models, Enter goes on, and typing filters the list.
+4. **Checking.** It shows the rows it will save, which can be changed first
+   (effort levels, context size, name, profile, protocol), and can send each
+   model one short test request before saving. The test is the first choice
+   when models.dev does not describe a model: when the endpoint refuses the
+   protocol the row guessed, the other two are tried, and the one that answers
+   is kept.
+
+Saving writes the rows to `~/.kvit-coder/models.yaml` and a key you typed to
+`~/.kvit-coder/credentials.json`, which only you can read, then switches to the
+first new model. `config.yaml` is never written. Both files, and how they
+combine with `config.yaml`, are described in
+[configuration.md](configuration.md#models-and-keys-saved-beside-the-config).
+
+kvit-coder-ui opens `:setup` by itself when no model is configured. When the
+starting model reads its key from a variable that is not set and has no saved
+key, it offers to save one; a model at an address on this machine is not asked
+about, because a local server rarely needs a key.
+
+`:models` lists every model with its protocol, context size and the file it
+came from. Enter switches to one, and Delete removes one that `:setup` added
+(a model written in `config.yaml` is removed there). `:keys` lists each
+variable the models read a key from and where its value comes from: the
+environment, a saved key (shown as `sk-ab…wxyz`), or nowhere. It saves or
+forgets a key. An exported variable is always used before a saved key.
+
+kvit-coder-ui remembers the model and effort you last chose in
+`~/.kvit-coder/kcu-state.json` and starts on them next time, ahead of
+`default_model`; `-m` comes before both. The headless agent does not read that
+file and starts on `default_model`.
 
 #### Update commands
 

@@ -1,11 +1,26 @@
 # Models
 
-A model in kvit-coder is one row of the `models:` list in `config.yaml`. Each
-row names an endpoint, the model id that endpoint expects, the wire protocol,
-the context window, and the effort levels the UI offers as `:e1`, `:e2`, and
-so on. `:m1` is the first row. `default_model` names the row a new session
-starts on; without it, that is the row whose model id matches `llm.model`, else
-the first. Every key is defined in [configuration.md](configuration.md).
+A model in kvit-coder is one row of the `models:` list, either in
+`config.yaml` or in `~/.kvit-coder/models.yaml`, whose rows come after those
+of `config.yaml`. Each row names an endpoint, the model id that endpoint
+expects, the wire protocol, the context window, and the effort levels the UI
+offers as `:e1`, `:e2`, and so on. `:m1` is the first row. `default_model`
+names the row a new session starts on; without it, that is the row whose model
+id matches `llm.model`, else the first. Every key is defined in
+[configuration.md](configuration.md).
+
+## Setting up a model from kvit-coder-ui
+
+The quickest way to add a model is `:setup` in kvit-coder-ui, which opens by
+itself when no model is configured. You choose OpenCode Zen, OpenCode Go, a
+local server or another endpoint, paste the key, and tick the models you
+want; it fills every key below from the endpoint's model list and the
+models.dev catalog, and saves the rows to `~/.kvit-coder/models.yaml` and the
+key to `~/.kvit-coder/credentials.json`. [cli.md](cli.md#setting-up-models)
+describes the steps. The rest of this page is for writing rows by hand, and
+for checking what `:setup` wrote.
+
+## Writing a row by hand
 
 Give each row its own `base_url`, `model`, `api_backend`, `api_key_env` and
 `context`. While `models:` is present the `llm:` block's keys of those names
@@ -17,7 +32,7 @@ subscription (Go).
 The model ids below were taken from OpenCode on 28 September 2026 and change
 over time; the Zen and Go pages linked below are the current list.
 
-## OpenCode
+### OpenCode
 
 OpenCode publishes two gateways. Zen is a pay-per-request catalog at
 `https://opencode.ai/zen/v1`, with a handful of models that are free to call
@@ -75,7 +90,7 @@ llm:
     - "x-opencode-session=kvit-coder-${KVIT_RUN_ID}"
 ```
 
-### Free Zen models
+#### Free Zen models
 
 These models are called with the Zen key and are free for a limited time, as
 OpenCode's Zen page describes it. The page also says what each provider does
@@ -121,7 +136,7 @@ protocol from the endpoint table on the Zen page. A model whose endpoint is
 `https://opencode.ai/zen/v1/messages` uses `base_url: "https://opencode.ai/zen"`
 and `api_backend: messages`.
 
-### Go subscription
+#### Go subscription
 
 Subscribe from the Zen console, then point a row at
 `https://opencode.ai/zen/go/v1` and the model id from the Go page. The id

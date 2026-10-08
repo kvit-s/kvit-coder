@@ -131,8 +131,8 @@ main() {
 	if [ "$fresh" = yes ]; then
 		say ""
 		say "A starting configuration is at $CONFIG_DIR/config.yaml."
-		say "Point its llm: block at your model endpoint, then run kcu in any"
-		say "directory you want to work in."
+		say "Run kcu in any directory you want to work in; it opens :setup to"
+		say "choose a model provider, take its key and pick the models."
 	else
 		say ""
 		say "Run kcu in any directory you want to work in."

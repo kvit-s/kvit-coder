@@ -91,6 +91,7 @@ See `internal/session/session.go` for the authoritative version of this.
 | `internal/permissions` | 760 | Shell command permission from the parsed syntax tree |
 | `internal/session` | 740 | The session directory above |
 | `internal/procs` | 510 | Background process registry |
+| `internal/modelsetup` | 1,000 | What kcu's `:setup` needs: known providers, the models.dev catalog, endpoint model lists, row building, the test request |
 | `internal/repl`, `internal/tui`, `internal/inbox`, `internal/stats`, `internal/workspace` | <350 each | |
 
 Tools are registered in `internal/tools/setup.go`. Adding one touches that file
@@ -142,6 +143,16 @@ because a server launched as `@latest` changes its tools when it is updated.
 `x-opencode-session` header, so two agents running at once must not share a
 value, and reopening a session must reuse its old one or the prompt cache is
 cold. `session.RunIDFor` derives it from the session name.
+
+**`config.Load` reads more than the file it is given.** It also reads
+`~/.kvit-coder/models.yaml` (model rows kcu's `:setup` saved, appended after
+the file's own) and `~/.kvit-coder/credentials.json` (keys by variable name,
+used when the variable is unset), in `internal/config/userfiles.go`. A test
+that calls `Load` would see the machine's own files, which is why
+`internal/config` and `internal/tui` have a `TestMain` that points `HOME` at
+an empty directory. kcu never writes `config.yaml`. An `llm:` block still
+naming the old example's `your-model` at `http://localhost:8080/v1` counts as
+no model. The design is `spec/configing.md`.
 
 **Path containment is not string prefixing.** Use
 `tools.NormalizeAndValidatePath`, not `strings.HasPrefix`, or

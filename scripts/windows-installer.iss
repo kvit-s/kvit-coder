@@ -95,7 +95,7 @@ VersionInfoProductTextVersion={#KvitVersion}
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
-FinishedLabelNoIcons=Setup has finished installing [name].%n%nOpen a new terminal, go to the folder you want to work in, and run kcu for the interactive front end, or kc -p "<prompt>" for one headless turn.%n%nThe model is set in .kvit-coder\config.yaml in your user folder.
+FinishedLabelNoIcons=Setup has finished installing [name].%n%nOpen a new terminal, go to the folder you want to work in, and run kcu for the interactive front end, or kc -p "<prompt>" for one headless turn.%n%nThe first time, kcu opens :setup to choose a model provider and the models to use.
 
 [Files]
 Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

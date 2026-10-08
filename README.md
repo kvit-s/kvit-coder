@@ -58,11 +58,21 @@ WSL/unix-only (see `spec/windows.md`).
 
 ## Configure
 
-Copy [`config.example.yaml`](config.example.yaml) to
-`~/.kvit-coder/config.yaml` (on Windows: `%USERPROFILE%\.kvit-coder\config.yaml`)
-and point the `llm:` block at an endpoint you have —
-a local llama.cpp, vLLM or Ollama server, or any hosted API that speaks the same
-protocol:
+Run `kcu`. With no model configured it opens `:setup`: choose OpenCode Zen,
+OpenCode Go, a local llama.cpp, vLLM, Ollama or LM Studio server, or any other
+endpoint that speaks the same protocols; paste its key; and tick the models
+you want. It fills in each model's protocol, context size and effort levels
+from the endpoint and the [models.dev](https://models.dev) catalog, saves them
+to `~/.kvit-coder/models.yaml` and the key to `~/.kvit-coder/credentials.json`,
+and leaves `config.yaml` alone. `:setup` adds more later, `:models` switches
+between them, and `:keys` replaces a key; see
+[`docs/cli.md`](docs/cli.md#setting-up-models).
+
+The installers put a copy of [`config.example.yaml`](config.example.yaml) at
+`~/.kvit-coder/config.yaml` (on Windows: `%USERPROFILE%\.kvit-coder\config.yaml`),
+and kcu offers to write it when there is none. It holds everything except the
+model; a model can also be written into it by hand
+([`docs/models.md`](docs/models.md)).
 
 Without `-config`, both binaries take the first of `$KVIT_CODER_CONFIG`,
 `./config.yaml`, `~/.kvit-coder/config.yaml` (`%USERPROFILE%\.kvit-coder\config.yaml`

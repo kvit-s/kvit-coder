@@ -258,8 +258,8 @@ func statePath() string {
 
 // offerExampleConfig asks whether to write the example configuration to
 // ~/.kvit-coder/config.yaml when no configuration was found, and returns its
-// path when it was written. notFound is the search's own error, returned
-// when the answer is no.
+// path when it was written. notFound is the search's own error, printed
+// before the question.
 func offerExampleConfig(notFound error) (string, error) {
 	dir, err := config.UserDir()
 	if err != nil {
@@ -271,7 +271,7 @@ func offerExampleConfig(notFound error) (string, error) {
 	answer, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 	answer = strings.ToLower(strings.TrimSpace(answer))
 	if answer != "" && answer != "y" && answer != "yes" {
-		return "", notFound
+		return "", fmt.Errorf("no configuration was written; name one with -config, or start kvit-coder-ui again and answer y")
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err

@@ -123,9 +123,9 @@ its literal `api_key`. `llm.api_key_env` is looked up the same way.
 
 Two files in `~/.kvit-coder/` (`%USERPROFILE%\.kvit-coder\` on Windows) are
 read together with whichever `config.yaml` is used, by kvit-coder-ui and by
-every turn of the agent. They are meant for kvit-coder-ui to write when a
-model is set up from inside it, which is not built yet; until then they can be
-written by hand, and `config.yaml` is never written by a program.
+every turn of the agent. kvit-coder-ui's [`:setup`](cli.md#setting-up-models),
+`:models` and `:keys` write them; they can also be written by hand, and
+`config.yaml` is never written by a program.
 
 `models.yaml` holds entries in the format above, under a `models:` key and
 nothing else; any other key is an error naming the file. Its entries are
@@ -133,7 +133,10 @@ added after the `models:` entries of `config.yaml`, so `:m1`, `:m2`, ... keep
 pointing where they did, and an entry whose `id` `config.yaml` already uses is
 left out. When `config.yaml` has no `models:` list but its `llm:` block names
 a model, that model stays the first entry and the saved ones follow it. The
-benchmark modes do not read this file.
+benchmark modes do not read this file. A `config.yaml` that still names the
+placeholder the example configuration shipped with until October 2026
+(`model: your-model` at `http://localhost:8080/v1`) counts as naming no
+model.
 
 ```yaml
 models:
