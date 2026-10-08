@@ -168,22 +168,29 @@ func (t *BatchTool) Check(ctx context.Context, args json.RawMessage) error {
 }
 
 func (t *BatchTool) parse(args json.RawMessage) (*batchArgs, error) {
+	// Lenient path, outer level: the whole payload may arrive double-encoded
+	// (a JSON string holding the arguments object). There is no legitimate
+	// Batch call whose arguments are a bare string, so unwrap it when it
+	// parses as one rather than failing on the shape.
+	args = json.RawMessage(unwrapBatchJSONString(string(args)))
+
 	var parsed batchArgs
 	if err := json.Unmarshal(args, &parsed); err != nil {
 		// Lenient path: some harnesses deliver the array as a JSON-encoded
-		// string ({"calls": "[{...}]"}) instead of a raw array. There is no
-		// legitimate call where 'calls' is a string, so when it parses as
-		// an array we accept it rather than failing on the shape.
+		// string ({"calls": "[{...}]"}) instead of a raw array, and a model
+		// hand-writing nested JSON slips a brace the same way. There is no
+		// legitimate call where 'calls' is a string, so the unambiguous
+		// encodings below are decoded rather than failing on the shape.
 		var outer map[string]json.RawMessage
 		if oerr := json.Unmarshal(args, &outer); oerr == nil {
 			if raw, ok := outer["calls"]; ok {
 				var s string
 				if serr := json.Unmarshal(raw, &s); serr == nil {
 					if trimmed := strings.TrimSpace(s); trimmed != "" {
-						var calls []batchCall
-						if cerr := json.Unmarshal([]byte(trimmed), &calls); cerr == nil {
+						calls, effective, cerr := parseBatchCallsString(trimmed)
+						if cerr == nil {
 							parsed.Calls = calls
-							if extra := extraBatchKeysFromString(trimmed); len(extra) > 0 {
+							if extra := extraBatchKeysFromString(effective); len(extra) > 0 {
 								// The string parsed, but a call carries fields
 								// beside tool/args — usually a tool parameter
 								// left outside args. Fail fast with the fix
@@ -192,10 +199,15 @@ func (t *BatchTool) parse(args json.RawMessage) (*batchArgs, error) {
 									extra[0].index, quotedList(extra[0].keys), parsed.Calls[extra[0].index-1].Tool)
 							}
 						} else {
-							return nil, SemanticErrorf("Batch: 'calls' must be an array of {tool, args} — send the raw array, not a JSON-encoded string. %d calls max, no Batch inside a Batch. The string did not parse as an array: %s. Received (first %d chars): %s. Every tool's parameters belong inside its args: {\"tool\": \"Glob\", \"args\": {\"path\": ..., \"pattern\": ...}}.",
-								maxBatchCalls, sanitizeBatchJSONError(cerr), maxBatchPreview, truncateBatchPreview(trimmed, maxBatchPreview))
+							return nil, SemanticErrorf("Batch: 'calls' must be an array of {tool, args} — send the raw array, not a JSON-encoded string. %d calls max, no Batch inside a Batch. The string did not parse as an array: %s. Received (%d chars total, around byte %d): %s. Every tool's parameters belong inside its args: {\"tool\": \"Glob\", \"args\": {\"path\": ..., \"pattern\": ...}}.",
+								maxBatchCalls, sanitizeBatchJSONError(cerr), len(trimmed), batchErrorOffset(cerr, trimmed), batchErrorPreview(trimmed, cerr))
 						}
 					}
+				} else if single, ok := parseBatchSingleCall(raw); ok {
+					// 'calls' holds one object instead of an array of them.
+					// There is no legitimate call where it is a bare object,
+					// so run it as a single call rather than failing.
+					parsed.Calls = []batchCall{single}
 				} else {
 					return nil, SemanticErrorf("Batch: 'calls' must be an array of {tool, args} — send the raw array, not a JSON-encoded string. %d calls max, no Batch inside a Batch.", maxBatchCalls)
 				}
@@ -258,19 +270,149 @@ func (t *BatchTool) parse(args json.RawMessage) (*batchArgs, error) {
 	return &parsed, nil
 }
 
+// unwrapBatchJSONString decodes s while it is a JSON string holding further
+// JSON (a doubly-encoded payload). It returns s unchanged when s is not a
+// string, when the string is empty, or after a few levels, so a pathological
+// nesting cannot loop. Whitespace around the levels is insignificant.
+func unwrapBatchJSONString(s string) string {
+	for i := 0; i < 3; i++ {
+		trimmed := strings.TrimSpace(s)
+		if len(trimmed) < 2 || trimmed[0] != '"' {
+			return s
+		}
+		var inner string
+		if err := json.Unmarshal([]byte(trimmed), &inner); err != nil {
+			return s
+		}
+		if strings.TrimSpace(inner) == "" {
+			return s
+		}
+		s = inner
+	}
+	return s
+}
+
+// parseBatchCallsString decodes the stringified 'calls' value into calls,
+// returning the array text that parsed alongside them (for the outside-args
+// check). Beyond a plain array it accepts the unambiguous slips: one object
+// instead of an array of them, the whole arguments object stringified instead
+// of just the array, a doubly-encoded string, and objects without the outer
+// brackets. Anything else comes back as the plain array parse's error, so
+// genuinely broken JSON still reports where it broke.
+func parseBatchCallsString(trimmed string) ([]batchCall, string, error) {
+	return parseBatchCallsStringDepth(trimmed, 0)
+}
+
+func parseBatchCallsStringDepth(trimmed string, depth int) ([]batchCall, string, error) {
+	s := unwrapBatchJSONString(trimmed)
+	var calls []batchCall
+	directErr := json.Unmarshal([]byte(s), &calls)
+	if directErr == nil {
+		return calls, s, nil
+	}
+	// One object instead of an array of them: run it as a single call.
+	// The tool name must be present so a wrapper object ({"calls": ...},
+	// whose unknown fields decode to a zero call) falls through to the
+	// wrapper repair below instead of running as a nameless call.
+	if strings.HasPrefix(s, "{") {
+		var single batchCall
+		if serr := json.Unmarshal([]byte(s), &single); serr == nil && strings.TrimSpace(single.Tool) != "" {
+			wrapped := "[" + s + "]"
+			if werr := json.Unmarshal([]byte(wrapped), &calls); werr == nil {
+				return calls, wrapped, nil
+			}
+		}
+	}
+	// The whole arguments object stringified instead of just the array
+	// ({"calls": [...]} inside the string). Decode the inner value with the
+	// same repairs, so its own slips are accepted too.
+	if depth < 3 && strings.HasPrefix(s, "{") {
+		var wrapper struct {
+			Calls json.RawMessage `json:"calls"`
+		}
+		if werr := json.Unmarshal([]byte(s), &wrapper); werr == nil && len(wrapper.Calls) != 0 {
+			var innerText string
+			if uerr := json.Unmarshal(wrapper.Calls, &innerText); uerr == nil {
+				innerText = strings.TrimSpace(innerText)
+			} else {
+				innerText = strings.TrimSpace(string(wrapper.Calls))
+			}
+			if innerText != "" {
+				if icalls, ieffective, ierr := parseBatchCallsStringDepth(innerText, depth+1); ierr == nil {
+					return icalls, ieffective, nil
+				}
+			}
+		}
+	}
+	// Objects without the outer brackets: {"tool": ...}, {"tool": ...}.
+	if strings.HasPrefix(s, "{") {
+		wrapped := "[" + s + "]"
+		if werr := json.Unmarshal([]byte(wrapped), &calls); werr == nil {
+			return calls, wrapped, nil
+		}
+	}
+	return nil, "", directErr
+}
+
+// parseBatchSingleCall accepts raw (non-string) 'calls' holding one object
+// instead of an array of them. There is no legitimate call where it is a
+// bare object, so a clean object decode runs as a single call; the later
+// checks still report a missing tool name or an unknown tool.
+func parseBatchSingleCall(raw json.RawMessage) (batchCall, bool) {
+	var single batchCall
+	trimmed := strings.TrimSpace(string(raw))
+	if !strings.HasPrefix(trimmed, "{") {
+		return batchCall{}, false
+	}
+	if err := json.Unmarshal([]byte(trimmed), &single); err != nil {
+		return batchCall{}, false
+	}
+	return single, true
+}
+
+// batchErrorOffset is the byte offset of a JSON syntax error in s, or zero
+// when the error carries none (a type error) or points past the end.
+func batchErrorOffset(err error, s string) int {
+	if se, ok := err.(*json.SyntaxError); ok && se.Offset > 0 && se.Offset <= int64(len(s)) {
+		return int(se.Offset)
+	}
+	return 0
+}
+
+// batchErrorPreview shows the received string around the parse failure, so
+// the model sees the misplaced brace even in a long batch whose head is
+// fine. Short payloads come back whole; longer ones are cut to max runes
+// around the failure, marked where they were cut.
+func batchErrorPreview(s string, err error) string {
+	runes := []rune(s)
+	if len(runes) <= maxBatchPreview {
+		return s
+	}
+	offset := batchErrorOffset(err, s)
+	runeOffset := len([]rune(s[:offset]))
+	start := runeOffset - maxBatchPreview/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + maxBatchPreview
+	if end > len(runes) {
+		end = len(runes)
+		start = end - maxBatchPreview
+	}
+	out := string(runes[start:end])
+	if start > 0 {
+		out = "…" + out
+	}
+	if end < len(runes) {
+		out = out + "…"
+	}
+	return out
+}
+
 // maxBatchPreview bounds the received-string preview in the
 // stringified-calls error: enough for the model to see the nesting slip,
 // not the whole payload.
 const maxBatchPreview = 300
-
-// truncateBatchPreview shortens s to max chars, marking the cut so the
-// model knows there was more.
-func truncateBatchPreview(s string, max int) string {
-	if max <= 0 || len(s) <= max {
-		return s
-	}
-	return s[:max] + "…"
-}
 
 // sanitizeBatchJSONError keeps the actionable part of a JSON parse failure
 // (a syntax error and its position) while leaving out Go internals. A type

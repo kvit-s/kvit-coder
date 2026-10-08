@@ -337,18 +337,127 @@ func TestBatchStringifiedMalformedShowsPosition(t *testing.T) {
 	}
 }
 
-// TestBatchStringifiedObjectNotArray: a string holding a single object (not
-// an array) must not leak Go type names either.
-func TestBatchStringifiedObjectNotArray(t *testing.T) {
+// TestBatchStringifiedObjectAccepted: a string holding a single object (not
+// an array) runs as one call. There is no legitimate Batch call where
+// 'calls' is a bare object, so running it beats a round-trip error.
+func TestBatchStringifiedObjectAccepted(t *testing.T) {
 	batch := newBatchTool(t, &batchTestTool{name: "Read", parallel: true})
 	raw, _ := json.Marshal(map[string]any{"calls": `{"tool": "Read", "args": {"path": "a"}}`})
+	if err := batch.Check(context.Background(), raw); err != nil {
+		t.Fatalf("Check(stringified object) = %v, want it accepted", err)
+	}
+	result, err := batch.Call(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	results := result.(map[string]any)["results"].([]BatchResult)
+	if len(results) != 1 || !results[0].OK {
+		t.Fatalf("results = %+v, want one OK result", results)
+	}
+}
+
+// TestBatchStringifiedWrapperAccepted: the whole arguments object stringified
+// instead of just the array ({"calls": "{\"calls\": [...]}"}) unwraps to the
+// same calls.
+func TestBatchStringifiedWrapperAccepted(t *testing.T) {
+	batch := newBatchTool(t, &batchTestTool{name: "Read", parallel: true})
+	inner, _ := json.Marshal([]map[string]any{
+		{"tool": "Read", "args": map[string]any{"path": "a"}},
+		{"tool": "Read", "args": map[string]any{"path": "b"}},
+	})
+	wrapper, _ := json.Marshal(map[string]any{"calls": string(inner)})
+	raw, _ := json.Marshal(map[string]any{"calls": string(wrapper)})
+	result, err := batch.Call(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	results := result.(map[string]any)["results"].([]BatchResult)
+	if len(results) != 2 || !results[0].OK || !results[1].OK {
+		t.Fatalf("results = %+v, want two OK results", results)
+	}
+}
+
+// TestBatchStringifiedMissingBracketsAccepted: objects without the outer
+// brackets ({"tool": ...}, {"tool": ...}) run as the calls they plainly are.
+func TestBatchStringifiedMissingBracketsAccepted(t *testing.T) {
+	batch := newBatchTool(t, &batchTestTool{name: "Read", parallel: true})
+	inner := `{"tool": "Read", "args": {"path": "a"}}, {"tool": "Read", "args": {"path": "b"}}`
+	raw, _ := json.Marshal(map[string]any{"calls": inner})
+	result, err := batch.Call(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	results := result.(map[string]any)["results"].([]BatchResult)
+	if len(results) != 2 || !results[0].OK || !results[1].OK {
+		t.Fatalf("results = %+v, want two OK results", results)
+	}
+}
+
+// TestBatchDoubleEncodedAccepted: a doubly-encoded payload (a string holding
+// a string holding the array, or the whole arguments object twice-encoded)
+// unwraps to the same calls instead of failing on the shape.
+func TestBatchDoubleEncodedAccepted(t *testing.T) {
+	batch := newBatchTool(t, &batchTestTool{name: "Read", parallel: true})
+	inner, _ := json.Marshal([]map[string]any{
+		{"tool": "Read", "args": map[string]any{"path": "a"}},
+	})
+	once, _ := json.Marshal(string(inner))
+	raw, _ := json.Marshal(map[string]any{"calls": string(once)})
+	result, err := batch.Call(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Call(string holding string holding array): %v", err)
+	}
+	results := result.(map[string]any)["results"].([]BatchResult)
+	if len(results) != 1 || !results[0].OK {
+		t.Fatalf("results = %+v, want one OK result", results)
+	}
+
+	valid, _ := json.Marshal(map[string]any{"calls": []map[string]any{
+		{"tool": "Read", "args": map[string]any{"path": "a"}},
+	}})
+	topTwice, _ := json.Marshal(string(valid))
+	if err := batch.Check(context.Background(), topTwice); err != nil {
+		t.Fatalf("Check(whole payload double-encoded) = %v, want it accepted", err)
+	}
+}
+
+// TestBatchRawSingleObjectAccepted: raw (non-string) 'calls' holding one
+// object instead of an array runs as a single call.
+func TestBatchRawSingleObjectAccepted(t *testing.T) {
+	batch := newBatchTool(t, &batchTestTool{name: "Read", parallel: true})
+	raw, _ := json.Marshal(map[string]any{"calls": map[string]any{
+		"tool": "Read", "args": map[string]any{"path": "a"},
+	}})
+	if err := batch.Check(context.Background(), raw); err != nil {
+		t.Fatalf("Check(raw single object) = %v, want it accepted", err)
+	}
+	result, err := batch.Call(context.Background(), raw)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	results := result.(map[string]any)["results"].([]BatchResult)
+	if len(results) != 1 || !results[0].OK {
+		t.Fatalf("results = %+v, want one OK result", results)
+	}
+}
+
+// TestBatchStringifiedSyntaxErrorShowsContext: a stringified array with a
+// misplaced brace (the recurring hand-written-nesting slip) still fails, but
+// the error points at the break: the byte offset and the text around it,
+// without Go internals.
+func TestBatchStringifiedSyntaxErrorShowsContext(t *testing.T) {
+	batch := newBatchTool(t, &batchTestTool{name: "Read", parallel: true})
+	inner := `[{"tool": "Read", "args": {{"path": "a"}}}]`
+	raw, _ := json.Marshal(map[string]any{"calls": inner})
 	err := batch.Check(context.Background(), raw)
 	if err == nil {
-		t.Fatal("Check(stringified object) = nil, want an error")
+		t.Fatal("Check(doubly-braced stringified calls) = nil, want an error")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "must be an array") {
-		t.Errorf("error is %q, want it to say 'calls' must be an array", msg)
+	for _, want := range []string{"must be an array", "not a JSON-encoded string", "around byte", "Received"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q wants %q", msg, want)
+		}
 	}
 	for _, leaked := range []string{"cannot unmarshal", "batchArgs", "batchCall", "Go struct", "Go value"} {
 		if strings.Contains(msg, leaked) {
