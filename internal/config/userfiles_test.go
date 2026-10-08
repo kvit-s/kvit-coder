@@ -365,3 +365,108 @@ func TestLoadDropsExamplePlaceholder(t *testing.T) {
 		t.Errorf("a your-model at another address was dropped: %v %q", err, cfg.LLM.Model)
 	}
 }
+
+// TestLoadSavedToolsTurnWebOn: tools.yaml turns the web tools on for a config
+// that leaves them out, and Load reports that config.yaml did not set them.
+func TestLoadSavedToolsTurnWebOn(t *testing.T) {
+	dir := useHome(t)
+	writeFile(t, filepath.Join(dir, SavedToolsName), "web:\n  search:\n    enabled: true\n  fetch:\n    enabled: true\n")
+
+	cfg, err := loadConfig(t, twoRowConfig, LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Tools.Web.Search.Enabled || !cfg.Tools.Web.Fetch.Enabled {
+		t.Errorf("search %v fetch %v, want both on from tools.yaml", cfg.Tools.Web.Search.Enabled, cfg.Tools.Web.Fetch.Enabled)
+	}
+	if search, fetch := cfg.WebSetInConfig(); search || fetch {
+		t.Errorf("WebSetInConfig = %v %v for a config that sets neither", search, fetch)
+	}
+
+	cfg, err = loadConfig(t, twoRowConfig, LoadOptions{SkipSavedTools: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Tools.Web.Search.Enabled || cfg.Tools.Web.Fetch.Enabled {
+		t.Error("tools.yaml was applied with SkipSavedTools")
+	}
+}
+
+// TestLoadConfigWebSettingWins: an enabled: written in config.yaml, true or
+// false, is kept over tools.yaml, one tool at a time.
+func TestLoadConfigWebSettingWins(t *testing.T) {
+	dir := useHome(t)
+	writeFile(t, filepath.Join(dir, SavedToolsName), "web:\n  search:\n    enabled: true\n  fetch:\n    enabled: false\n")
+
+	cfg, err := loadConfig(t, twoRowConfig+"tools:\n  web:\n    search:\n      enabled: false\n", LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Tools.Web.Search.Enabled {
+		t.Error("tools.yaml turned search on over config.yaml's enabled: false")
+	}
+	if search, fetch := cfg.WebSetInConfig(); !search || fetch {
+		t.Errorf("WebSetInConfig = %v %v, want search only", search, fetch)
+	}
+
+	cfg, err = loadConfig(t, twoRowConfig+"tools:\n  web:\n    fetch:\n      enabled: true\n", LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Tools.Web.Fetch.Enabled || !cfg.Tools.Web.Search.Enabled {
+		t.Errorf("search %v fetch %v, want search from tools.yaml and fetch from config.yaml",
+			cfg.Tools.Web.Search.Enabled, cfg.Tools.Web.Fetch.Enabled)
+	}
+}
+
+// TestLoadSavedToolsErrorsNameTheFile: tools.yaml holds the two switches and
+// nothing else, so anything more is a mistake reported against it.
+func TestLoadSavedToolsErrorsNameTheFile(t *testing.T) {
+	dir := useHome(t)
+	writeFile(t, filepath.Join(dir, SavedToolsName), "web:\n  search:\n    enabled: true\n    count: 9\n")
+	_, err := loadConfig(t, twoRowConfig, LoadOptions{})
+	if err == nil || !strings.Contains(err.Error(), SavedToolsName) {
+		t.Fatalf("error = %v, want one naming %s", err, SavedToolsName)
+	}
+}
+
+// TestSaveWebTools: each save changes only the tool it is given, and what it
+// writes loads back.
+func TestSaveWebTools(t *testing.T) {
+	dir := useHome(t)
+	on, off := true, false
+	if err := SaveWebTools(&on, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, SavedToolsName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "fetch:") {
+		t.Errorf("tools.yaml mentions fetch, which was not saved:\n%s", data)
+	}
+	if err := SaveWebTools(nil, &on); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveWebTools(&off, nil); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := loadConfig(t, twoRowConfig, LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Tools.Web.Search.Enabled || !cfg.Tools.Web.Fetch.Enabled {
+		t.Errorf("search %v fetch %v, want search off and fetch on", cfg.Tools.Web.Search.Enabled, cfg.Tools.Web.Fetch.Enabled)
+	}
+}
+
+func TestWebSearchKeyEnv(t *testing.T) {
+	var cfg Config
+	if got := cfg.WebSearchKeyEnv(); got != DefaultWebSearchKeyEnv {
+		t.Errorf("default = %q", got)
+	}
+	cfg.Tools.Web.APIKeyEnv = " MY_SEARCH_KEY "
+	if got := cfg.WebSearchKeyEnv(); got != "MY_SEARCH_KEY" {
+		t.Errorf("named = %q", got)
+	}
+}

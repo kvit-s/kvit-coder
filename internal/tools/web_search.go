@@ -23,7 +23,6 @@ const (
 	defaultSearchCount    = 5
 	defaultSearchAttempts = 4
 	defaultSearchTimeout  = 20 * time.Second
-	defaultSearchKeyEnv   = "BRAVE_API_KEY"
 )
 
 // WebSearchTool queries the Brave Search API.
@@ -185,9 +184,11 @@ func (t *WebSearchTool) Call(ctx context.Context, args json.RawMessage) (any, er
 		return nil, fmt.Errorf("query is required")
 	}
 
-	key := os.Getenv(t.keyEnv())
+	// The variable, else the key kvit-coder-ui saved under its name, which
+	// stays out of the environment the Shell tool's commands inherit.
+	key := config.LookupKey(t.keyEnv())
 	if key == "" {
-		return nil, fmt.Errorf("no API key: set %s, or change tools.web.api_key_env to the variable holding it", t.keyEnv())
+		return nil, fmt.Errorf("no API key: set %s, save one with :keys in kvit-coder-ui, or change tools.web.api_key_env to the variable holding it", t.keyEnv())
 	}
 
 	count := params.Count
@@ -355,10 +356,7 @@ func truncate(s string, n int) string {
 }
 
 func (t *WebSearchTool) keyEnv() string {
-	if e := strings.TrimSpace(t.config.Tools.Web.APIKeyEnv); e != "" {
-		return e
-	}
-	return defaultSearchKeyEnv
+	return t.config.WebSearchKeyEnv()
 }
 
 func (t *WebSearchTool) baseURL() string {

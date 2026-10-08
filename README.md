@@ -64,9 +64,10 @@ endpoint that speaks the same protocols; paste its key; and tick the models
 you want. It fills in each model's protocol, context size and effort levels
 from the endpoint and the [models.dev](https://models.dev) catalog, saves them
 to `~/.kvit-coder/models.yaml` and the key to `~/.kvit-coder/credentials.json`,
-and leaves `config.yaml` alone. `:setup` adds more later, `:models` switches
-between them, and `:keys` replaces a key; see
-[`docs/cli.md`](docs/cli.md#setting-up-models).
+and leaves `config.yaml` alone. Once a model is saved it offers web search,
+which needs a Brave Search API key. `:setup` adds more later and turns web
+search on or off, `:models` switches between models, and `:keys` replaces a
+key; see [`docs/cli.md`](docs/cli.md#setting-up-models).
 
 The installers put a copy of [`config.example.yaml`](config.example.yaml) at
 `~/.kvit-coder/config.yaml` (on Windows: `%USERPROFILE%\.kvit-coder\config.yaml`),

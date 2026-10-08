@@ -160,6 +160,12 @@ type Config struct {
 	savedModelsPath  string
 	savedModelsStart int
 
+	// webSearchInConfig and webFetchInConfig record that the config file
+	// sets tools.web.search.enabled or tools.web.fetch.enabled itself, which
+	// tools.yaml then leaves alone. See mergeSavedTools.
+	webSearchInConfig bool
+	webFetchInConfig  bool
+
 	// profileRaw snapshots the file's weak-model machinery settings before
 	// any profile is applied, so switching profiles (at load for the
 	// default model, per turn in ApplyModel) restores rather than destroys.
@@ -704,6 +710,20 @@ type WebToolsConfig struct {
 	Fetch  WebFetchToolConfig  `yaml:"fetch"`
 }
 
+// DefaultWebSearchKeyEnv is the variable Web.search reads its key from when
+// tools.web.api_key_env names none.
+const DefaultWebSearchKeyEnv = "BRAVE_API_KEY"
+
+// WebSearchKeyEnv is the variable Web.search reads its key from. The key is
+// found the way a model's is, with LookupKey: the variable when it is set,
+// else the key kvit-coder-ui saved under that name.
+func (c *Config) WebSearchKeyEnv() string {
+	if e := strings.TrimSpace(c.Tools.Web.APIKeyEnv); e != "" {
+		return e
+	}
+	return DefaultWebSearchKeyEnv
+}
+
 // WebSearchToolConfig configures Web.search.
 //
 // MaxAttempts is a setting rather than a constant because the right value
@@ -1119,8 +1139,9 @@ func parseHeaders(lists ...[]string) map[string]string {
 	return headers
 }
 
-// Load reads a config file, together with the model rows and API keys
-// kvit-coder-ui saved beside it in ~/.kvit-coder (see userfiles.go).
+// Load reads a config file, together with the model rows, API keys and web
+// tool switches kvit-coder-ui saved beside it in ~/.kvit-coder (see
+// userfiles.go).
 func Load(path string) (*Config, error) {
 	return LoadWith(path, LoadOptions{})
 }
@@ -1147,6 +1168,16 @@ func LoadWith(path string, opts LoadOptions) (*Config, error) {
 				return nil, err
 			}
 		}
+	}
+
+	toolsPath := ""
+	if !opts.SkipSavedTools {
+		if p, err := SavedToolsPath(); err == nil {
+			toolsPath = p
+		}
+	}
+	if err := cfg.mergeSavedTools(toolsPath, data); err != nil {
+		return nil, err
 	}
 
 	// A malformed credentials.json would otherwise read as "no saved key"

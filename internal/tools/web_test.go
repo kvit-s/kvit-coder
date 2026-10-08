@@ -525,6 +525,9 @@ func TestWebSearchGivesUpAfterMaxAttempts(t *testing.T) {
 }
 
 func TestWebSearchNeedsAKey(t *testing.T) {
+	// An empty home, so no key saved on the machine running the test is found.
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
 	cfg := webCfg(t)
 	cfg.Tools.Web.APIKeyEnv = "KVIT_TEST_ABSENT_KEY"
 	t.Setenv("KVIT_TEST_ABSENT_KEY", "")
@@ -532,6 +535,32 @@ func TestWebSearchNeedsAKey(t *testing.T) {
 	_, err := NewWebSearchTool(cfg).Call(context.Background(), raw)
 	if err == nil || !strings.Contains(err.Error(), "KVIT_TEST_ABSENT_KEY") {
 		t.Errorf("error = %v; it should name the variable that is missing", err)
+	}
+}
+
+// TestWebSearchUsesSavedKey: with the variable unset, the key kvit-coder-ui
+// saved under its name in credentials.json is sent.
+func TestWebSearchUsesSavedKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", os.Getenv("HOME"))
+	t.Setenv("KVIT_TEST_SAVED_KEY", "")
+	if err := config.SaveCredential("KVIT_TEST_SAVED_KEY", "saved-key"); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Subscription-Token"); got != "saved-key" {
+			t.Errorf("token header = %q, want the saved key", got)
+		}
+		fmt.Fprint(w, braveBody("a result"))
+	}))
+	defer srv.Close()
+
+	cfg := webCfg(t)
+	cfg.Tools.Web.BaseURL = srv.URL
+	cfg.Tools.Web.APIKeyEnv = "KVIT_TEST_SAVED_KEY"
+	raw, _ := json.Marshal(map[string]any{"query": "x"})
+	if _, err := NewWebSearchTool(cfg).Call(context.Background(), raw); err != nil {
+		t.Fatal(err)
 	}
 }
 
