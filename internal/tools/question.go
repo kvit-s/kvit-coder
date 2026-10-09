@@ -12,6 +12,7 @@ import (
 
 	"github.com/kvit-s/kvit-coder/internal/config"
 	"github.com/kvit-s/kvit-coder/internal/inbox"
+	"github.com/kvit-s/kvit-coder/internal/procutil"
 )
 
 // QuestionTool lets the model ask a person something and get the answer as the
@@ -399,10 +400,7 @@ func (t *QuestionTool) useColor() bool {
 		return true
 	}
 	if f, ok := t.out.(*os.File); ok {
-		if info, err := f.Stat(); err == nil {
-			return info.Mode()&os.ModeCharDevice != 0
-		}
-		return false
+		return procutil.IsTerminal(f)
 	}
 	return true
 }

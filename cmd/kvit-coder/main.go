@@ -520,14 +520,17 @@ func routeStdinLine(text string, steering *inbox.Inbox, writer *ui.Writer) {
 // stdinIsATerminal reports whether there is a person on the other end of
 // stdin. /dev/null is a character device like a terminal is, and a run
 // redirected from it — which is how a script or a CI job starts one — has
-// nobody to type an answer.
+// nobody to type an answer. The terminal test itself lives in procutil: a
+// ModeCharDevice check misses Git Bash, Cygwin and MSYS2, whose stdio are
+// pipes, and the Question tool then answers itself instead of waiting.
 func stdinIsATerminal() bool {
-	info, err := os.Stdin.Stat()
-	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+	if !procutil.IsTerminal(os.Stdin) {
 		return false
 	}
-	if devNull, err := os.Stat(os.DevNull); err == nil && os.SameFile(info, devNull) {
-		return false
+	if info, err := os.Stdin.Stat(); err == nil {
+		if devNull, err := os.Stat(os.DevNull); err == nil && os.SameFile(info, devNull) {
+			return false
+		}
 	}
 	return true
 }
