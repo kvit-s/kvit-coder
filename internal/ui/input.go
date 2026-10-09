@@ -14,6 +14,7 @@ import (
 	rw "github.com/mattn/go-runewidth"
 	"github.com/rivo/uniseg"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 	"unicode"
@@ -33,6 +34,15 @@ type InputModel struct {
 	quitting      bool
 	lastValueLen  int // Track previous value length to detect paste
 	viewportStart int // Track which line is at the top of the viewport
+	// lastKeyTime and lastKeyTextlike spot a Windows paste burst (see
+	// pasteEnterWindow): pasted line breaks arrive as Enter keypresses with
+	// no human gap after a typed rune, while a real submit follows thinking.
+	lastKeyTime     time.Time
+	lastKeyTextlike bool
+	// lastWasBurstCR marks an Enter that became a newline above, so the LF
+	// half of a CRLF paste (a Ctrl+J right after) is swallowed instead of
+	// doubling the line break. Any other key clears it.
+	lastWasBurstCR bool
 	// onImagePaste stages a clipboard image and returns its staged path.
 	// Nil when the host offers no image paste (set by the driver; the model
 	// itself never touches the clipboard).
@@ -691,6 +701,23 @@ func wakeTickCmd() tea.Cmd {
 	return tea.Tick(wakeTickInterval, func(time.Time) tea.Msg { return wakeTickMsg{} })
 }
 
+// pasteEnterWindow is how soon after a typed rune an Enter must arrive to
+// count as a pasted line break rather than a submit. A paste burst lands
+// with microsecond gaps (the whole paste is already queued in the console
+// input buffer); a submit follows thinking, at human latency. A fast submit
+// inside the window costs one extra Enter: it inserts a newline, and the
+// next Enter submits.
+const pasteEnterWindow = 100 * time.Millisecond
+
+// pasteBurstKeys reports whether pasted line breaks can arrive as Enter
+// keypresses. On Windows bubbletea reads the console input buffer, where a
+// paste is one key event per character with no bracketed-paste markers, so
+// every pasted line break is an Enter that would otherwise submit. On unix
+// the same paste arrives as one bracketed message that never reads as
+// "enter", so the heuristic stays off and fast submits are untouched.
+// Tests set it directly to drive the burst path on any platform.
+var pasteBurstKeys = runtime.GOOS == "windows"
+
 // SetWakePoll installs the inbox waiter behind the composer. A nil poll
 // disables wake.
 func (m *InputModel) SetWakePoll(fn func() (int, string)) {
@@ -757,12 +784,30 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampCardOffset()
 
 	case tea.KeyMsg:
+		// Track key timing for the Windows paste-burst heuristic below: a
+		// single-rune key is typed text, anything longer a named key. (A
+		// bracketed paste arrives as one "[...]" message, so it never
+		// counts as text here.)
+		keyAt := time.Now()
+		keyStr := msg.String()
+		keyTextlike := len([]rune(keyStr)) == 1
+		// A paste burst is runes with no human gap between them: an Enter
+		// right after pasted text is a line break, not a submit.
+		burstEnter := pasteBurstKeys && !m.lastKeyTime.IsZero() &&
+			keyAt.Sub(m.lastKeyTime) < pasteEnterWindow && m.lastKeyTextlike
+		// The LF half of a CRLF paste lands as Ctrl+J right after its CR
+		// half became a newline in the enter case.
+		swallowLF := m.lastWasBurstCR && keyAt.Sub(m.lastKeyTime) < pasteEnterWindow
+		m.lastKeyTime = keyAt
+		m.lastKeyTextlike = keyTextlike
+		m.lastWasBurstCR = false
+
 		// A completion list belongs to the token it was built for. Tab
 		// and Shift+Tab cycle it, up/down select from it while it
 		// shows, and esc dismisses it; typing narrows it via
 		// refreshAutoCompletion below, and anything else (cursor moves,
 		// submit) discards it before the key is handled.
-		switch key := msg.String(); {
+		switch key := keyStr; {
 		case key == "tab" || key == "shift+tab":
 			// Kept alive for cycling.
 		case (key == "up" || key == "down") && m.completionListActive():
@@ -777,11 +822,22 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
-		switch msg.String() {
+		switch keyStr {
 		// Submit on Enter. On an empty line with no staged images, Enter
 		// picks the report's primary recommendation instead of submitting
 		// empty, so the highlighted action needs no digit.
 		case "enter":
+			if burstEnter {
+				// Part of a paste burst, not a submit: keep the line
+				// break as a newline, like Ctrl+J below. The burst stays
+				// open so further pasted line breaks do the same.
+				m.textarea.InsertString("\n")
+				m.adjustHeight()
+				m.ensureCursorVisible()
+				m.lastKeyTextlike = true
+				m.lastWasBurstCR = true
+				return m, nil
+			}
 			if strings.TrimSpace(m.textarea.Value()) == "" && len(m.pastedImages) == 0 {
 				if handled, cmd := m.pickRecommended(); handled {
 					return m, cmd
@@ -794,6 +850,13 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Insert newline on Ctrl+J
 		case "ctrl+j":
+			if swallowLF {
+				// The LF half of a CRLF paste whose CR just became a
+				// newline above: one line break per pasted line, not two.
+				// The burst stays open for what the paste brings next.
+				m.lastKeyTextlike = true
+				return m, nil
+			}
 			m.textarea.InsertString("\n")
 			m.adjustHeight()
 			return m, nil

@@ -2,9 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -457,14 +459,60 @@ func startStdinReader(steering *inbox.Inbox, writer *ui.Writer) bool {
 	if !stdinIsATerminal() {
 		return false
 	}
-	go func() {
-		scanner := bufio.NewScanner(os.Stdin)
-		scanner.Buffer(make([]byte, 0, 4096), 1024*1024)
-		for scanner.Scan() {
-			routeStdinLine(scanner.Text(), steering, writer)
-		}
-	}()
+	go readStdinLines(os.Stdin, steering, writer)
 	return true
+}
+
+// scanConsoleLines splits stdin into lines like bufio.ScanLines, but a lone
+// carriage return ends a line too. In cooked mode Enter arrives as "\r\n",
+// which ScanLines already handles; with the console left in raw mode (or a
+// paste carrying bare "\r") Enter arrives as "\r" alone, which ScanLines
+// would buffer forever waiting for a "\n" that never comes — so an empty
+// Enter would never ask for a pause.
+func scanConsoleLines(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+	if i := bytes.IndexAny(data, "\r\n"); i >= 0 {
+		if data[i] == '\n' {
+			return i + 1, dropTrailingCR(data[:i]), nil
+		}
+		// A "\r" is a line break on its own, unless it may still turn out
+		// to be the first half of a "\r\n" split across reads.
+		if i+1 < len(data) {
+			if data[i+1] == '\n' {
+				return i + 2, dropTrailingCR(data[:i]), nil
+			}
+			return i + 1, dropTrailingCR(data[:i]), nil
+		}
+		if atEOF {
+			return len(data), dropTrailingCR(data[:i]), nil
+		}
+		return 0, nil, nil
+	}
+	if atEOF {
+		return len(data), dropTrailingCR(data), nil
+	}
+	// Ask for more data.
+	return 0, nil, nil
+}
+
+func dropTrailingCR(line []byte) []byte {
+	if n := len(line); n > 0 && line[n-1] == '\r' {
+		return line[:n-1]
+	}
+	return line
+}
+
+// readStdinLines queues each line typed at the terminal for the running
+// turn. It is a separate function so a test can drive it without a terminal.
+func readStdinLines(r io.Reader, steering *inbox.Inbox, writer *ui.Writer) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 4096), 1024*1024)
+	scanner.Split(scanConsoleLines)
+	for scanner.Scan() {
+		routeStdinLine(scanner.Text(), steering, writer)
+	}
 }
 
 // pauseAwareWatcher holds progress dots while anyone owns the terminal: a
