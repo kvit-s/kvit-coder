@@ -52,6 +52,19 @@ func (r *Runner) executeTools(
 		default:
 		}
 
+		// An empty Enter at the terminal asks for a pause at the next
+		// steerable point, and the gap between two tools of one batch is
+		// one: stop here while no output flows and take steering before
+		// the next call. Steering typed at the prompt waits for the next
+		// iteration's drain, so tool-call/result adjacency inside this
+		// batch is untouched. The first call is covered by the boundary
+		// check at the top of the loop.
+		if idx > 0 && r.checkPause(ctx) {
+			result.toolsCancelled = true
+			result.lastExecutedIdx = idx - 1
+			return result
+		}
+
 		toolResult := r.executeSingleTool(ctx, tc, state, rollbackPoint, promptTokens, completionTokens, requestCost, contextStr)
 		// Write this tool's result before starting the next one, so a long
 		// batch of calls is readable as it goes.

@@ -2,7 +2,10 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -130,5 +133,85 @@ func TestPauseCancelledEndsTurn(t *testing.T) {
 	assertShape(t, res.FinalMessages, "user")
 	if client.callCount() != 0 {
 		t.Errorf("made %d model calls, want none: the pause is before the first call", client.callCount())
+	}
+}
+
+// TestPauseBetweenToolCalls: a pause requested while the first of two batched
+// calls runs stops the turn between the calls, not after the batch. The
+// steering typed at the prompt reaches the model as <user-steering>, and the
+// pause resolves before the second call runs.
+func TestPauseBetweenToolCalls(t *testing.T) {
+	box := inbox.New("")
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startOnce sync.Once
+	gate := &scriptedTool{name: "gate", call: func(context.Context, json.RawMessage) (any, error) {
+		startOnce.Do(func() { close(started) })
+		<-release
+		return map[string]any{"ok": true}, nil
+	}}
+	var echoAt, pushAt atomic.Int64
+	echo := &scriptedTool{name: "echo", call: func(context.Context, json.RawMessage) (any, error) {
+		echoAt.Store(time.Now().UnixNano())
+		return map[string]any{"ok": true}, nil
+	}}
+	client := newFakeClient(
+		calls(toolCall("c1", "gate", map[string]string{"arg": "x"}),
+			toolCall("c2", "echo", map[string]string{"arg": "y"})),
+		answer("done"),
+	)
+	runner, _ := newTestRunner(t, testConfig(), client, gate, echo)
+	runner.inbox = box
+
+	errCh := make(chan string, 1)
+	go func() {
+		<-started
+		if !box.RequestPause() {
+			errCh <- "the mid-batch pause request is not new"
+			close(release)
+			return
+		}
+		close(release)
+		// Answer once the pause prompt is actually waiting, so the push
+		// lands after Ask started and is taken as the answer.
+		for range 500 {
+			if box.Awaiting() {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
+		pushAt.Store(time.Now().UnixNano())
+		box.Push(inbox.Message{Kind: inbox.KindUserLine, Text: "mid-batch steering"})
+	}()
+
+	res, err := runner.Run(context.Background(), RunConfig{Messages: userStart("go")})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	select {
+	case e := <-errCh:
+		t.Fatalf("reader: %s", e)
+	default:
+	}
+
+	if res.Cancelled {
+		t.Error("a turn paused between tools reports cancelled")
+	}
+	assertShape(t, res.FinalMessages,
+		"user",
+		"assistant+tool_calls",
+		"tool:gate",
+		"tool:echo",
+		"user",
+		"assistant",
+	)
+	steer := res.FinalMessages[4]
+	if !strings.Contains(steer.Content, "<user-steering>") || !strings.Contains(steer.Content, "mid-batch steering") {
+		t.Errorf("the pause answer is %q, want it tagged and carrying the typed text", steer.Content)
+	}
+	// The pause resolved between the calls: without the mid-batch check the
+	// steering push would land after the second call ran.
+	if push, echo := pushAt.Load(), echoAt.Load(); push == 0 || echo == 0 || push >= echo {
+		t.Errorf("pause push at %d, second call at %d: want the pause resolved first", push, echo)
 	}
 }

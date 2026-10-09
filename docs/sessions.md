@@ -55,7 +55,8 @@ tagged `<user-steering>` at the model's next iteration.
 Typing at the same terminal competes with the agent's own output, so a
 half-typed line can be hard to read while the turn streams past it. For a
 clean line, hit `Enter` on an empty line instead: the turn finishes its
-current step, pauses at the next iteration boundary, and prompts for steering
+current step, pauses at the next steerable point — between two tool calls as
+well as between iterations — and prompts for steering
 — type it, hit `Enter` again, and the turn continues. `Enter` on the empty
 prompt resumes with nothing added, and `Enter` while a question is waiting
 still answers the question rather than pausing.
