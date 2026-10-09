@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -409,5 +410,39 @@ func TestProcRegistryForReadsSessionDir(t *testing.T) {
 	}
 	if _, err := viaCLI.Status(id); err != nil {
 		t.Errorf("the CLI registry does not see %s: %v", id, err)
+	}
+}
+
+// TestStdinIsATerminalDevNull: a run redirected from the null device has
+// nobody to answer, even though it is a character device.
+func TestStdinIsATerminalDevNull(t *testing.T) {
+	f, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open %s: %v", os.DevNull, err)
+	}
+	defer f.Close()
+	old := os.Stdin
+	os.Stdin = f
+	defer func() { os.Stdin = old }()
+	if stdinIsATerminal() {
+		t.Errorf("stdinIsATerminal with stdin on %s = true, want false", os.DevNull)
+	}
+}
+
+// TestStdinIsATerminalPipe: a piped stdin is nobody at a terminal — and, on
+// Windows, an anonymous pipe is not a mintty/Cygwin pty either, so it must
+// not count as one.
+func TestStdinIsATerminalPipe(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	defer r.Close()
+	defer w.Close()
+	old := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = old }()
+	if stdinIsATerminal() {
+		t.Error("stdinIsATerminal with a piped stdin = true, want false")
 	}
 }

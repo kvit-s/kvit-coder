@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/kvit-s/kvit-coder/internal/procutil"
 )
 
 // Default icons for the three states TerminalTitle shows. The hourglass
@@ -92,8 +94,7 @@ func terminalTitleSupported(out io.Writer) bool {
 	if !ok {
 		return true
 	}
-	info, err := f.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	return procutil.IsTerminal(f)
 }
 
 // SetIcons replaces the three state icons. An empty string means that state

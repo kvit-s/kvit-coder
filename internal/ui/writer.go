@@ -10,6 +10,7 @@ import (
 	"github.com/fatih/color"
 
 	"github.com/kvit-s/kvit-coder/internal/markdown"
+	"github.com/kvit-s/kvit-coder/internal/procutil"
 	"github.com/kvit-s/kvit-coder/internal/report"
 	"github.com/kvit-s/kvit-coder/internal/tools"
 )
@@ -294,9 +295,7 @@ func (w *Writer) useColor() bool {
 			return *w.stderrTTY
 		}
 		if f, ok := w.stderr.(*os.File); ok {
-			if info, err := f.Stat(); err == nil {
-				return info.Mode()&os.ModeCharDevice != 0
-			}
+			return procutil.IsTerminal(f)
 		}
 		return false
 	}
@@ -769,9 +768,7 @@ func (w *Writer) answerTTY() bool {
 		}
 	}
 	if f, ok := out.(*os.File); ok {
-		if info, err := f.Stat(); err == nil {
-			return info.Mode()&os.ModeCharDevice != 0
-		}
+		return procutil.IsTerminal(f)
 	}
 	return false
 }
@@ -888,10 +885,9 @@ func (w *Writer) progressTarget() (io.Writer, bool) {
 	if !ok {
 		return w.stderr, false
 	}
-	info, err := f.Stat()
 	// Piped or redirected: redrawing in place would put control characters in
 	// a log file, so accumulate silently as before.
-	return w.stderr, err == nil && info.Mode()&os.ModeCharDevice != 0
+	return w.stderr, procutil.IsTerminal(f)
 }
 
 // drawProgress writes one progress update, either through the colour package
