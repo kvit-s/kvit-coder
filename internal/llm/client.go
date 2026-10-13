@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -80,6 +82,8 @@ type Client struct {
 	// maxRetries is how many further attempts a failed request gets. See
 	// WithMaxRetries.
 	maxRetries int
+	// planUsageURL is where PlanUsage asks, "" for an endpoint with no plan.
+	planUsageURL string
 }
 
 // WithMaxRetries caps how many times a failed request is tried again, for a
@@ -203,10 +207,11 @@ func NewClient(baseURL, apiKey string, opts ...Option) *Client {
 	disableKeepAlives := strings.HasPrefix(baseURL, "http://")
 
 	c := &Client{
-		baseURL:    baseURL,
-		apiKey:     apiKey,
-		backend:    BackendChatCompletions,
-		maxRetries: defaultMaxRetries,
+		baseURL:      baseURL,
+		apiKey:       apiKey,
+		backend:      BackendChatCompletions,
+		maxRetries:   defaultMaxRetries,
+		planUsageURL: planUsageURL(baseURL),
 		client: &http.Client{
 			Timeout: defaultRequestTimeout,
 			Transport: &http.Transport{
@@ -350,6 +355,9 @@ func (c *Client) postJSON(ctx context.Context, path string, body *requestBody) (
 	var lastErr error
 	var lastStatusCode int
 	var lastRespBody []byte
+	// lastRetryAfter is how long the last refusal's Retry-After asked to
+	// wait, zero when it did not say.
+	var lastRetryAfter time.Duration
 	authRetries := 0
 
 	for attempt := 0; attempt <= maxRetries; attempt++ {
@@ -364,6 +372,8 @@ func (c *Client) postJSON(ctx context.Context, path string, body *requestBody) (
 			if delay > maxDelay {
 				delay = maxDelay
 			}
+			delay = max(delay, lastRetryAfter)
+			lastRetryAfter = 0
 			if c.onRetry != nil {
 				reason := lastErr
 				if reason == nil && lastStatusCode != 0 {
@@ -469,6 +479,17 @@ func (c *Client) postJSON(ctx context.Context, path string, body *requestBody) (
 			if resp.StatusCode == 500 && isPermanent500Error(respBody) {
 				return nil, false, lastErr
 			}
+			// A refusal that says to come back later than this loop would
+			// ever wait is refused again on every attempt, so it is returned
+			// now. OpenCode Go answers a used-up 5-hour, weekly or monthly
+			// limit this way, with a Retry-After of hours or days, and the
+			// ladder would hold the turn for eight and a half minutes of
+			// refusals before failing it.
+			wait := retryAfter(resp.Header.Get("Retry-After"), time.Now())
+			if wait > maxDelay {
+				return nil, false, fmt.Errorf("%w (not retried: the endpoint asks to wait %s)", lastErr, wait.Round(time.Second))
+			}
+			lastRetryAfter = wait
 			if isRetryableError(resp.StatusCode, nil) && attempt < maxRetries {
 				continue // retry
 			}
@@ -485,16 +506,67 @@ func (c *Client) postJSON(ctx context.Context, path string, body *requestBody) (
 	return nil, false, fmt.Errorf("after %d retries: %w", maxRetries, c.statusError(lastStatusCode, lastRespBody))
 }
 
-// StatusError is an answer with an HTTP status other than 200. Its text is the
-// one this client has always printed; the type exists so that a caller that
-// has to act on the code, such as kvit-coder-ui telling a refused key from a
-// protocol the endpoint does not serve, can find it with errors.As.
+// retryAfter reads a Retry-After header, in seconds or as an HTTP date, as
+// the time to wait from now; zero when it is absent, unreadable or past.
+func retryAfter(header string, now time.Time) time.Duration {
+	header = strings.TrimSpace(header)
+	if header == "" {
+		return 0
+	}
+	if seconds, err := strconv.ParseInt(header, 10, 64); err == nil {
+		if seconds <= 0 {
+			return 0
+		}
+		return time.Duration(min(seconds, int64(math.MaxInt64/time.Second))) * time.Second
+	}
+	if at, err := http.ParseTime(header); err == nil && at.After(now) {
+		return at.Sub(now)
+	}
+	return 0
+}
+
+// StatusError is an answer with an HTTP status other than 200. Its text is
+// "API error <code>: " and the provider's message; the type exists so that a
+// caller that has to act on the code, such as kvit-coder-ui telling a refused
+// key from a protocol the endpoint does not serve, can find it with errors.As,
+// and Body keeps the whole answer.
 type StatusError struct {
 	Code int
 	Body []byte
 }
 
-func (e *StatusError) Error() string { return fmt.Sprintf("API error %d: %s", e.Code, e.Body) }
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("API error %d: %s", e.Code, providerMessage(e.Body))
+}
+
+// providerMessage is the sentence an error answer has for a person, where it
+// is JSON that has one, and otherwise the answer as it came. Providers put it
+// in error.message (OpenAI, Anthropic, OpenCode, llama.cpp), in error itself,
+// or in message; the rest of the JSON is type names and codes, and a long
+// message behind them is cut off when the error is shown on one line, as
+// OpenCode's "5-hour usage limit reached. Resets in 2hr 13min." was.
+func providerMessage(body []byte) string {
+	var answer struct {
+		Error   json.RawMessage `json:"error"`
+		Message string          `json:"message"`
+	}
+	if json.Unmarshal(body, &answer) != nil {
+		return string(body)
+	}
+	var nested struct {
+		Message string `json:"message"`
+	}
+	var text string
+	switch {
+	case json.Unmarshal(answer.Error, &nested) == nil && strings.TrimSpace(nested.Message) != "":
+		return strings.TrimSpace(nested.Message)
+	case json.Unmarshal(answer.Error, &text) == nil && strings.TrimSpace(text) != "":
+		return strings.TrimSpace(text)
+	case strings.TrimSpace(answer.Message) != "":
+		return strings.TrimSpace(answer.Message)
+	}
+	return string(body)
+}
 
 // statusError describes a request the endpoint refused. For 401 and 403 it
 // adds what to do about it: the provider's own message says the key is missing

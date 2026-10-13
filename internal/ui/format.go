@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/kvit-s/kvit-coder/internal/llm"
 )
 
 // MakePrompt creates a colored prompt with white text on gray background
@@ -251,6 +253,50 @@ func FormatContextUsed(used, window int) string {
 	}
 	pct := 100 * float64(used) / float64(window)
 	return fmt.Sprintf("%s / %s (%.0f%%)", count, FormatTokens(window), pct)
+}
+
+// FormatPlanUsage is a subscription plan's limits on one line, e.g.
+// "5-hour 37% (resets 08:08) · weekly 1% (resets Mon 19:00) · monthly 21%
+// (resets 25 Oct)", with a window that refuses requests as "5-hour used up";
+// "" for no windows. A reset is shown in now's time zone: the time alone when
+// it is today, the weekday and time within the week, the date after that.
+func FormatPlanUsage(windows []llm.PlanWindow, now time.Time) string {
+	parts := make([]string, 0, len(windows))
+	for _, w := range windows {
+		part := planWindowLabel(w.Name)
+		switch {
+		case w.Status == "rejected":
+			part += " used up"
+		case w.Used != nil:
+			part += fmt.Sprintf(" %.0f%%", 100**w.Used)
+		}
+		if !w.ResetsAt.IsZero() {
+			part += " (resets " + formatReset(w.ResetsAt, now) + ")"
+		}
+		parts = append(parts, part)
+	}
+	return strings.Join(parts, " · ")
+}
+
+func planWindowLabel(name string) string {
+	switch name {
+	case "five_hour":
+		return "5-hour"
+	case "seven_day":
+		return "weekly"
+	}
+	return strings.ReplaceAll(name, "_", " ")
+}
+
+func formatReset(at, now time.Time) string {
+	at = at.In(now.Location())
+	switch {
+	case at.Year() == now.Year() && at.YearDay() == now.YearDay():
+		return at.Format("15:04")
+	case at.Sub(now) < 6*24*time.Hour:
+		return at.Format("Mon 15:04")
+	}
+	return at.Format("2 Jan")
 }
 
 // FormatContextStr formats context usage for display.

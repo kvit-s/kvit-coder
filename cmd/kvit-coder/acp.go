@@ -1052,7 +1052,7 @@ func (a *acpAgent) runPrompt(ctx context.Context, s *acpSession, text string, im
 	if err != nil {
 		return nil, err
 	}
-	r.sendUsage(turn.cfg.LLM.Context, result.Stats.MaxContextUsed, turn.sess.Meta().Cost)
+	r.sendUsage(turn.cfg.LLM.Context, result.Stats.MaxContextUsed, turn.sess.Meta().Cost, result.PlanUsage)
 
 	s.mu.Lock()
 	cancelled := s.cancelled

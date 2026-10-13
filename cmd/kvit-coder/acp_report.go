@@ -383,10 +383,24 @@ func (r *turnReporter) sendTitle(title string) {
 	}
 }
 
-func (r *turnReporter) sendUsage(size, used int, cost float64) {
+func (r *turnReporter) sendUsage(size, used int, cost float64, plan []llm.PlanWindow) {
+	r.update(usageUpdate(size, used, cost, plan))
+}
+
+// usageUpdate is the usage_update for the context in use, its size, the
+// session's cost and the subscription plan's limits. ACP has no field for a
+// plan's limits, so they go in the update's _meta, which a client that does not
+// know them ignores:
+//
+//	"_meta":{"kvit":{"planUsage":[{"window":"five_hour","utilization":0.42,
+//	         "resetsAt":"2026-10-13T08:08:22Z","status":"allowed"},…]}}
+func usageUpdate(size, used int, cost float64, plan []llm.PlanWindow) map[string]any {
 	u := map[string]any{"sessionUpdate": "usage_update", "used": used, "size": size}
 	if cost > 0 {
 		u["cost"] = map[string]any{"amount": cost, "currency": "USD"}
 	}
-	r.update(u)
+	if len(plan) > 0 {
+		u["_meta"] = map[string]any{"kvit": map[string]any{"planUsage": plan}}
+	}
+	return u
 }

@@ -95,6 +95,10 @@ type RunResult struct {
 	// it. It has already been reported to the user by the time Run returns;
 	// it is here so the caller can set the process's exit status from it.
 	Failure error
+	// PlanUsage is the subscription plan's limits as they stood after the
+	// turn. Run leaves it empty; repl.RunTurn asks for it (Runner.PlanUsage)
+	// when the endpoint has a plan to ask about.
+	PlanUsage []llm.PlanWindow
 }
 
 // NewRunner creates a new agent runner
@@ -475,6 +479,19 @@ func (r *Runner) flush(state *runState) {
 		return
 	}
 	state.persistedUpTo = len(state.messages)
+}
+
+// PlanUsage asks the model's endpoint how much of its subscription plan's
+// limits have been used (llm.Client.PlanUsage); nil when the client has no
+// plan to ask about, as a test's stand-in client has not.
+func (r *Runner) PlanUsage(ctx context.Context) ([]llm.PlanWindow, error) {
+	planned, ok := r.llmClient.(interface {
+		PlanUsage(context.Context) ([]llm.PlanWindow, error)
+	})
+	if !ok {
+		return nil, nil
+	}
+	return planned.PlanUsage(ctx)
 }
 
 // SetPersist installs the hooks that record what the loop produces and what it

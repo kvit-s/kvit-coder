@@ -15,6 +15,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/kvit-s/kvit-coder/internal/llm"
 )
 
 // These tests drive `kvit-coder acp` as a client would: JSON-RPC lines on a
@@ -478,6 +480,24 @@ func TestACPTurnReportsItsToolCallsAndReply(t *testing.T) {
 // TestACPResumeAndLoadContinueTheSession: a second process reopens the
 // session by id. session/resume sends nothing and the next prompt carries the
 // conversation so far; session/load first replays it as updates.
+// The plan's limits go in usage_update's _meta under the names kvit-works
+// reads Claude Code's under; with no plan there is no _meta at all.
+func TestUsageUpdateCarriesThePlansLimits(t *testing.T) {
+	used := 0.37
+	plan := []llm.PlanWindow{{Name: "five_hour", Used: &used, ResetsAt: time.Date(2026, 10, 13, 8, 8, 22, 0, time.UTC), Status: "allowed"}}
+	encoded, err := json.Marshal(usageUpdate(1000000, 104700, 0, plan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `"_meta":{"kvit":{"planUsage":[{"window":"five_hour","utilization":0.37,"resetsAt":"2026-10-13T08:08:22Z","status":"allowed"}]}}`
+	if !strings.Contains(string(encoded), want) {
+		t.Errorf("usage_update %s, want it to contain %s", encoded, want)
+	}
+	if _, ok := usageUpdate(1000000, 104700, 0, nil)["_meta"]; ok {
+		t.Error("a usage_update without a plan has _meta")
+	}
+}
+
 func TestACPResumeAndLoadContinueTheSession(t *testing.T) {
 	f := newACPFixture(t, "")
 	first := startACP(t, f.config)
