@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/agent"
 	"github.com/kvit-s/kvit-coder/internal/config"
@@ -191,6 +192,17 @@ func RunTurn(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 		return result, err
 	}
 
+	// The plan's limits are asked for after the turn, so they include what it
+	// used, and only where something shows them. A cancelled turn used some
+	// too, so the request does not end with ctx; it has its own timeout.
+	if !quietMode && !writer.IsJSONMode() {
+		plan, planErr := runner.PlanUsage(context.WithoutCancel(ctx))
+		if planErr != nil {
+			writer.Debug(fmt.Sprintf("cannot read the plan's usage: %v", planErr))
+		}
+		result.PlanUsage = plan
+	}
+
 	// The loop has already written its messages; what is left is why it stopped.
 	if sess != nil {
 		// The session's cost so far, summed over its turns, so a caller that
@@ -253,6 +265,9 @@ func RunTurn(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 			// number the per-step status lines were counting toward.
 			if used := result.Stats.MaxContextUsed; used > 0 {
 				fmt.Fprintf(os.Stderr, "Context: %s\n", ui.FormatContextUsed(used, cfg.LLM.Context))
+			}
+			if plan := ui.FormatPlanUsage(result.PlanUsage, time.Now()); plan != "" {
+				fmt.Fprintf(os.Stderr, "Plan: %s\n", plan)
 			}
 		}
 	}

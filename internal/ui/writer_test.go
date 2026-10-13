@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/kvit-s/kvit-coder/internal/llm"
 	"github.com/kvit-s/kvit-coder/internal/report"
 )
 
@@ -501,6 +503,34 @@ func TestFormatContextUsed(t *testing.T) {
 	// A sub-1M window stays on the k scale.
 	if got := FormatContextUsed(262144, 262144); got != "262k / 262k (100%)" {
 		t.Errorf("full 256k window = %q", got)
+	}
+}
+
+// TestFormatPlanUsage: the turn-end line for a subscription's limits, as
+// OpenCode Go reported them on 2026-10-12, read the next morning.
+func TestFormatPlanUsage(t *testing.T) {
+	share := func(f float64) *float64 { return &f }
+	now := time.Date(2026, 10, 13, 3, 30, 0, 0, time.UTC)
+	windows := []llm.PlanWindow{
+		{Name: "five_hour", Used: share(0.37), ResetsAt: time.Date(2026, 10, 13, 8, 8, 22, 0, time.UTC), Status: "allowed"},
+		{Name: "seven_day", Used: share(0.01), ResetsAt: time.Date(2026, 10, 19, 0, 0, 0, 0, time.UTC), Status: "allowed"},
+		{Name: "monthly", Used: share(0.21), ResetsAt: time.Date(2026, 10, 25, 16, 54, 53, 0, time.UTC), Status: "allowed"},
+	}
+	want := "5-hour 37% (resets 08:08) · weekly 1% (resets Mon 00:00) · monthly 21% (resets 25 Oct)"
+	if got := FormatPlanUsage(windows, now); got != want {
+		t.Errorf("plan = %q, want %q", got, want)
+	}
+	// The weekly reset is shown in the reader's time zone, here a day earlier.
+	chicago := time.FixedZone("CDT", -5*60*60)
+	if got := FormatPlanUsage(windows[1:2], now.In(chicago)); got != "weekly 1% (resets Sun 19:00)" {
+		t.Errorf("weekly in CDT = %q", got)
+	}
+	used := []llm.PlanWindow{{Name: "five_hour", Used: share(1), ResetsAt: windows[0].ResetsAt, Status: "rejected"}}
+	if got := FormatPlanUsage(used, now); got != "5-hour used up (resets 08:08)" {
+		t.Errorf("used up = %q", got)
+	}
+	if got := FormatPlanUsage(nil, now); got != "" {
+		t.Errorf("no plan = %q, want nothing", got)
 	}
 }
 

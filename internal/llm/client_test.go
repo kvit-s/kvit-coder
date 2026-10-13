@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 type flipAuth struct {
@@ -429,6 +431,100 @@ func TestChatMaxRetriesCapsAttempts(t *testing.T) {
 				t.Errorf("server saw %d requests, want %d", requests, tt.wantRequests)
 			}
 		})
+	}
+}
+
+// A refusal whose Retry-After is longer than the retry ladder would ever wait
+// is returned at once. This is how OpenCode Go refuses a request once a
+// 5-hour, weekly or monthly limit is used up (its gateway's code before the
+// gateway was closed; the body is that code's).
+func TestChatDoesNotRetryALongRetryAfter(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Retry-After", "7980")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"GoUsageLimitError","message":"5-hour usage limit reached. Resets in 2hr 13min."},"metadata":{"limitName":"5 hour"}}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key")
+	_, err := client.Chat(context.Background(), ChatRequest{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}})
+	if requests != 1 {
+		t.Errorf("server saw %d requests, want 1", requests)
+	}
+	var status *StatusError
+	if !errors.As(err, &status) || status.Code != http.StatusTooManyRequests {
+		t.Fatalf("err = %v, want the 429", err)
+	}
+	want := "API error 429: 5-hour usage limit reached. Resets in 2hr 13min. (not retried: the endpoint asks to wait 2h13m0s)"
+	if err.Error() != want {
+		t.Errorf("err = %q, want %q", err, want)
+	}
+}
+
+// An error answer reads as the provider's sentence, wherever its JSON puts
+// it, and as it came when it has none.
+func TestStatusErrorSaysTheProvidersMessage(t *testing.T) {
+	cases := map[string]string{
+		`{"type":"error","error":{"type":"EntitlementError","message":"OpenCode Go subscription required."}}`:                           "OpenCode Go subscription required.",
+		`{"error":{"message":"maximum context length is 8192 tokens","type":"invalid_request_error","code":"context_length_exceeded"}}`: "maximum context length is 8192 tokens",
+		`{"error":"model not found"}`:                "model not found",
+		`{"object":"error","message":"bad request"}`: "bad request",
+		`{"error":{"code":500}}`:                     `{"error":{"code":500}}`,
+		"<html>502 Bad Gateway</html>":               "<html>502 Bad Gateway</html>",
+		"":                                           "",
+	}
+	for body, want := range cases {
+		err := &StatusError{Code: 400, Body: []byte(body)}
+		if got := err.Error(); got != "API error 400: "+want {
+			t.Errorf("body %s reads %q, want %q", body, got, "API error 400: "+want)
+		}
+	}
+}
+
+// A shorter Retry-After is waited out rather than the ladder's first second.
+func TestChatWaitsOutAShortRetryAfter(t *testing.T) {
+	var times []time.Time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		times = append(times, time.Now())
+		if len(times) == 1 {
+			w.Header().Set("Retry-After", "2")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"message":"slow down"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(ChatResponse{ID: "c", Model: "m",
+			Choices: []Choice{{Message: Message{Role: RoleAssistant, Content: "ok"}, FinishReason: "stop"}}})
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, "test-key", WithMaxRetries(1))
+	if _, err := client.Chat(context.Background(), ChatRequest{Model: "m", Messages: []Message{{Role: RoleUser, Content: "hi"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(times) != 2 || times[1].Sub(times[0]) < 2*time.Second {
+		t.Errorf("requests at %v, want a second one 2s after the first", times)
+	}
+}
+
+func TestRetryAfter(t *testing.T) {
+	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	cases := map[string]time.Duration{
+		"":                              0,
+		"30":                            30 * time.Second,
+		" 7980 ":                        7980 * time.Second,
+		"0":                             0,
+		"-5":                            0,
+		"soon":                          0,
+		"Mon, 12 Oct 2026 14:00:00 GMT": 2 * time.Hour,
+		"Mon, 12 Oct 2026 11:00:00 GMT": 0,
+	}
+	for header, want := range cases {
+		if got := retryAfter(header, now); got != want {
+			t.Errorf("retryAfter(%q) = %v, want %v", header, got, want)
+		}
 	}
 }
 

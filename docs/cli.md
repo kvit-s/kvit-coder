@@ -28,6 +28,16 @@ are for; this file is the reference.
 | `--session-delete <name>` | Delete a session | - |
 | `--version` | Show version info | - |
 
+A `-p` turn, and so each turn in `kvit-coder-ui`, ends with the session's name
+and title and the context in use. When the model is served on an OpenCode Go
+subscription (a `base_url` of `https://opencode.ai/zen/go/v1`), a last line
+gives the subscription's limits as they stand after the turn, asked of
+OpenCode's `GET …/go/v1/usage`, with reset times in local time:
+
+```
+Plan: 5-hour 37% (resets 08:08) · weekly 1% (resets Sun 19:00) · monthly 21% (resets 25 Oct)
+```
+
 ### kvit-coder acp
 
 `kvit-coder acp [-config <path>] [-log <path>]` runs the agent for an editor or
@@ -49,7 +59,13 @@ and writes its output into its tool result.
   as `session/update` notifications: the model's text and reasoning, each tool
   call with its kind, file and arguments, its result (with a diff when it
   changed a file), the session's title, and the context in use with
-  the session's cost so far. The answer gives `end_turn`, `max_turn_requests`
+  the session's cost so far. When the model is served on an OpenCode Go
+  subscription (a `base_url` of `https://opencode.ai/zen/go/v1`), that last
+  `usage_update` also has the subscription's limits as they stand after the
+  turn, read from OpenCode's `GET …/go/v1/usage`, in
+  `_meta.kvit.planUsage`: one object per window, `five_hour`, `seven_day` and
+  `monthly`, each with `utilization` (0 to 1), `resetsAt` and `status`
+  (`allowed` or `rejected`). The answer gives `end_turn`, `max_turn_requests`
   when the iteration budget ran out, or `cancelled` after `session/cancel`; a
   turn that failed is answered with an error giving the reason.
 - A shell command that needs permission, a path outside the workspace, and a
