@@ -41,6 +41,11 @@ type Runner struct {
 	persist      func([]llm.Message) error
 	rollback     func(int) error
 	toolStart    func(internalName string, tc llm.ToolCall)
+	// compactor rewrites the context when it nears the model's window, and
+	// notice records something that happened to the turn. Both are set by a
+	// caller with a session; see SetCompactor and SetNotice.
+	compactor Compactor
+	notice    func(string) error
 }
 
 // RunnerOptions contains all dependencies for creating a Runner
@@ -73,6 +78,11 @@ type RunnerOptions struct {
 type RunConfig struct {
 	Messages  []llm.Message
 	QuietMode bool
+	// Compaction says where Messages stand in the session's conversation, so
+	// the loop can compact them when they near the window. Nil turns
+	// compaction off for the run, which is what a benchmark or a subagent,
+	// with no session to record it in, gets.
+	Compaction *CompactionStart
 }
 
 // RunResult contains the results of running the agent loop
@@ -182,6 +192,10 @@ type runState struct {
 	// Anomaly interrogation state (Improvement 2), per-task.
 	interrogationCount int
 	seenInterrogations map[string]bool
+
+	// comp is where the conversation stands for compaction, nil when the run
+	// has none.
+	comp *compactionState
 }
 
 // llmCallResult holds the outcome of an LLM call
@@ -234,6 +248,7 @@ func (r *Runner) initRunState(rcfg RunConfig) *runState {
 		// tool calls does not need it, and scraping its prose can turn a
 		// sentence about a command into a command.
 		normalizer: llm.NewResponseNormalizer(r.toolCallExtractor(), r.cfg.LLM.MergeThinking),
+		comp:       newCompactionState(rcfg.Compaction, len(rcfg.Messages)),
 	}
 }
 
@@ -282,6 +297,12 @@ func (r *Runner) Run(ctx context.Context, rcfg RunConfig) (*RunResult, error) {
 		// Anything that arrived since the last iteration goes in before the
 		// rollback point, so backtracking cannot discard it.
 		r.drainInbox(state)
+
+		// A request that would leave too little of the window free is
+		// compacted before it is sent, and past the tier 0 point the turn
+		// stops merging thinking (docs/compaction.md). Before the rollback
+		// point, so a backtrack never reaches behind a rewrite.
+		r.checkCompaction(ctx, state)
 
 		// Save current history length for potential rollback (backtrack mode)
 		rollbackPoint := len(state.messages)

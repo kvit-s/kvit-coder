@@ -69,11 +69,11 @@ func (m *Manager) SessionExists(name string) bool {
 // LoadSession returns a session's conversation without opening or migrating
 // it, for listing and display.
 func (m *Manager) LoadSession(name string) ([]llm.Message, error) {
-	dirHistory := filepath.Join(m.baseDir, name, historyFile)
-	if _, err := os.Stat(dirHistory); err == nil {
-		return readHistory(dirHistory)
+	tl, err := m.loadTimeline(name)
+	if err != nil {
+		return nil, err
 	}
-	return readHistory(filepath.Join(m.baseDir, name+".jsonl"))
+	return tl.Messages, nil
 }
 
 // RunIDVar is the environment variable the LLM client's ${KVIT_RUN_ID} header
@@ -248,9 +248,21 @@ func (m *Manager) DeleteSession(name string) error {
 
 // ShowSession returns the formatted content of a session for display.
 func (m *Manager) ShowSession(name string) (string, error) {
-	messages, err := m.LoadSession(name)
+	tl, err := m.loadTimeline(name)
 	if err != nil {
 		return "", err
+	}
+	messages := tl.Messages
+	// Each compaction is shown where it happened, between the messages it
+	// was written after.
+	compactions := map[int][]Compaction{}
+	for _, c := range tl.Compactions {
+		compactions[c.At] = append(compactions[c.At], c)
+	}
+	showCompactions := func(sb *strings.Builder, at int) {
+		for _, c := range compactions[at] {
+			sb.WriteString(fmt.Sprintf("── context compacted: %s → %s tokens ──\n\n", tokensK(c.TokensBefore), tokensK(c.TokensAfter)))
+		}
 	}
 
 	var sb strings.Builder
@@ -260,7 +272,8 @@ func (m *Manager) ShowSession(name string) (string, error) {
 	}
 	sb.WriteString(strings.Repeat("─", 50) + "\n\n")
 
-	for _, msg := range messages {
+	for i, msg := range messages {
+		showCompactions(&sb, i)
 		switch msg.Role {
 		case llm.RoleSystem:
 			sb.WriteString("[system] (omitted)\n\n")
@@ -288,8 +301,31 @@ func (m *Manager) ShowSession(name string) (string, error) {
 			sb.WriteString(fmt.Sprintf("[tool: %s] (result omitted)\n\n", msg.Name))
 		}
 	}
+	showCompactions(&sb, len(messages))
 
 	return sb.String(), nil
+}
+
+// loadTimeline reads a session's history, from its directory or from the
+// single file a session used to be, without opening it.
+func (m *Manager) loadTimeline(name string) (*Timeline, error) {
+	dirHistory := filepath.Join(m.baseDir, name, historyFile)
+	if _, err := os.Stat(dirHistory); err == nil {
+		return readTimeline(dirHistory)
+	}
+	return readTimeline(filepath.Join(m.baseDir, name+".jsonl"))
+}
+
+// tokensK is a token count on the scale ShowSession prints: 953k, 4.2k, 812.
+func tokensK(n int) string {
+	switch {
+	case n >= 100000:
+		return fmt.Sprintf("%.0fk", float64(n)/1000)
+	case n >= 1000:
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	default:
+		return fmt.Sprintf("%d", n)
+	}
 }
 
 // AcquireLock takes an exclusive lock on a session by name. The lock file

@@ -69,6 +69,8 @@ func main() {
 	execPrompt := flag.String("p", "", "exec mode: run with this prompt and exit after completion")
 	quietPrompt := flag.String("pq", "", "quiet exec mode: run with this prompt and only print final LLM response")
 	wakeOnly := flag.Bool("wake", false, "inbox-only turn: skip the user message and process pending inbox/proc events")
+	compactOnly := flag.Bool("compact", false, "compact the session's context now and exit without running a turn (needs -s or -c)")
+	compactFocus := flag.String("focus", "", "with --compact: what the summaries should concentrate on")
 	jsonOutput := flag.Bool("json", false, "output structured JSON messages to stderr")
 	structured := flag.Bool("structured", false, "end the turn with a structured report instead of prose (see docs/structured-reports.md)")
 	showVersion := flag.Bool("version", false, "show version information and exit")
@@ -209,6 +211,12 @@ func main() {
 		execMode = true
 		promptText = *execPrompt
 		quietMode = false
+	} else if *compactOnly {
+		// Not a turn: the session's context is rewritten and nothing is sent
+		// to the model but the compaction requests.
+		execMode = true
+		promptText = ""
+		quietMode = false
 	} else if *wakeOnly {
 		// Inbox-only turn, fired by the UI when the inbox waited while no
 		// turn ran: no user message, the drain is the prompt.
@@ -288,6 +296,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	// --compact works on an existing session, which it must be told.
+	if *compactOnly && *sessionName == "" && !*continueLast {
+		fmt.Fprintln(os.Stderr, "--compact needs a session: -s <name> or -c")
+		os.Exit(1)
+	}
+	if *compactOnly && *sessionName != "" {
+		if mgr, err := session.NewManager(); err == nil && !mgr.SessionExists(*sessionName) {
+			fmt.Fprintf(os.Stderr, "--compact: no session %q\n", *sessionName)
+			os.Exit(1)
+		}
+	}
+
 	// -m/-e are shorthand for --model/--effort.
 	modelRef := *model
 	if modelRef == "" {
@@ -317,7 +337,7 @@ func main() {
 		ThinkbenchSuite:   *thinkbenchSuite,
 		SessionName:       *sessionName,
 		ContinueLast:      *continueLast,
-		ReadTerminal:      true,
+		ReadTerminal:      !*compactOnly,
 		Interrupts:        true,
 	})
 	if err != nil {
@@ -333,6 +353,15 @@ func main() {
 	systemPrompt := turn.systemPrompt
 	runCtx := turn.runCtx
 	originalWorkspaceRoot := turn.originalWorkspaceRoot
+
+	if *compactOnly {
+		if err := repl.CompactSession(runCtx, runner, writer, cfg, systemPrompt, turn.sess, *compactFocus); err != nil {
+			writer.Error(fmt.Sprintf("compaction failed: %v", err))
+			turn.Close()
+			os.Exit(1)
+		}
+		return
+	}
 
 	// Run benchmark mode if requested
 	if benchmarkEnabled {

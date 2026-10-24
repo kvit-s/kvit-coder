@@ -22,6 +22,8 @@ are for; this file is the reference.
 | `--structured` | End the turn with a structured report instead of prose (a validated JSON report; see `Report` in the tool list) | false |
 | `-s <name>` | Continue or create named session | - |
 | `-c` | Continue the most recent session | - |
+| `--compact` | Shorten the session's context now and exit without running a turn; needs `-s` or `-c` (see [compaction.md](compaction.md)) | false |
+| `--focus <text>` | With `--compact`: what the summaries should concentrate on | - |
 | `--yolo` | Read and write anywhere, and run anything that would have asked | false |
 | `--sessions` | List sessions | - |
 | `--session-show <name>` | Show session history | - |
@@ -102,6 +104,14 @@ and writes its output into its tool result.
 | `--yolo` | Read and write anywhere, and run anything that would have asked (passed to each turn) | false |
 | `--structured` | End each turn with a structured report, drawn as a card at the prompt (`--structured=false` for prose) | true |
 | `-setup` | Open [`:setup`](#setting-up-models) before the first prompt, to add models or turn on web search | false |
+
+`:compact [focus]` shortens the current session's context now, without
+running a turn: it starts `kvit-coder --compact` with the model and endpoint the
+session is using, and with `--focus` when words follow the command. Finished
+turns are reduced to what was asked and the answer they ended with, the oldest
+of them are summarized by the model, and the next turn sends the shorter
+context. A session also compacts by itself as it nears the model's window,
+unless `compaction.auto` is off; see [compaction.md](compaction.md).
 
 #### Setting up models
 

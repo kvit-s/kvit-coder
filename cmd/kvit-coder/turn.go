@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/agent"
 	"github.com/kvit-s/kvit-coder/internal/benchmark"
+	"github.com/kvit-s/kvit-coder/internal/compaction"
 	"github.com/kvit-s/kvit-coder/internal/config"
 	"github.com/kvit-s/kvit-coder/internal/inbox"
 	"github.com/kvit-s/kvit-coder/internal/llm"
@@ -591,6 +593,23 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 		Procs:     procRegistry,
 	})
 
+	// Compaction rewrites the context as it nears the window, and records
+	// the rewrite in the session (docs/compaction.md). Its requests go
+	// through this turn's client with this turn's tools, so they start as the
+	// turn's own requests did and the server has them cached.
+	if sess != nil {
+		client, model := compactionClient(cfg, t.llmClient, writer)
+		t.runner.SetCompactor(&compaction.Compactor{
+			Sess:        sess,
+			Client:      client,
+			Model:       model,
+			Tools:       registry.Specs,
+			Temperature: cfg.LLM.Temperature,
+			Limits:      compaction.Resolve(cfg.Compaction, cfg.LLM.Context),
+			Warn:        writer.Warn,
+		})
+	}
+
 	// The Subagent child loop is the parent Runner itself: rebind it now
 	// that both exist, breaking the tools->agent import cycle.
 	if sub := registry.Get("Subagent"); sub != nil {
@@ -600,4 +619,43 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 	}
 
 	return t, nil
+}
+
+// compactionClient is the client and model compaction requests go to: the
+// turn's own, unless compaction.model names another models: entry, which then
+// gets a client of its own with the same timeouts and retries as the turn's.
+func compactionClient(cfg *config.Config, turnClient *llm.Client, writer *ui.Writer) (compaction.Chatter, string) {
+	ref := strings.TrimSpace(cfg.Compaction.Model)
+	if ref == "" {
+		return turnClient, cfg.LLM.Model
+	}
+	entry, _, err := cfg.ResolveModel(ref)
+	if err != nil {
+		writer.Warn(fmt.Sprintf("compaction.model %q: %v; using the session's model", ref, err))
+		return turnClient, cfg.LLM.Model
+	}
+	baseURL := entry.BaseURL
+	if baseURL == "" {
+		baseURL = cfg.LLM.BaseURL
+	}
+	apiKey := config.EntryAPIKey(entry)
+	if apiKey == "" {
+		apiKey = cfg.LLM.APIKey
+	}
+	backend := entry.APIBackend
+	if backend == "" {
+		backend = cfg.LLM.APIBackend
+	}
+	effortField := entry.EffortField
+	if effortField == "" {
+		effortField = cfg.LLM.EffortField
+	}
+	client := llm.NewClient(baseURL, apiKey,
+		llm.WithBackend(backend),
+		llm.WithHeaders(cfg.HeadersFor(entry)),
+		llm.WithReasoningEffort(cfg.DefaultEffort(entry)),
+		llm.WithEffortField(effortField),
+		llm.WithTimeout(time.Duration(cfg.LLM.RequestTimeout)*time.Second),
+	)
+	return client, entry.Model
 }

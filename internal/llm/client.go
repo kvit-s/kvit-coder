@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -70,6 +71,9 @@ type Client struct {
 	reasoningEffort  string
 	effortField      string
 	reasoningSummary string
+	// summaryMu guards reasoningSummary, which SetReasoningSummary changes
+	// mid-turn while a subagent may be building a request on the same client.
+	summaryMu sync.Mutex
 	// onRetry, when set, is told that a request failed and is about to be
 	// tried again. Without it a failing endpoint is indistinguishable from a
 	// slow one: the caller's progress indicator ticks on either way, and a
@@ -197,6 +201,24 @@ func WithEffortField(field string) Option {
 // auto, concise, detailed). Without it merge_thinking has nothing to merge.
 func WithReasoningSummary(summary string) Option {
 	return func(c *Client) { c.reasoningSummary = summary }
+}
+
+// SetReasoningSummary changes what readable thinking later requests ask for,
+// "" for none. A turn past the point where it stops merging thinking calls it
+// so that no output tokens are paid for text it would throw away
+// (docs/compaction.md, tier 0). The field sits outside the input, so changing
+// it leaves the server's cached prefix alone.
+func (c *Client) SetReasoningSummary(summary string) {
+	c.summaryMu.Lock()
+	defer c.summaryMu.Unlock()
+	c.reasoningSummary = summary
+}
+
+// currentReasoningSummary is reasoningSummary read under its lock.
+func (c *Client) currentReasoningSummary() string {
+	c.summaryMu.Lock()
+	defer c.summaryMu.Unlock()
+	return c.reasoningSummary
 }
 
 func NewClient(baseURL, apiKey string, opts ...Option) *Client {

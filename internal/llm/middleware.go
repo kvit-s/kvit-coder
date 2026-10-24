@@ -24,6 +24,19 @@ func NewResponseNormalizer(extractor ToolCallExtractor, mergeThinking bool) *Res
 	}
 }
 
+// SetMergeThinking changes whether later responses have their readable
+// thinking merged into their content. A turn past the tier 0 point of
+// docs/compaction.md turns it off, so the conversation stops growing by the
+// model's thinking; what was merged before stays merged.
+func (n *ResponseNormalizer) SetMergeThinking(merge bool) {
+	n.mergeThinking = merge
+}
+
+// MergeThinking reports whether readable thinking is currently being merged.
+func (n *ResponseNormalizer) MergeThinking() bool {
+	return n.mergeThinking
+}
+
 // NormalizeResponse applies all middleware transformations to an LLM response.
 // Returns true if tool calls were extracted (requires updating finish reason).
 func (n *ResponseNormalizer) NormalizeResponse(msg *Message) bool {

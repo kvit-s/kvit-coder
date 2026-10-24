@@ -601,6 +601,11 @@ func (u *UI) handleCommand(input string) bool {
 		fmt.Print(content)
 		fmt.Println()
 
+	case "compact":
+		// :compact [focus] shortens the session's context now, without a
+		// turn; the words after it say what the summaries should keep.
+		u.runCompact(strings.Join(parts[1:], " "))
+
 	case "clear":
 		// Clear terminal
 		fmt.Print("\033[2J\033[H")
@@ -915,6 +920,7 @@ func (u *UI) showHelp() {
 	fmt.Println("  :resume          Continue the most recent session")
 	fmt.Println("  :sessions        List all sessions")
 	fmt.Println("  :history         Show current session history")
+	fmt.Println("  :compact [focus] Shorten the session's context now")
 	fmt.Println("  :report          Show the last turn's report again")
 	fmt.Println("  :clear           Clear the terminal")
 	fmt.Println("  :config          Show configuration")
@@ -1006,6 +1012,55 @@ func (u *UI) agentArgs(prompt string, images []string) []string {
 		args = append(args, "-structured")
 	}
 	return args
+}
+
+// compactArgs is the command line for :compact: the arguments a turn would
+// get, with --compact in place of the prompt, so the agent compacts with the
+// model and endpoint the session is using.
+func (u *UI) compactArgs(focus string) []string {
+	args := u.agentArgs("", nil)
+	args[0] = "--compact"
+	if f := strings.TrimSpace(focus); f != "" {
+		args = append(args, "--focus", f)
+	}
+	return args
+}
+
+// runCompact runs kvit-coder --compact on the current session and waits for
+// it. Ctrl-C is the agent's to handle, as during a turn.
+func (u *UI) runCompact(focus string) {
+	if u.currentSession == "" {
+		fmt.Println("No active session to compact.")
+		fmt.Println()
+		return
+	}
+	if !u.hasModel() {
+		fmt.Println("\033[38;5;136mNo model is set up, so nothing can be compacted. :setup adds one.\033[0m")
+		fmt.Println()
+		return
+	}
+	interrupts := make(chan os.Signal, 4)
+	signal.Notify(interrupts, procutil.InterruptSignals()...)
+	defer signal.Stop(interrupts)
+	go func() {
+		for range interrupts {
+			// The agent has it.
+		}
+	}()
+
+	cmd := exec.Command(u.agentPath, u.compactArgs(focus)...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	cmd.Env = append(os.Environ(), session.FromUIVar+"=1")
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && (exitErr.ExitCode() == 2 || exitErr.ExitCode() == 130) {
+			fmt.Println("[cancelled]")
+		} else {
+			fmt.Fprintf(os.Stderr, "\033[31m[error] Compaction failed: %v\033[0m\n", err)
+		}
+	}
+	fmt.Println()
 }
 
 func (u *UI) runAgent(prompt string, images []string) {

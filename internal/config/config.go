@@ -88,6 +88,10 @@ type Config struct {
 
 	Agent AgentConfig `yaml:"agent"`
 
+	// Compaction controls how the conversation is shrunk as it nears the
+	// model's context window. See CompactionConfig and docs/compaction.md.
+	Compaction CompactionConfig `yaml:"compaction"`
+
 	Backtrack BacktrackConfig `yaml:"backtrack"`
 
 	Tools ToolsConfig `yaml:"tools"`

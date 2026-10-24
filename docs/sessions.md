@@ -37,6 +37,35 @@ still readable later. A session left over from when a session was a single
 `<name>.jsonl` file is converted the first time it is opened; the old file is
 kept as `<name>.jsonl.migrated`.
 
+## When a session outgrows the context window
+
+Every request sends the whole conversation, and a long session eventually
+approaches the model's context window. Before that happens the conversation is
+shortened, in two steps that fire before a request is sent:
+
+- At 80% of the window, or at the point where the context is rewritten if
+  that comes first, the turn stops merging the model's readable thinking into its answers, with
+  `merge_thinking: true` or not, and stops asking for it. A line in the turn's
+  output says so.
+- When the request would leave less of the window free than the turn needs —
+  more for a turn that has already run long, at least room for one more step —
+  the context is rewritten. Each finished turn becomes what the user said and
+  the answer it ended with, plus a line naming the files it changed and read and
+  the commands it ran. The turn in progress becomes its own words, a compacted
+  version of its work written by the session's model, and its last 20k tokens
+  word for word. A line such as `context compacted: 953k → 61k tokens` says it
+  happened.
+
+A turn that ended without an answer (cancelled, out of iterations, failed)
+counts as part of the next one, so its work is compacted with it rather than
+lost. The rewrite is a `compaction` line in `history.jsonl`, and the history
+itself keeps every message: `--session-show` lists them all, with a line where
+each rewrite happened. `kvit-coder --compact -s <name>` and `:compact` in
+kvit-coder-ui rewrite on request, and `compaction.auto: false` turns the
+automatic rewrite off. The keys are in
+[configuration.md](configuration.md#compaction), and the design is in
+[compaction.md](compaction.md).
+
 ## Steering a running turn
 
 A message can reach the model between iterations of a turn that is already

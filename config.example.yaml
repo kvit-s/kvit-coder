@@ -51,6 +51,14 @@ agent:
   profile: strong
   max_tool_iterations: 1000
 
+# Shortening a session as it nears the model's context window (docs/compaction.md).
+# On by default; every number below is the default.
+compaction:
+  auto: true                     # rewrite the context without being asked; :compact works either way
+  keep_recent_tokens: 20000      # how much of the turn in progress stays word for word
+  turn_headroom_ratio: 0.5       # keep this share of the turn's own length free before rewriting
+  # model: ""                    # a models: entry to write the compacted text; empty uses the session's
+
 tools:
   read:
     enabled: true

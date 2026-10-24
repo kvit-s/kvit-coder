@@ -12,6 +12,7 @@ what the program is and how to install it; these pages are the detail behind it.
 | [`sessions.md`](sessions.md) | Sessions on disk, steering a running turn, batched calls, how a shell command is judged before it runs, background processes, and the tool the model uses to ask a question. |
 | [`mcp.md`](mcp.md) | Tools from Model Context Protocol servers, per-project instructions, and the agent file. |
 | [`architecture.md`](architecture.md) | Why the program is built the way it is: one process per turn, sessions as directories, input to a running turn, shell permissions, tool groups, and reading PDFs and Office documents. |
+| [`compaction.md`](compaction.md) | How a session is shortened as it nears the context window: the two tiers, the formula for when each fires, what is kept, and how it is recorded; with an appendix on how five open-source agents do it. |
 | [`agents-ram.md`](agents-ram.md) | Measured memory cost of one session of each coding agent on one machine, September 2026, with the method. |
 
 [`architecture.md`](architecture.md) describes the design as it is now. The

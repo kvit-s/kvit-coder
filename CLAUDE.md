@@ -89,7 +89,8 @@ See `internal/session/session.go` for the authoritative version of this.
 | `internal/config` | 1,050 | YAML config and path permissions |
 | `internal/llm` | 890 | HTTP client, chat-completions and Responses protocols, response normalization |
 | `internal/permissions` | 760 | Shell command permission from the parsed syntax tree |
-| `internal/session` | 740 | The session directory above |
+| `internal/session` | 1,750 | The session directory above, and the context built from it after compaction (`LoadContext`) |
+| `internal/compaction` | 690 | Shortening the context as it nears the window: the tier formula, the rewrite and its record. See `docs/compaction.md` |
 | `internal/procs` | 510 | Background process registry |
 | `internal/modelsetup` | 1,000 | What kcu's `:setup` needs: known providers, the models.dev catalog, endpoint model lists, row building, the test request |
 | `internal/repl`, `internal/tui`, `internal/inbox`, `internal/stats`, `internal/workspace` | <350 each | |
@@ -155,6 +156,13 @@ that calls `Load` would see the machine's own files, which is why
 an empty directory. kcu never writes `config.yaml`. An `llm:` block still
 naming the old example's `your-model` at `http://localhost:8080/v1` counts as
 no model. The design is `spec/configing.md`.
+
+**`Session.Load()` is the whole conversation; what the model is sent is
+`Session.LoadContext()`.** After a compaction the two differ: `history.jsonl`
+keeps every message, and a `compaction` line says what the context replaces.
+`--session-show`, the editor replay, the report card and migration read
+`Load()` on purpose. A turn reads `LoadContext()`, and positions in a
+compaction record count messages the way `Load()` returns them.
 
 **Path containment is not string prefixing.** Use
 `tools.NormalizeAndValidatePath`, not `strings.HasPrefix`, or

@@ -143,6 +143,13 @@ func (r *Runner) handleLLMError(ctx context.Context, err error, state *runState,
 
 	errStr := err.Error()
 
+	// A request the endpoint refused as longer than the window is compacted
+	// and sent again, once per refusal.
+	if r.compactAfterOverflow(ctx, err, state) {
+		result.shouldContinue = true
+		return result, nil
+	}
+
 	// Handle 400 errors (likely context overflow)
 	if strings.Contains(errStr, "API error 400") && state.contextOverflowRetries < maxContextOverflowRetries {
 		state.contextOverflowRetries++
@@ -285,7 +292,13 @@ func (r *Runner) processLLMResponse(ctx context.Context, resp *llm.ChatResponse,
 	}
 	state.agentStats.Steps++
 
+	// The session keeps the server's count on the message's history line, and
+	// compaction measures the turn's growth from it.
+	assistantMsg.PromptTokens = promptTokens
+	r.recordPromptSize(promptTokens, state)
+
 	r.logger.LLMCall(r.cfg.LLM.Model, promptTokens, completionTokens, duration)
+	r.logReasoningBlocks(&assistantMsg, promptTokens)
 
 	return &assistantMsg, true
 }
@@ -352,6 +365,10 @@ func (r *Runner) checkContextBudget(promptTokens int, state *runState) {
 	if limit <= 0 || promptTokens <= 0 || state.contextWarned {
 		return
 	}
+	// With compaction on, its own notices say when the window fills.
+	if r.compactionActive(state) {
+		return
+	}
 	if float64(promptTokens) < contextWarnFraction*float64(limit) {
 		return
 	}
@@ -375,7 +392,10 @@ const thinkingSilenceLimit = 3
 // directly and on few that call a tool, which is nearly every turn of an agent.
 // Without this notice the setting simply appears to do nothing.
 func (r *Runner) checkThinkingArrives(state *runState) {
-	if !r.cfg.LLM.MergeThinking || state.reasoningSeen || state.thinkingWarned {
+	// The normalizer's flag rather than the configuration's: past the tier 0
+	// point the turn stops merging on purpose, and the thinking it drops is
+	// not missing.
+	if !state.normalizer.MergeThinking() || state.reasoningSeen || state.thinkingWarned {
 		return
 	}
 	if state.responsesSeen < thinkingSilenceLimit {

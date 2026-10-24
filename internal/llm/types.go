@@ -25,6 +25,11 @@ type Message struct {
 	// ToolCallItemIDs maps a tool call ID to the Responses-API item ID the
 	// model gave that call, so a replayed function_call keeps its identity.
 	ToolCallItemIDs map[string]string `json:"-"`
+	// PromptTokens is, on an assistant message, the server's count of the
+	// prompt that produced it. It never goes on the wire; the session keeps it
+	// on the message's history line, so the next turn knows how large the
+	// conversation was without estimating all of it (see docs/compaction.md).
+	PromptTokens int `json:"-"`
 	// Images are pictures attached to the message. The pixels live on disk
 	// (the session's tmp/ once normalized) and Path points at the copy;
 	// bytes are loaded into Data by HydrateImages before a request is built,

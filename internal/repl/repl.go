@@ -49,19 +49,38 @@ func RunTurn(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 
 	sessionName := ""
 	isNewSession := true
+	// Where the loaded messages stand for compaction; nil when the turn has no
+	// session or the history cannot be compacted (see below).
+	var start *agent.CompactionStart
+	var timeline *session.Timeline
 	if sess != nil {
 		sessionName = sess.Name()
-		previous, err := sess.Load()
-		if err != nil {
+		// The context rather than the whole history: a compaction recorded in
+		// it replaces older parts with shorter ones (docs/compaction.md).
+		loaded, tl, err := sess.LoadContext()
+		loadFailed := err != nil
+		if loadFailed {
 			writer.Error(fmt.Sprintf("cannot load session: %v", err))
+			loaded, tl = &session.Context{}, &session.Timeline{}
 		}
+		timeline = tl
 		// The system prompt is regenerated each turn (tools and config may have
-		// changed), so any system message in the record is dropped.
-		for _, msg := range previous {
+		// changed), so any system message in the record is dropped. Only a
+		// session from before session directories has one, and dropping it
+		// shifts the positions compaction counts by, so such a session is not
+		// compacted, and neither is one whose history could not be read.
+		compactable := !loadFailed
+		for _, msg := range loaded.Messages {
 			if msg.Role != llm.RoleSystem {
 				messages = append(messages, msg)
+			} else {
+				compactable = false
 			}
 		}
+		if compactable {
+			start = &agent.CompactionStart{TailIndex: 1 + loaded.TailIndex, TailStart: loaded.TailStart}
+		}
+		previous := tl.Messages
 		// A mid-session model switch must not replay one model's opaque
 		// Responses state to another: encrypted thinking blocks and item ids
 		// belong to the model that produced them, and at best waste tokens,
@@ -72,7 +91,7 @@ func RunTurn(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 			config.WireID(lastModel) != cfg.LLM.Model {
 			stripReplayState(messages)
 		}
-		isNewSession = len(messages) == 1
+		isNewSession = len(previous) == 0
 		// The UI already announced the session and echoed the prompt, so a
 		// child it spawned stays quiet about both rather than printing them
 		// a second time.
@@ -88,10 +107,16 @@ func RunTurn(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 		}
 	}
 
+	// A turn whose context has reached the tier 1 point is compacted before
+	// anything of it is written, so the record lands between the turns.
+	wake := isWakeTurn(promptText)
+	if start != nil {
+		messages = compactAtTurnStart(ctx, runner, writer, cfg, messages, timeline, start, promptText, wake, projectInstructions, quietMode)
+	}
+
 	// Display the prompt (unless in quiet mode, or spawned by the UI which
 	// already echoed what was typed). A wake turn carries no prompt: the
 	// inbox is what it is for.
-	wake := isWakeTurn(promptText)
 	if !wake && !quietMode && !session.FromUI() {
 		colorStart := "\033[97;100m"
 		colorEnd := "\033[0m"
@@ -141,8 +166,11 @@ func RunTurn(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 			writer.Debug(fmt.Sprintf("Failed to write session metadata: %v", err))
 		}
 
+		// The settings line is where the turn begins in the history, so
+		// losing it would merge this turn into the last one: said as loudly
+		// as a lost prompt.
 		if err := sess.Settings(cfg.ModelDisplay(), cfg.LLM.MergeThinking, runner.ToolNames()); err != nil {
-			writer.Debug(fmt.Sprintf("Failed to record session settings: %v", err))
+			writer.Error(fmt.Sprintf("cannot record the turn's settings: %v", err))
 		}
 
 		if haveUserMsg {
@@ -167,13 +195,16 @@ func RunTurn(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 			},
 			sess.Rollback,
 		)
+		runner.SetNotice(sess.Notice)
 		defer runner.SetPersist(nil, nil)
+		defer runner.SetNotice(nil)
 	}
 
 	// Run agent loop
 	result, err := runner.Run(ctx, agent.RunConfig{
-		Messages:     messages,
-		QuietMode:    quietMode,
+		Messages:   messages,
+		QuietMode:  quietMode,
+		Compaction: start,
 	})
 
 	// Ephemeral background processes die with the turn, so an abandoned
@@ -214,13 +245,13 @@ func RunTurn(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 			}
 		}
 		if result.BudgetExhausted {
-			_ = sess.Notice("iteration budget reached without a final answer")
+			_ = sess.Notice(session.NoticeBudgetExhausted)
 		}
 		if result.Cancelled {
-			_ = sess.Notice("cancelled by user")
+			_ = sess.Notice(session.NoticeCancelled)
 		}
 		if result.TimedOut {
-			_ = sess.Notice("time budget for this run expired")
+			_ = sess.Notice(session.NoticeTimedOut)
 		}
 	}
 

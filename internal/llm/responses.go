@@ -145,8 +145,8 @@ func (c *Client) buildResponsesRequest(req ChatRequest) responsesRequest {
 		Include: []string{"reasoning.encrypted_content"},
 		Stream:  false,
 	}
-	if c.reasoningEffort != "" || c.reasoningSummary != "" {
-		out.Reasoning = &responsesEffort{Effort: c.reasoningEffort, Summary: c.reasoningSummary}
+	if summary := c.currentReasoningSummary(); c.reasoningEffort != "" || summary != "" {
+		out.Reasoning = &responsesEffort{Effort: c.reasoningEffort, Summary: summary}
 	}
 	return out
 }

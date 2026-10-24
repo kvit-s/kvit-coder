@@ -229,6 +229,34 @@ models with `:mN` (or `--model` headless) takes the new entry's profile from
 the next turn on; `:h` names each entry's effective profile once any entry
 sets one.
 
+## `compaction`
+
+How a session's conversation is shortened as it nears the model's context
+window (`llm.context`, or the selected `models:` entry's `context`). The whole
+design, with the reasoning behind each number, is in
+[compaction.md](compaction.md). An absent section means compaction on with the
+defaults below, and a zero in the file also means the default.
+
+| Key | Description |
+|-----|-------------|
+| `auto` | Compact without being asked (default `true`). Off, a session runs until the window is full, and `:compact` / `--compact` still work |
+| `thinking_cutoff_fraction` | Share of the window at which a turn stops merging the model's readable thinking into its answers, and stops asking for it (default `0.8`); reaching the compaction point first does the same |
+| `keep_recent_tokens` | How much of the turn in progress, counted back from its end, is kept word for word when the context is rewritten (default `20000`, at most an eighth of the window) |
+| `compacted_turn_tokens` | Budget for the model's compacted version of the turn in progress, and for its summary of older turns (default `0`: a 32nd of the window, between 4k and 32k) |
+| `step_tokens` | Least room kept for one more step, a reply and its tool results (default `16000`, at most a 16th of the window) |
+| `turn_headroom_ratio` | Share of the turn's own length that is kept free: a turn that has added 500k tokens is compacted once fewer than 250k are left (default `0.5`) |
+| `older_turns_fraction` | Share of the window above which a rewritten context also has its oldest turns summarized by the model (default `0.2`) |
+| `instructions` | Appended to every compaction and summary request |
+| `model` | The `models:` entry that writes compacted text, by anything `--model` accepts. Empty uses the session's own model and client, whose prompt cache the compaction request reuses |
+
+A rewrite happens when the request about to be sent would leave less of the
+window free than `max(compacted_turn_tokens + step_tokens, turn_headroom_ratio
+× the turn's length)`, the second term capped at half the space the last rewrite
+left. Finished turns become what the user said and the answer they ended with;
+the turn in progress becomes its own words, the model's compacted text, and its
+last `keep_recent_tokens` word for word. Each rewrite is recorded in
+`history.jsonl`, so the next turn sends the same context.
+
 ## `tools`
 
 Each tool group has `enabled: true/false` plus tool-specific options:

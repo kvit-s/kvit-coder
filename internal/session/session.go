@@ -22,7 +22,7 @@ import (
 //	    history.jsonl   append-only, one timestamped event per line
 //
 //	    meta.json       when it was created and last touched, which workspace
-//	                    and model, the first prompt, and the compaction chain
+//	                    and model, and the first prompt
 //
 //	    proc/           pidfiles and logs for background processes
 //
@@ -66,6 +66,21 @@ const (
 	// to. Load applies it; the discarded attempt stays in the file, where it
 	// says what the model tried and why it was taken back.
 	KindRollback Kind = "rollback"
+	// KindCompaction records that the context sent to the model was rewritten
+	// to fit its window: where the messages kept word for word begin, and the
+	// text that stands in for what came before. Load ignores it, so every
+	// reader of the full conversation still sees all of it; LoadContext
+	// applies it. See docs/compaction.md.
+	KindCompaction Kind = "compaction"
+)
+
+// The notices a turn that ended without an answer leaves behind. Compaction
+// reads them back to tell such a turn from one that answered, so they are
+// written down once here.
+const (
+	NoticeBudgetExhausted = "iteration budget reached without a final answer"
+	NoticeCancelled       = "cancelled by user"
+	NoticeTimedOut        = "time budget for this run expired"
 )
 
 // Event is one line of history.jsonl. One JSON object per line keeps the file
@@ -98,12 +113,35 @@ type Event struct {
 	// Dropped accompanies KindRollback: how many messages at the end of the
 	// history so far are no longer part of the conversation.
 	Dropped int `json:"dropped,omitempty"`
+
+	// PromptTokens accompanies an assistant message: the server's count of
+	// the prompt that produced it.
+	PromptTokens int `json:"prompt_tokens,omitempty"`
+
+	// The rest accompany KindCompaction (and Model, above, names the model
+	// that wrote its text). Positions count conversation messages the way
+	// Load returns them.
+	//
+	// From is where the turn in progress began: the turn being compacted,
+	// together with any turns just before it that ended without an answer.
+	// Cut is where the messages kept word for word begin. Compacted is the
+	// model's version of the messages from From to Cut, empty when there were
+	// none or the model failed to write it. OlderSummary, when set, stands in
+	// for every turn that begins before OlderUpTo.
+	From         int    `json:"from,omitempty"`
+	Cut          int    `json:"cut,omitempty"`
+	Compacted    string `json:"compacted,omitempty"`
+	OlderSummary string `json:"older_summary,omitempty"`
+	OlderUpTo    int    `json:"older_up_to,omitempty"`
+	TokensBefore int    `json:"tokens_before,omitempty"`
+	TokensAfter  int    `json:"tokens_after,omitempty"`
 }
 
-// Meta is meta.json: what this session is, and what it was compacted from or
-// into. Parent and SucceededBy are written by compaction, which does not exist
-// yet; Open already follows SucceededBy so that adding it later needs no
-// change here.
+// Meta is meta.json: what this session is. Parent and SucceededBy are for a
+// future feature that forks a session into a new one; nothing writes them
+// yet, and Open already follows SucceededBy so that adding it later needs no
+// change here. Compaction does not use them: it rewrites the context inside
+// the same session (docs/compaction.md).
 type Meta struct {
 	Name        string    `json:"name"`
 	Created     time.Time `json:"created"`
@@ -136,8 +174,8 @@ type Session struct {
 
 // Open opens or creates the named session under the default sessions
 // directory, migrating a session left over from when a session was a single
-// flat file, and following the compaction chain to the session that succeeded
-// this one.
+// flat file, and following succeeded_by to the session that succeeded this
+// one.
 func Open(name string) (*Session, error) {
 	m, err := NewManager()
 	if err != nil {
@@ -152,8 +190,8 @@ func (m *Manager) Open(name string) (*Session, error) {
 		return nil, fmt.Errorf("session name cannot be empty")
 	}
 
-	// Follow succeeded_by so a name that was compacted away still resolves to
-	// the session that replaced it. The bound stops a chain that loops.
+	// Follow succeeded_by so a name that was succeeded still resolves to the
+	// session that replaced it. The bound stops a chain that loops.
 	seen := map[string]bool{}
 	for range 16 {
 		if seen[name] {
@@ -305,7 +343,7 @@ func (s *Session) AppendMessages(messages []llm.Message) error {
 	now := time.Now().UTC()
 	for i := range messages {
 		msg := messages[i]
-		ev := Event{TS: now, Kind: KindMessage, Message: &msg}
+		ev := Event{TS: now, Kind: KindMessage, Message: &msg, PromptTokens: msg.PromptTokens}
 		if msg.Role == llm.RoleTool {
 			ev.Kind = KindToolResult
 			ev.Tool = msg.Name
@@ -397,53 +435,11 @@ func (s *Session) Load() ([]llm.Message, error) {
 }
 
 func readHistory(path string) ([]llm.Message, error) {
-	f, err := os.Open(path)
+	tl, err := readTimeline(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to open session history: %w", err)
+		return nil, err
 	}
-	defer f.Close()
-
-	var messages []llm.Message
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 10*1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var ev Event
-		if err := json.Unmarshal([]byte(line), &ev); err != nil {
-			return nil, fmt.Errorf("failed to parse session event: %w", err)
-		}
-		if ev.Kind == "" && ev.Message == nil {
-			// A line written before history was a stream of events is a bare
-			// message. Reading it costs nothing and saves a migration failure
-			// from losing a conversation.
-			var msg llm.Message
-			if err := json.Unmarshal([]byte(line), &msg); err == nil && msg.Role != "" {
-				messages = append(messages, msg)
-			}
-			continue
-		}
-		if ev.Kind == KindRollback {
-			// The loop took these back, so they are not part of the
-			// conversation even though they are still in the file.
-			if drop := min(ev.Dropped, len(messages)); drop > 0 {
-				messages = messages[:len(messages)-drop]
-			}
-			continue
-		}
-		if ev.Message != nil {
-			messages = append(messages, *ev.Message)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("failed to read session history: %w", err)
-	}
-	return messages, nil
+	return tl.Messages, nil
 }
 
 // AcquireLock takes an exclusive lock on this session, so two processes do not
