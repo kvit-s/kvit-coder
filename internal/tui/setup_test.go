@@ -518,6 +518,42 @@ func TestKeys(t *testing.T) {
 	if got := keyDetail(keyUse{env: "X_UNSET_KEY", models: []string{"A", "B", "C"}}); got != "missing · used by A and 2 more" {
 		t.Errorf("keyDetail = %q", got)
 	}
+
+	// With an old key exported, a key entered here is the one used, and
+	// :keys says so; forgetting it hands the variable back.
+	t.Setenv("KVIT_TUI_KEYS", "sk-stale-from-profile")
+	ask = &scriptAsker{t: t, answers: []answer{
+		{title: "API keys", label: "KVIT_TUI_KEYS"},
+		{title: "KVIT_TUI_KEYS", label: "Enter a new key"},
+		{title: "API key for KVIT_TUI_KEYS", text: "sk-abcd-0000-wxyz"},
+		{title: "API keys", cancel: true},
+	}}
+	u.ask = ask
+	u.showKeys()
+	ask.done()
+	if !ask.saidSomething("the saved key is used instead") {
+		t.Errorf("no word that the saved key replaces the environment's; said:\n%s", strings.Join(ask.said, "\n"))
+	}
+	if got := config.EntryAPIKey(u.currentEntry()); got != "sk-abcd-0000-wxyz" {
+		t.Errorf("key used = %q, want the one just saved", got)
+	}
+	if got := keyDetail(keyUse{env: "KVIT_TUI_KEYS", models: []string{"Remote"}}); got != "saved sk-a…wxyz, used instead of the environment's · used by Remote" {
+		t.Errorf("keyDetail = %q", got)
+	}
+	ask = &scriptAsker{t: t, answers: []answer{
+		{title: "API keys", label: "KVIT_TUI_KEYS"},
+		{title: "KVIT_TUI_KEYS", label: "Forget the saved key"},
+		{title: "API keys", cancel: true},
+	}}
+	u.ask = ask
+	u.showKeys()
+	ask.done()
+	if !ask.saidSomething("its value in the environment is used from now on") {
+		t.Errorf("said:\n%s", strings.Join(ask.said, "\n"))
+	}
+	if got := config.EntryAPIKey(u.currentEntry()); got != "sk-stale-from-profile" {
+		t.Errorf("key used after forgetting = %q, want the environment's", got)
+	}
 	if maskKey("sk-abcd-0000-wxyz") != "sk-a…wxyz" || maskKey("short") != "…" {
 		t.Error("maskKey shows too much")
 	}

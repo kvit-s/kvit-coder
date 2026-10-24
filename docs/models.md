@@ -52,7 +52,7 @@ export OPENCODE_API_KEY="the key from the console"
 
 Instead of exporting it, the key can be saved in
 `~/.kvit-coder/credentials.json` under the same name, which needs no change to
-a shell profile; see
+a shell profile. A saved key is used before the exported variable; see
 [Models and keys saved beside the config](configuration.md#models-and-keys-saved-beside-the-config).
 
 A Go subscription is started from that same console. OpenCode allows one Go

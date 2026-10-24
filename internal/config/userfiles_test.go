@@ -182,8 +182,10 @@ func TestLoadSavedModelsErrorsNameTheFile(t *testing.T) {
 	}
 }
 
-// TestEntryAPIKeyOrder: the environment variable, then the key saved under
-// its name, then the row's literal key.
+// TestEntryAPIKeyOrder: the key saved under the variable's name, then the
+// environment variable, then the row's literal key. A saved key comes before
+// the variable, so a key entered in :keys replaces a stale one still
+// exported by a shell profile.
 func TestEntryAPIKeyOrder(t *testing.T) {
 	dir := useHome(t)
 	entry := ModelEntry{ID: "go", Model: "kimi-k3", APIKeyEnv: "KVIT_TEST_SAVED_KEY", APIKey: "literal"}
@@ -193,22 +195,28 @@ func TestEntryAPIKeyOrder(t *testing.T) {
 		t.Errorf("no variable, nothing saved: key = %q, want the literal", got)
 	}
 
-	writeFile(t, filepath.Join(dir, CredentialsName), `{"KVIT_TEST_SAVED_KEY": "saved"}`)
-	if got := EntryAPIKey(entry); got != "saved" {
-		t.Errorf("variable unset: key = %q, want the saved one", got)
-	}
-
 	t.Setenv("KVIT_TEST_SAVED_KEY", "from-env")
 	if got := EntryAPIKey(entry); got != "from-env" {
-		t.Errorf("variable set: key = %q, want the environment's", got)
+		t.Errorf("variable set, nothing saved: key = %q, want the environment's", got)
+	}
+
+	writeFile(t, filepath.Join(dir, CredentialsName), `{"KVIT_TEST_SAVED_KEY": "saved"}`)
+	if got := EntryAPIKey(entry); got != "saved" {
+		t.Errorf("variable set and a key saved: key = %q, want the saved one", got)
+	}
+
+	t.Setenv("KVIT_TEST_SAVED_KEY", "")
+	if got := EntryAPIKey(entry); got != "saved" {
+		t.Errorf("variable unset: key = %q, want the saved one", got)
 	}
 }
 
 // TestLoadUsesSavedKeyForLLMBlock: llm.api_key_env finds a saved key too, so
-// a single-model config needs no exported variable either.
+// a single-model config needs no exported variable either, and a saved key
+// is used in place of an older one still in the environment.
 func TestLoadUsesSavedKeyForLLMBlock(t *testing.T) {
 	dir := useHome(t)
-	t.Setenv("KVIT_TEST_LLM_KEY", "")
+	t.Setenv("KVIT_TEST_LLM_KEY", "stale-from-env")
 	writeFile(t, filepath.Join(dir, CredentialsName), `{"KVIT_TEST_LLM_KEY": "saved-llm"}`)
 
 	cfg, err := loadConfig(t, `

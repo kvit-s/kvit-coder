@@ -28,8 +28,8 @@ const (
 
 	// CredentialsName holds API keys as a JSON object from environment
 	// variable name to key, such as {"OPENCODE_API_KEY": "sk-..."}. A row's
-	// api_key_env names the variable; the saved value is used when the
-	// variable is not set. Keeping keys out of the environment matters: every
+	// api_key_env names the variable; the saved value is used before the
+	// variable (LookupKey). Keeping keys out of the environment matters: every
 	// command the agent's Shell tool runs inherits the environment, so a key
 	// placed there could be printed by any command the model chooses to run.
 	CredentialsName = "credentials.json"
@@ -296,16 +296,20 @@ func SavedKey(envName string) string {
 	return keys[envName]
 }
 
-// LookupKey resolves an api_key_env name: the environment variable when it is
-// set, else the key saved under that name in credentials.json.
+// LookupKey resolves an api_key_env name: the key saved under that name in
+// credentials.json, else the environment variable. The saved key comes first
+// because saving one is a deliberate act in kvit-coder-ui (:keys, :setup),
+// while an exported variable is often an old key left in a shell profile
+// that nobody remembers; with the variable first, a key typed into :keys
+// would be saved and then never sent.
 func LookupKey(envName string) string {
 	if envName == "" {
 		return ""
 	}
-	if key := os.Getenv(envName); key != "" {
+	if key := SavedKey(envName); key != "" {
 		return key
 	}
-	return SavedKey(envName)
+	return os.Getenv(envName)
 }
 
 // savedModelsHeader opens every models.yaml kvit-coder-ui writes. The file is

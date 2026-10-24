@@ -353,9 +353,9 @@ func (c *Config) ResolveEffort(entry ModelEntry, token string) (string, error) {
 	return "", fmt.Errorf("unknown effort level %q; use one of: %s", token, strings.Join(offered, ", "))
 }
 
-// EntryAPIKey resolves which key an entry authenticates with: the variable
-// its api_key_env names when that is set, else the key saved under the same
-// name in credentials.json, else its literal api_key, else none (a local
+// EntryAPIKey resolves which key an entry authenticates with: the key saved
+// in credentials.json under the name its api_key_env gives, else that
+// variable, else its literal api_key, else none (a local
 // endpoint needs no key, and the client omits the Authorization header then).
 func EntryAPIKey(entry ModelEntry) string {
 	if key := LookupKey(entry.APIKeyEnv); key != "" {

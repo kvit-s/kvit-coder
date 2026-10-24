@@ -159,8 +159,10 @@ came from. Enter switches to one, and Delete removes one that `:setup` added
 variable the models and web search read a key from and where its value comes
 from: the environment, a saved key (shown as `sk-ab…wxyz`), or nowhere. It
 saves or forgets a key, and after the web search key is entered while search
-is off it offers to turn search on. An exported variable is always used before
-a saved key.
+is off it offers to turn search on. A saved key is used before an exported
+variable of the same name, so a key saved here replaces an older one left in a
+shell profile; forgetting the saved key makes the variable's value the one
+used again.
 
 kvit-coder-ui remembers the model and effort you last chose in
 `~/.kvit-coder/kcu-state.json` and starts on them next time, ahead of

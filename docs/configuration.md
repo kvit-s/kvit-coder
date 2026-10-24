@@ -110,8 +110,8 @@ entry's after a switch. Give every entry all of them. The rest of `llm` —
 `request_timeout`, `temperature`, `max_output_tokens`, `verbose`,
 `generation_stats` — applies to whichever entry is selected.
 
-An entry's key is the variable its `api_key_env` names when that is set, else
-the key saved under that variable's name in `credentials.json` (below), else
+An entry's key is the one saved under its `api_key_env` name in
+`credentials.json` (below), else the environment variable of that name, else
 its literal `api_key`. `llm.api_key_env` is looked up the same way.
 
 | Key | Description |
@@ -154,7 +154,9 @@ models:
 ```
 
 `credentials.json` holds API keys under the name of the environment variable
-an `api_key_env` gives, and is used only when that variable is not set:
+an `api_key_env` gives. A key saved there is used before the variable of the
+same name, so a key entered with `:keys` replaces an older one still exported
+by a shell profile; the variable is used when nothing is saved under its name:
 
 ```json
 { "OPENCODE_API_KEY": "the key from the console" }
@@ -245,7 +247,7 @@ Each tool group has `enabled: true/false` plus tool-specific options:
 - **`procs.kill_on_exit`** — Stop everything the session started when a turn is interrupted (default true)
 - **`question.enabled`** — Let the model ask you a question and wait for the answer
 - **`question.timeout`** — Seconds a run with no terminal waits for an answer (default 0: fall back at once)
-- **`web.api_key_env`** — Name of the environment variable holding the search API key (default `BRAVE_API_KEY`); when it is unset, the key saved under that name in `credentials.json` is used. The key is named rather than written into the file because it is usually shared with other programs
+- **`web.api_key_env`** — Name of the environment variable holding the search API key (default `BRAVE_API_KEY`); a key saved under that name in `credentials.json` is used before the variable. The key is named rather than written into the file because it is usually shared with other programs
 - **`web.search.max_attempts`** — Tries before giving up on a rate-limit refusal (default 4). The provider allows one request per second shared across everything using the key, and refuses the excess rather than queueing it; a refusal costs no quota, so retrying is cheap next to handing the model a failure
 - **`web.usage_log`** — JSONL record of what was searched and when. Not a counter: the quota is account-wide and only the provider can see what other machines spent, which is why the response's `x-ratelimit-*` headers are read instead
 - **`web.fetch.max_bytes`** / **`web.fetch.timeout`** — Ceiling on HTML read, and seconds for one page (defaults 5 MB and 30)
@@ -284,8 +286,8 @@ Then set the key before starting the agent:
 export BRAVE_API_KEY="your-key"
 ```
 
-or save it with `:keys` in kvit-coder-ui. As for a model, the variable is used
-when it is set, else the key saved under its name in `credentials.json`.
+or save it with `:keys` in kvit-coder-ui. As for a model, the key saved under
+its name in `credentials.json` is used, else the variable.
 
 To get a key, sign up on the Brave Search API page
 (https://brave.com/search/api/), choose a plan (there is a free tier), and

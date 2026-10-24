@@ -583,7 +583,7 @@ func (c *Client) statusError(status int, body []byte) error {
 	}
 	switch {
 	case c.apiKey == "" && c.apiKeyEnv != "":
-		return fmt.Errorf("%w (no API key was sent: $%s is not set, and no key is saved under that name in ~/.kvit-coder/credentials.json)", err, c.apiKeyEnv)
+		return fmt.Errorf("%w (no API key was sent: no key is saved under %[2]s in ~/.kvit-coder/credentials.json, and $%[2]s is not set)", err, c.apiKeyEnv)
 	case c.apiKey == "":
 		return fmt.Errorf("%w (no API key was sent: name the variable holding it in llm.api_key_env)", err)
 	case c.apiKeyEnv != "":

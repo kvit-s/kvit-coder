@@ -538,12 +538,13 @@ func TestWebSearchNeedsAKey(t *testing.T) {
 	}
 }
 
-// TestWebSearchUsesSavedKey: with the variable unset, the key kvit-coder-ui
-// saved under its name in credentials.json is sent.
+// TestWebSearchUsesSavedKey: the key kvit-coder-ui saved under the
+// variable's name in credentials.json is sent, even while the variable holds
+// another key.
 func TestWebSearchUsesSavedKey(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("USERPROFILE", os.Getenv("HOME"))
-	t.Setenv("KVIT_TEST_SAVED_KEY", "")
+	t.Setenv("KVIT_TEST_SAVED_KEY", "stale-from-env")
 	if err := config.SaveCredential("KVIT_TEST_SAVED_KEY", "saved-key"); err != nil {
 		t.Fatal(err)
 	}

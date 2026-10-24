@@ -715,8 +715,8 @@ type WebToolsConfig struct {
 const DefaultWebSearchKeyEnv = "BRAVE_API_KEY"
 
 // WebSearchKeyEnv is the variable Web.search reads its key from. The key is
-// found the way a model's is, with LookupKey: the variable when it is set,
-// else the key kvit-coder-ui saved under that name.
+// found the way a model's is, with LookupKey: the key kvit-coder-ui saved
+// under that name, else the variable.
 func (c *Config) WebSearchKeyEnv() string {
 	if e := strings.TrimSpace(c.Tools.Web.APIKeyEnv); e != "" {
 		return e
@@ -1186,8 +1186,8 @@ func LoadWith(path string, opts LoadOptions) (*Config, error) {
 		return nil, err
 	}
 
-	// The key: the variable llm.api_key_env names, else the key saved under
-	// that name, else the literal llm.api_key already decoded above.
+	// The key: the one saved under the name llm.api_key_env gives, else that
+	// variable, else the literal llm.api_key already decoded above.
 	if key := LookupKey(cfg.LLM.APIKeyEnv); key != "" {
 		cfg.LLM.APIKey = key
 	}

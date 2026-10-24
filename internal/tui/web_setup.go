@@ -2,7 +2,6 @@ package tui
 
 import (
 	"errors"
-	"os"
 
 	"github.com/kvit-s/kvit-coder/internal/config"
 )
@@ -137,10 +136,10 @@ func (u *UI) turnOnWebSearch() bool {
 		}
 		path, _ := config.CredentialsPath()
 		u.ask.say("Saved the key for %s to %s.", env, path)
-	} else if os.Getenv(env) != "" {
-		u.ask.say("Using the key in the environment variable %s.", env)
-	} else {
+	} else if config.SavedKey(env) != "" {
 		u.ask.say("Using the key saved for %s.", env)
+	} else {
+		u.ask.say("Using the key in the environment variable %s.", env)
 	}
 	on := true
 	var fetch *bool

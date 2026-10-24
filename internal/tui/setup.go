@@ -90,10 +90,10 @@ func keySource(env string) string {
 	switch {
 	case env == "":
 		return "no key needed"
-	case os.Getenv(env) != "":
-		return "key in the environment (" + env + ")"
 	case config.SavedKey(env) != "":
 		return "key saved (" + env + ")"
+	case os.Getenv(env) != "":
+		return "key in the environment (" + env + ")"
 	}
 	return "no key yet"
 }
@@ -166,12 +166,12 @@ func (s *setupRun) setUpProvider(p modelsetup.Provider) bool {
 // keyFor finds the provider's key, or asks for it. typed reports that it was
 // typed here and still has to be saved.
 func (s *setupRun) keyFor(p modelsetup.Provider) (key string, typed, ok bool) {
-	if v := os.Getenv(p.KeyEnv); v != "" {
-		s.ask.say("Using the key in the environment variable %s.", p.KeyEnv)
-		return v, false, true
-	}
 	if v := config.SavedKey(p.KeyEnv); v != "" {
 		s.ask.say("Using the key saved for %s (:keys replaces it).", p.KeyEnv)
+		return v, false, true
+	}
+	if v := os.Getenv(p.KeyEnv); v != "" {
+		s.ask.say("Using the key in the environment variable %s.", p.KeyEnv)
 		return v, false, true
 	}
 	return s.askKey(p.Name, p.KeyEnv, p.KeyPage, false)
@@ -251,12 +251,12 @@ func (s *setupRun) describeOther() (modelsetup.Provider, string, bool, bool) {
 	if env == "" {
 		return p, "", false, true
 	}
-	if v := os.Getenv(env); v != "" {
-		s.ask.say("Using the key in the environment variable %s.", env)
-		return p, v, false, true
-	}
 	if v := config.SavedKey(env); v != "" {
 		s.ask.say("Using the key saved for %s.", env)
+		return p, v, false, true
+	}
+	if v := os.Getenv(env); v != "" {
+		s.ask.say("Using the key in the environment variable %s.", env)
 		return p, v, false, true
 	}
 	key, typed, ok := s.askKey(name, env, "", true)

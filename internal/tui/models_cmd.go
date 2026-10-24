@@ -249,7 +249,7 @@ func (u *UI) enterKey(env string) bool {
 	path, _ := config.CredentialsPath()
 	u.ask.say("\033[38;5;78mSaved the key for %s to %s.\033[0m", env, path)
 	if os.Getenv(env) != "" {
-		u.ask.say("%s is set in this environment, and its value is used while it is.", env)
+		u.ask.say("%s is also set in this environment; the saved key is used instead of it.", env)
 	}
 	u.ask.say("")
 	return true
@@ -401,11 +401,13 @@ func (u *UI) showKeys() {
 
 func keyDetail(use keyUse) string {
 	source := "missing"
-	switch {
+	switch saved := config.SavedKey(use.env); {
+	case saved != "" && os.Getenv(use.env) != "":
+		source = "saved " + maskKey(saved) + ", used instead of the environment's"
+	case saved != "":
+		source = "saved " + maskKey(saved)
 	case os.Getenv(use.env) != "":
 		source = "from the environment"
-	case config.SavedKey(use.env) != "":
-		source = "saved " + maskKey(config.SavedKey(use.env))
 	}
 	switch len(use.models) {
 	case 0:
@@ -443,6 +445,10 @@ func (u *UI) keyActions(env string) {
 	}
 	if _, err := config.DeleteCredential(env); err != nil {
 		u.ask.say("\033[31mThe key could not be removed: %v\033[0m", err)
+		return
+	}
+	if os.Getenv(env) != "" {
+		u.ask.say("Forgot the key saved for %s; its value in the environment is used from now on.", env)
 		return
 	}
 	u.ask.say("Forgot the key saved for %s.", env)
