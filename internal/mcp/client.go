@@ -33,10 +33,13 @@ import (
 const ProtocolVersion = "2025-06-18"
 
 // Client identity reported to servers in the initialize handshake.
-const (
-	clientName    = "kvit-coder"
-	clientVersion = "0.1"
-)
+const clientName = "kvit-coder"
+
+// ClientVersion is the version reported to MCP servers in the initialize
+// handshake's clientInfo. It is set at startup from the binary's own version
+// (main.version, stamped via ldflags); the "dev" default matches --version
+// for a plain `go build` with nothing stamped.
+var ClientVersion = "dev"
 
 // Namespacing: MCP tools are registered as "mcp" + Separator + server +
 // Separator + tool, e.g. "mcp.filesystem.read_file". The dotted form matches

@@ -429,6 +429,10 @@ func prepareTurn(opts turnOptions) (turn *preparedTurn, err error) {
 	// Initialize MCP (Model Context Protocol) client manager. A no-op when
 	// cfg.MCP.Enabled is false or no servers are configured. Servers that fail
 	// to connect are logged and skipped, never fatal.
+	//
+	// The handshake reports this binary's own version (stamped via ldflags),
+	// so servers see the real client version rather than a placeholder.
+	mcp.ClientVersion = version
 	mcpMgr := mcp.NewManager(cfg.MCP, cfg.Workspace.Root, writer, tempFileMgr)
 	// Remember "ask_once" answers in the session rather than in memory. The
 	// process lives for one turn, so an in-memory map turns ask_once into

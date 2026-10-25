@@ -55,7 +55,7 @@ func (p *proto) Initialize(ctx context.Context) error {
 	raw, err := p.conn.Call(ctx, "initialize", initializeParams{
 		ProtocolVersion: ProtocolVersion,
 		Capabilities:    map[string]any{}, // tools-only client: no capabilities to advertise
-		ClientInfo:      clientInfo{Name: clientName, Version: clientVersion},
+		ClientInfo:      clientInfo{Name: clientName, Version: ClientVersion},
 	})
 	if err != nil {
 		return fmt.Errorf("initialize: %w", err)
