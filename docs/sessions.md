@@ -30,12 +30,21 @@ Each session is a directory under `~/.kvit-coder/sessions/` (`%USERPROFILE%\.kvi
     proc/           which process is running a turn
     inbox/          messages waiting for the running turn
     tmp/            tool output too large to fit in a message
+    pastes/         long pastes from the composer, which the model reads
 ```
 
 Everything that outlives a turn lives there, so a temp file the model was given the path to is
 still readable later. A session left over from when a session was a single
 `<name>.jsonl` file is converted the first time it is opened; the old file is
 kept as `<name>.jsonl.migrated`.
+
+A paste of more than 20 lines or 2,000 characters into `kvit-coder-ui` shows as a
+`[paste1]` tag rather than the text itself, with a line under the input giving its
+size and first line; deleting the tag drops the paste. When the message is sent, the
+text is copied into `pastes/` and the message ends with a line per tag saying where
+its file is, and the model reads the file with `Read`. Files in `tmp/` are removed
+a day after they were written, whereas files in `pastes/` stay for as long as the
+session does, so a paste can still be read when the session is picked up later.
 
 ## When a session outgrows the context window
 

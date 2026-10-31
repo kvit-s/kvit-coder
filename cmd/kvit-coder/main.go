@@ -105,8 +105,10 @@ func main() {
 	killBackground := flag.String("kill-background", "", "stop running background processes for a session ('all' for every session) and exit")
 	listBackground := flag.String("list-background", "", "list running background processes for a session ('all' for every session) and exit")
 	agentFile := flag.String("agent-file", "", "path to agent file (content appended to system prompt)")
-	var imagePaths imagePathList
+	var imagePaths pathList
 	flag.Var(&imagePaths, "image", "attach an image file to the prompt so the model can see it (repeatable)")
+	var pastePaths pathList
+	flag.Var(&pastePaths, "paste", "attach a text file as pasted text: the prompt calls it [pasteN] and the model reads it (repeatable)")
 
 	flag.Usage = printUsage
 	if len(os.Args) > 1 && os.Args[1] == "help" {
@@ -467,6 +469,13 @@ func main() {
 		}
 
 		fmt.Println()
+	}
+
+	// Long pastes arrive as files: the prompt says where each one is, and
+	// the model reads it with Read. A turn with no prompt has no message to
+	// add them to.
+	if promptText != "" {
+		promptText = attachPastes(promptText, []string(pastePaths), turn.sess, writer)
 	}
 
 	// Run in exec mode (always, since we require -p or --benchmark). A turn

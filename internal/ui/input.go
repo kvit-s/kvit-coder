@@ -14,10 +14,10 @@ import (
 	rw "github.com/mattn/go-runewidth"
 	"github.com/rivo/uniseg"
 	"os"
-	"runtime"
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // InputModel wraps the textarea component for multi-line input
@@ -34,15 +34,41 @@ type InputModel struct {
 	quitting      bool
 	lastValueLen  int // Track previous value length to detect paste
 	viewportStart int // Track which line is at the top of the viewport
-	// lastKeyTime and lastKeyTextlike spot a Windows paste burst (see
-	// pasteEnterWindow): pasted line breaks arrive as Enter keypresses with
-	// no human gap after a typed rune, while a real submit follows thinking.
-	lastKeyTime     time.Time
-	lastKeyTextlike bool
-	// lastWasBurstCR marks an Enter that became a newline above, so the LF
+	// lastKeyTime and lastKeyBurstable spot a Windows paste (see
+	// input_paste_burst.go): pasted keys arrive with no human gap after a
+	// text key, while a real submit follows thinking.
+	lastKeyTime      time.Time
+	lastKeyBurstable bool
+	// lastWasBurstCR marks an Enter that became a pasted newline, so the LF
 	// half of a CRLF paste (a Ctrl+J right after) is swallowed instead of
 	// doubling the line break. Any other key clears it.
 	lastWasBurstCR bool
+	// paste is the Windows paste in progress: keys collected but not yet
+	// inserted, a held Enter or digit, and the record used to put back
+	// characters the console dropped.
+	paste pasteState
+	// onClipboardText reads the clipboard text, for that repair and for a
+	// Ctrl+V the terminal passes through. Nil when the host offers none (set
+	// by the driver, like onImagePaste).
+	onClipboardText func() (string, error)
+	// onTextPaste saves a long paste to a file and returns its path, so the
+	// composer shows a [pasteN] tag instead of the text (see
+	// input_text_paste.go). Nil keeps every paste in the text.
+	onTextPaste func(string) (string, error)
+	// pastedTexts are the long pastes made in this composer, in tag order:
+	// pastedTexts[0] is [paste1]. sentPastes are the files of those whose
+	// tags were still in the text on submit, numbered again from 1.
+	pastedTexts []pastedText
+	sentPastes  []string
+	// memo keeps the last frame and the wrap count of each line between
+	// updates. A pointer, so every copy of the model shares it.
+	memo *inputMemo
+	// viewFresh says the last Update changed nothing on screen, so View can
+	// return the last frame. Only collecting a paste key sets it.
+	viewFresh bool
+	// updates counts calls to Update, so View can tell whether the frame in
+	// memo was drawn right before this update or is older.
+	updates int
 	// onImagePaste stages a clipboard image and returns its staged path.
 	// Nil when the host offers no image paste (set by the driver; the model
 	// itself never touches the clipboard).
@@ -124,6 +150,23 @@ type InputModel struct {
 	cardAnswer *CardAnswer
 }
 
+// inputMemo is what the composer reuses between updates. Bubbletea keeps one
+// live copy of the model at a time, so the copies sharing it never race.
+type inputMemo struct {
+	// view is the last frame View drew, after update number viewAt.
+	view   string
+	viewAt int
+	// rows maps a hard line to the visual rows it wraps to at rowsWidth.
+	// Counting them is most of the cost of a keypress in a long text, and
+	// a keypress changes one line, so the rest come from here.
+	rows      map[string]int
+	rowsWidth int
+}
+
+// maxMemoRows bounds the wrap-count memo: past it the memo starts over, so
+// every line's previous versions cannot pile up in a long session.
+const maxMemoRows = 20000
+
 // SetImagePasteHandler installs the clipboard-image stager behind the paste
 // key. Passing nil disables image paste.
 func (m *InputModel) SetImagePasteHandler(fn func() (string, error)) {
@@ -195,11 +238,16 @@ func (m *InputModel) pasteImage() {
 	m.insertImageToken(len(m.pastedImages))
 }
 
-// insertImageToken inserts the [imageN] label at the cursor, adding spaces
-// where needed so "look at[image1]and" becomes "look at [image1] and".
-// The cursor ends up after the token's trailing space, ready to keep typing.
+// insertImageToken inserts the [imageN] label at the cursor.
 func (m *InputModel) insertImageToken(n int) {
-	token := ImageLabel(n)
+	m.insertToken(ImageLabel(n))
+}
+
+// insertToken inserts a label such as [image1] or [paste1] at the cursor,
+// adding spaces where needed so "look at[image1]and" becomes
+// "look at [image1] and". The cursor ends up after the token's trailing
+// space, ready to keep typing.
+func (m *InputModel) insertToken(token string) {
 	v := m.textarea.Value()
 	row := m.textarea.Line()
 	col := m.textarea.LineInfo().CharOffset
@@ -538,7 +586,7 @@ func (m *InputModel) inputWidth() int {
 // totalSoftLines returns the number of visual rows the current value occupies
 // once soft-wrapped at the input width.
 func (m *InputModel) totalSoftLines() int {
-	return softWrappedHeight(m.textarea.Value(), m.inputWidth())
+	return m.softRows(m.textarea.Value(), m.inputWidth())
 }
 
 // cursorSoftRow returns the 0-based visual row the cursor is on, accounting
@@ -550,10 +598,49 @@ func (m *InputModel) cursorSoftRow() int {
 	if v := m.textarea.Value(); v != "" {
 		lines := strings.Split(v, "\n")
 		for i := 0; i < hardRow && i < len(lines); i++ {
-			rowsBefore += wrapLineCount([]rune(lines[i]), width)
+			rowsBefore += m.lineRows(lines[i], width)
 		}
 	}
 	return rowsBefore + m.textarea.LineInfo().RowOffset
+}
+
+// softRows is softWrappedHeight with each line's count taken from the memo.
+func (m *InputModel) softRows(value string, width int) int {
+	if width <= 0 {
+		width = 80
+	}
+	if value == "" {
+		return 1
+	}
+	total := 0
+	for _, line := range strings.Split(value, "\n") {
+		total += m.lineRows(line, width)
+	}
+	if total < 1 {
+		total = 1
+	}
+	return total
+}
+
+// lineRows returns how many visual rows one hard line wraps to, from the memo
+// when it has the line at this width.
+func (m *InputModel) lineRows(line string, width int) int {
+	memo := m.memo
+	if memo == nil {
+		return wrapLineCount([]rune(line), width)
+	}
+	if memo.rows == nil || memo.rowsWidth != width || len(memo.rows) > maxMemoRows {
+		memo.rows = make(map[string]int)
+		memo.rowsWidth = width
+	}
+	if n, ok := memo.rows[line]; ok {
+		return n
+	}
+	n := wrapLineCount([]rune(line), width)
+	// Cloned: the line is a slice of the whole text, which the key would
+	// otherwise keep alive.
+	memo.rows[strings.Clone(line)] = n
+	return n
 }
 
 // softWrappedHeight counts visual rows for a value at the given width.
@@ -658,6 +745,11 @@ func NewInputModel(prompt string, history []string) InputModel {
 	ta.Placeholder = "(Enter to submit, Ctrl+J newline, @path completes live, Tab select, Alt+V paste image)"
 	ta.ShowLineNumbers = false
 	ta.CharLimit = 0 // No limit
+	// No height cap inside the textarea: adjustHeight caps it at maxHeight.
+	// The textarea also sizes its wrap cache from MaxHeight, and at the
+	// default of 99 a longer text missed the cache on every line of every
+	// frame.
+	ta.MaxHeight = 0
 
 	// Start with 1 row, will grow automatically
 	ta.SetHeight(1)
@@ -685,6 +777,7 @@ func NewInputModel(prompt string, history []string) InputModel {
 		width:        80,
 		maxHeight:    20, // Max height before scrolling
 		lastValueLen: 0,
+		memo:         &inputMemo{},
 	}
 }
 
@@ -700,23 +793,6 @@ type wakeTickMsg struct{}
 func wakeTickCmd() tea.Cmd {
 	return tea.Tick(wakeTickInterval, func(time.Time) tea.Msg { return wakeTickMsg{} })
 }
-
-// pasteEnterWindow is how soon after a typed rune an Enter must arrive to
-// count as a pasted line break rather than a submit. A paste burst lands
-// with microsecond gaps (the whole paste is already queued in the console
-// input buffer); a submit follows thinking, at human latency. A fast submit
-// inside the window costs one extra Enter: it inserts a newline, and the
-// next Enter submits.
-const pasteEnterWindow = 100 * time.Millisecond
-
-// pasteBurstKeys reports whether pasted line breaks can arrive as Enter
-// keypresses. On Windows bubbletea reads the console input buffer, where a
-// paste is one key event per character with no bracketed-paste markers, so
-// every pasted line break is an Enter that would otherwise submit. On unix
-// the same paste arrives as one bracketed message that never reads as
-// "enter", so the heuristic stays off and fast submits are untouched.
-// Tests set it directly to drive the burst path on any platform.
-var pasteBurstKeys = runtime.GOOS == "windows"
 
 // SetWakePoll installs the inbox waiter behind the composer. A nil poll
 // disables wake.
@@ -740,8 +816,14 @@ func (m InputModel) Init() tea.Cmd {
 // Update handles input events
 func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
+	m.viewFresh = false
+	m.updates++
 
 	switch msg := msg.(type) {
+	case pasteTickMsg:
+		return m, m.onPasteTick()
+	case heldKeyMsg:
+		return m.releaseHeld(msg)
 	case wakeTickMsg:
 		// No waiter installed (a test driving the model, say): stay quiet.
 		if m.wakePoll == nil {
@@ -752,8 +834,9 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Fire only while the text is still empty: the user is idling at
 		// the prompt, not composing. Anything typed means they will send
 		// soon, and the turn they send picks the inbox up at its first
-		// iteration — so show a badge instead and keep waiting.
-		if pending > 0 && strings.TrimSpace(m.textarea.Value()) == "" && !m.cardHolds() {
+		// iteration — so show a badge instead and keep waiting. A paste
+		// still being collected counts as composing.
+		if pending > 0 && strings.TrimSpace(m.textarea.Value()) == "" && !m.pasteInFlight() && !m.cardHolds() {
 			m.value = ""
 			m.submitted = true
 			m.wakeFired = true
@@ -784,23 +867,23 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.clampCardOffset()
 
 	case tea.KeyMsg:
-		// Track key timing for the Windows paste-burst heuristic below: a
-		// single-rune key is typed text, anything longer a named key. (A
-		// bracketed paste arrives as one "[...]" message, so it never
-		// counts as text here.)
-		keyAt := time.Now()
+		// On Windows a paste arrives as one keypress per character; those
+		// are collected and inserted together, and a key that acts is held
+		// briefly in case a paste follows it (input_paste_burst.go).
+		if pasteBurstKeys {
+			if handled, cmd := m.pasteKey(msg); handled {
+				return m, cmd
+			}
+		}
 		keyStr := msg.String()
-		keyTextlike := len([]rune(keyStr)) == 1
-		// A paste burst is runes with no human gap between them: an Enter
-		// right after pasted text is a line break, not a submit.
-		burstEnter := pasteBurstKeys && !m.lastKeyTime.IsZero() &&
-			keyAt.Sub(m.lastKeyTime) < pasteEnterWindow && m.lastKeyTextlike
-		// The LF half of a CRLF paste lands as Ctrl+J right after its CR
-		// half became a newline in the enter case.
-		swallowLF := m.lastWasBurstCR && keyAt.Sub(m.lastKeyTime) < pasteEnterWindow
-		m.lastKeyTime = keyAt
-		m.lastKeyTextlike = keyTextlike
-		m.lastWasBurstCR = false
+
+		// A long bracketed paste becomes a [pasteN] tag instead of text
+		// (input_text_paste.go). A shorter one goes to the textarea below.
+		if msg.Paste && m.onTextPaste != nil {
+			if text := normalizePaste(string(msg.Runes)); isLongPaste(text) && m.stageTextPaste(text) {
+				return m, nil
+			}
+		}
 
 		// A completion list belongs to the token it was built for. Tab
 		// and Shift+Tab cycle it, up/down select from it while it
@@ -827,36 +910,18 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// picks the report's primary recommendation instead of submitting
 		// empty, so the highlighted action needs no digit.
 		case "enter":
-			if burstEnter {
-				// Part of a paste burst, not a submit: keep the line
-				// break as a newline, like Ctrl+J below. The burst stays
-				// open so further pasted line breaks do the same.
-				m.textarea.InsertString("\n")
-				m.adjustHeight()
-				m.ensureCursorVisible()
-				m.lastKeyTextlike = true
-				m.lastWasBurstCR = true
-				return m, nil
-			}
 			if strings.TrimSpace(m.textarea.Value()) == "" && len(m.pastedImages) == 0 {
 				if handled, cmd := m.pickRecommended(); handled {
 					return m, cmd
 				}
 			}
-			m.value = m.textarea.Value()
+			m.value, m.sentPastes = m.takePastes(m.textarea.Value())
 			m.submitted = true
 			m.quitting = true
 			return m, tea.Quit
 
 		// Insert newline on Ctrl+J
 		case "ctrl+j":
-			if swallowLF {
-				// The LF half of a CRLF paste whose CR just became a
-				// newline above: one line break per pasted line, not two.
-				// The burst stays open for what the paste brings next.
-				m.lastKeyTextlike = true
-				return m, nil
-			}
 			m.textarea.InsertString("\n")
 			m.adjustHeight()
 			return m, nil
@@ -955,6 +1020,21 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			// No handler: let the textarea see the key.
+
+		// Ctrl+V reaches the app only where the terminal passes it through
+		// rather than pasting itself. Reading the clipboard here instead of
+		// in the textarea lets a long paste become a tag like any other.
+		case "ctrl+v":
+			if m.onClipboardText != nil {
+				text, err := m.onClipboardText()
+				if err != nil {
+					m.pasteNotice = "paste: " + err.Error()
+					return m, nil
+				}
+				m.pasteText(text)
+				return m, nil
+			}
+			// No reader: the textarea pastes the clipboard itself.
 		// Select from the live @path list (typing @ plus two characters
 		// already shows it; a bare Tab lists from the filesystem when
 		// nothing shows yet). Shift+Tab cycles the same list backwards;
@@ -971,15 +1051,17 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// ESC with a completion list showing dismisses just the
 			// list, so a stray keypress doesn't eat the draft. A
 			// second ESC with nothing showing clears the input as
-			// before (images pasted in this composer go with it;
-			// images staged before it opened stay for next turn).
+			// before (images and long pastes made in this composer go
+			// with it; images staged before it opened stay for next
+			// turn).
 			if m.completionListActive() || m.compNotice != "" {
 				m.clearCompletion()
 				return m, nil
 			}
-			// ESC just clears the current input, doesn't exit. Images pasted
-			// in this composer go with it; images staged before it opened
-			// (:image, :paste) stay staged for the next turn.
+			// ESC just clears the current input, doesn't exit. Images and
+			// long pastes made in this composer go with it; images staged
+			// before it opened (:image, :paste) stay staged for the next
+			// turn.
 			m.textarea.SetValue("")
 			m.adjustHeight()
 			m.viewportStart = 0
@@ -987,13 +1069,15 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(m.pastedImages) > m.imageBase {
 				m.pastedImages = append([]string(nil), m.pastedImages[:m.imageBase]...)
 			}
+			m.pastedTexts = nil
 			return m, nil
 		}
 	}
 
-	// Track value length before update to detect paste and edits
-	beforeValueLen := len(m.textarea.Value())
+	// Track value length before update to detect paste and edits. Runes,
+	// not bytes: one typed é is two bytes and is not a paste.
 	beforeValue := m.textarea.Value()
+	beforeValueLen := utf8.RuneCountInString(beforeValue)
 	wasInHistoryMode := m.historyIdx >= 0
 
 	// Pre-grow the viewport by one visual row before the textarea sees the
@@ -1026,7 +1110,7 @@ func (m InputModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Detect paste: if value length increased significantly in one update (>1 char),
 	// it's likely a paste operation (but not history navigation)
-	afterValueLen := len(m.textarea.Value())
+	afterValueLen := utf8.RuneCountInString(m.textarea.Value())
 	isPaste := afterValueLen > beforeValueLen+1 && !wasInHistoryMode
 
 	// If we detected a paste whose wrapped content spans multiple visual
@@ -1061,10 +1145,18 @@ func (m InputModel) View() string {
 	if m.quitting {
 		return ""
 	}
+	// Bubbletea draws a frame after every message, and a Windows paste is
+	// one message per character. While one is being collected nothing on
+	// screen changes, so the last frame stands rather than drawing the
+	// whole text again for each key.
+	if m.viewFresh && m.memo != nil && m.memo.view != "" && m.memo.viewAt == m.updates-1 {
+		m.memo.viewAt = m.updates
+		return m.memo.view
+	}
 
 	// Calculate scroll indicator based on tracked viewport position.
 	// Use soft-wrapped visual rows so a long single line reports scrolling.
-	totalVisual := softWrappedHeight(m.textarea.Value(), m.inputWidth())
+	totalVisual := m.softRows(m.textarea.Value(), m.inputWidth())
 	visibleHeight := m.textarea.Height()
 
 	scrollInfo := ""
@@ -1105,7 +1197,15 @@ func (m InputModel) View() string {
 		out += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(
 			fmt.Sprintf("[%s: %s]", "image"+itoa(i+1), p))
 	}
-	return out + m.cardFooter()
+	// The same for long pastes: each [pasteN] tag with its size and first
+	// line.
+	out += m.pastesView()
+	out += m.cardFooter()
+	if m.memo != nil {
+		m.memo.view = out
+		m.memo.viewAt = m.updates
+	}
+	return out
 }
 
 // completionView renders the completion list (or the "no match"

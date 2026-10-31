@@ -70,6 +70,7 @@ does.
     proc/           pidfiles and logs for background processes
     inbox/          files dropped here reach the model next iteration
     tmp/            tool output too large to put in a message
+    pastes/         long pastes from kcu's composer, which the model reads
 ```
 
 See `internal/session/session.go` for the authoritative version of this.

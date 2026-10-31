@@ -101,16 +101,16 @@ func hasArg(args []string, want string) bool {
 func TestFrontEndAsksForAReportPerTurn(t *testing.T) {
 	u := newTestUI(t, "cards", nil)
 	u.structured = true
-	if args := u.agentArgs("rename the helper", nil); !hasArg(args, "-structured") {
+	if args := u.agentArgs("rename the helper", nil, nil); !hasArg(args, "-structured") {
 		t.Errorf("the turn was spawned without -structured: %v", args)
 	}
 	// An inbox-only turn is still a turn, and still reports.
-	if args := u.agentArgs("", nil); !hasArg(args, "-structured") {
+	if args := u.agentArgs("", nil, nil); !hasArg(args, "-structured") {
 		t.Errorf("a wake turn was spawned without -structured: %v", args)
 	}
 
 	u.structured = false
-	if args := u.agentArgs("rename the helper", nil); hasArg(args, "-structured") {
+	if args := u.agentArgs("rename the helper", nil, nil); hasArg(args, "-structured") {
 		t.Errorf("--structured=false still asked for a report: %v", args)
 	}
 }

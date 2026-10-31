@@ -91,7 +91,7 @@ func TestRunAgentMovesTheTitleThroughTheTurn(t *testing.T) {
 	var buf strings.Builder
 	u.title = ui.NewTerminalTitle(&buf)
 
-	u.runAgent("hello", nil)
+	u.runAgent("hello", nil, nil)
 
 	want := "\033]0;" + ui.DefaultTitleRunningIcon + " 2026-09-08-aabbcc\007" +
 		"\033]0;" + ui.DefaultTitleWaitingIcon + " add the retry loop\007"

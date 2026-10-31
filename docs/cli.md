@@ -13,6 +13,7 @@ are for; this file is the reference.
 | `-p <prompt>` | Run with prompt and exit | - |
 | `-pq <prompt>` | Quiet mode: only print final response | - |
 | `-image <path>` | Attach an image file to the prompt (repeatable) | - |
+| `-paste <path>` | Attach a text file as pasted text (repeatable). The file is copied into the session's `pastes/`, and the prompt gets a line naming it `[pasteN]`, in the order given, with its size and the copy's path, for the model to read. `kvit-coder-ui` sends a long paste this way | - |
 | `-config <path>` | Config file path | first found (see [Configure](#configure)) |
 | `-model <name>` | Override model | from config |
 | `-base-url <url>` | Override LLM endpoint | from config |

@@ -232,7 +232,7 @@ func TestSetupLocalServer(t *testing.T) {
 	if !u.hasModel() || u.currentEntry().ID != "qwen3-coder-local" {
 		t.Errorf("current row %+v after saving", u.currentEntry())
 	}
-	if args := strings.Join(u.agentArgs("hi", nil), " "); !strings.Contains(args, "--model qwen3-coder-local") {
+	if args := strings.Join(u.agentArgs("hi", nil, nil), " "); !strings.Contains(args, "--model qwen3-coder-local") {
 		t.Errorf("agent args %q do not name the row by id", args)
 	}
 	if st, ok := readUIState(filepath.Join(dir, StateName)); !ok || st.Model != "qwen3-coder-local" {

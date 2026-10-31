@@ -30,6 +30,9 @@ import (
 //
 //	    tmp/            tool output too large to put in a message
 //
+//	    pastes/         long pastes from the composer, which the model reads;
+//	                    made on the first one
+//
 // Everything with a life longer than one turn lives here. That is what lets a
 // turn run in its own process without losing the temp
 // files whose paths the model was told, or anything else the next turn needs.
@@ -40,9 +43,10 @@ const (
 
 	// ProcSubdir and friends are exported so callers can build the
 	// paths they hand to other components.
-	ProcSubdir  = "proc"
-	InboxSubdir = "inbox"
-	TmpSubdir   = "tmp"
+	ProcSubdir   = "proc"
+	InboxSubdir  = "inbox"
+	TmpSubdir    = "tmp"
+	PastesSubdir = "pastes"
 )
 
 // Kind names what a history line records.
@@ -250,6 +254,12 @@ func (s *Session) InboxDir() string { return filepath.Join(s.dir, InboxSubdir) }
 // TmpDir holds tool output too large to put in a message. It outlives the turn
 // because the model is told these paths and may read them on a later turn.
 func (s *Session) TmpDir() string { return filepath.Join(s.dir, TmpSubdir) }
+
+// PastesDir holds long pastes the model was told to read. Unlike tmp/, which
+// drops files older than a day at the start of every turn, nothing here is
+// removed while the session exists, so a paste can still be read when the
+// session is picked up again later.
+func (s *Session) PastesDir() string { return filepath.Join(s.dir, PastesSubdir) }
 
 // HistoryPath is the append-only transcript.
 func (s *Session) HistoryPath() string { return filepath.Join(s.dir, historyFile) }

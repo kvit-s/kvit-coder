@@ -2,12 +2,13 @@ package main
 
 import "strings"
 
-// imagePathList is a repeatable -image flag: -image a.png -image b.png.
-type imagePathList []string
+// pathList is a repeatable path flag: -image a.png -image b.png, and the same
+// for -paste.
+type pathList []string
 
-func (l *imagePathList) String() string { return strings.Join(*l, ", ") }
+func (l *pathList) String() string { return strings.Join(*l, ", ") }
 
-func (l *imagePathList) Set(v string) error {
+func (l *pathList) Set(v string) error {
 	*l = append(*l, v)
 	return nil
 }

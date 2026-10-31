@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/kvit-s/kvit-coder/internal/config"
 	"github.com/kvit-s/kvit-coder/internal/modelsetup"
@@ -286,11 +287,11 @@ func (u *UI) Run() error {
 			// the scrollback before it goes away.
 			printReportTranscript(card, nil)
 			fmt.Printf("\033[38;5;136m[inbox: %d pending — processing]\033[0m\n", n)
-			u.runAgent("", nil)
+			u.runAgent("", nil, nil)
 			continue
 		}
 
-		input, composerImages, woke, shouldExit, err := u.readInput(card)
+		input, composerImages, composerPastes, woke, shouldExit, err := u.readInput(card)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\033[31m[error] Input error: %v\033[0m\n", err)
 			break
@@ -301,7 +302,7 @@ func (u *UI) Run() error {
 
 		// A wake submit carries no text: the inbox is the prompt.
 		if woke {
-			u.runAgent("", composerImages)
+			u.runAgent("", composerImages, nil)
 			continue
 		}
 
@@ -315,6 +316,7 @@ func (u *UI) Run() error {
 
 		// Handle UI commands
 		if strings.HasPrefix(input, ":") {
+			removePastes(composerPastes)
 			shouldExit := u.handleCommand(input)
 			if shouldExit {
 				break
@@ -327,7 +329,7 @@ func (u *UI) Run() error {
 		// or every staged image would attach twice. takeImages then adds any
 		// @path references and clears the staging for the next turn.
 		u.pendingImages = composerImages
-		u.runAgent(input, u.takeImages(input))
+		u.runAgent(input, u.takeImages(input), composerPastes)
 	}
 
 	return nil
@@ -337,10 +339,11 @@ func (u *UI) Run() error {
 // returns the staged images in label order: the ones staged before the
 // composer opened (:image, :paste), which seed it, plus any pasted inside
 // with Alt+V. The caller hands them to takeImages, which adds @path
-// references and clears the staging. woke reports that the composer
-// submitted itself on inbox activity: the input is empty and the inbox is
-// the prompt.
-func (u *UI) readInput(card *report.Report) (string, []string, bool, bool, error) {
+// references and clears the staging. The long pastes come next, as the files
+// of the [pasteN] tags in the input, in tag order. woke reports that the
+// composer submitted itself on inbox activity: the input is empty and the
+// inbox is the prompt.
+func (u *UI) readInput(card *report.Report) (string, []string, []string, bool, bool, error) {
 	promptText := u.buildPromptText()
 
 	// Create and run input model
@@ -364,15 +367,35 @@ func (u *UI) readInput(card *report.Report) (string, []string, bool, bool, error
 	if runtime.GOOS != "darwin" {
 		inputModel.SetImagePasteHandler(StageClipboardImage)
 	}
+	// The clipboard text serves a Ctrl+V the terminal passes through, and on
+	// Windows, where a paste reaches the composer as keypresses and
+	// characters the keyboard layout cannot type arrive with no character at
+	// all, it is where the composer gets those characters back.
+	inputModel.SetClipboardTextReader(clipboard.ReadAll)
+	// A long paste is saved to a file and shows as a [pasteN] tag; the model
+	// is told where the file is and reads it.
+	var staged []string
+	inputModel.SetTextPasteHandler(func(text string) (string, error) {
+		path, err := StagePastedText(text)
+		if err == nil {
+			staged = append(staged, path)
+		}
+		return path, err
+	})
 	p := tea.NewProgram(inputModel)
 	result, err := p.Run()
 
 	if err != nil {
-		return "", nil, false, false, err
+		removePastes(staged)
+		return "", nil, nil, false, false, err
 	}
 
 	// Get the result
 	finalModel := result.(ui.InputModel)
+	// Pastes whose tags are not in the message (deleted, cleared with Esc,
+	// or the composer was left) go now; runAgent removes the rest once the
+	// turn is over.
+	removePastes(unsentPastes(staged, finalModel.PastedTexts()))
 	if finalModel.Cancelled() || !finalModel.Submitted() {
 		// Exiting leaves the card behind too: its bubbletea frame is cleared
 		// on quit, so print the expanded copy for the scrollback.
@@ -381,7 +404,7 @@ func (u *UI) readInput(card *report.Report) (string, []string, bool, bool, error
 			fmt.Println("[cancelled]")
 			fmt.Println()
 		}
-		return "", nil, false, true, nil // User cancelled (Ctrl+C)
+		return "", nil, nil, false, true, nil // User cancelled (Ctrl+C)
 	}
 
 	// A wake submit carries no text to echo: the inbox is the prompt.
@@ -399,11 +422,12 @@ func (u *UI) readInput(card *report.Report) (string, []string, bool, bool, error
 			fmt.Println("[wake: processing inbox]")
 			fmt.Println()
 		}
-		return "", images, true, false, nil
+		return "", images, nil, true, false, nil
 	}
 
 	input := strings.TrimSpace(finalModel.Value())
 	images := finalModel.PastedImages()
+	pastes := finalModel.PastedTexts()
 	ans := finalModel.CardAnswerPicked()
 	if card != nil && keepTranscript(input, images, ans) {
 		// The composer frame that showed this report is cleared on submit,
@@ -416,7 +440,7 @@ func (u *UI) readInput(card *report.Report) (string, []string, bool, bool, error
 			// image-only turn): the pick line above already says what
 			// happened, and runAgent lists images when there are any.
 			fmt.Println()
-			return input, images, false, false, nil
+			return input, images, pastes, false, false, nil
 		}
 	}
 
@@ -430,7 +454,7 @@ func (u *UI) readInput(card *report.Report) (string, []string, bool, bool, error
 	}
 	fmt.Println()
 
-	return input, images, false, false, nil
+	return input, images, pastes, false, false, nil
 }
 
 // buildPromptText builds the prompt text with session info
@@ -945,6 +969,9 @@ func (u *UI) showHelp() {
 	fmt.Println("so you can write \"compare [image1] with [image2]\".")
 	fmt.Println("Ctrl+V cannot carry images: the terminal intercepts it before")
 	fmt.Println("the app ever sees the keypress.")
+	fmt.Println("Long pastes: text of more than 20 lines or 2,000 characters is")
+	fmt.Println("saved to a file and shows as a [pasteN] tag; the agent is told")
+	fmt.Println("where the file is and reads it. Delete a tag to drop its paste.")
 	fmt.Println()
 }
 
@@ -955,7 +982,7 @@ func (u *UI) showHelp() {
 // agentArgs is the command line one turn is spawned with. It is separate from
 // runAgent so what the front end asks of the agent can be read without starting
 // a process.
-func (u *UI) agentArgs(prompt string, images []string) []string {
+func (u *UI) agentArgs(prompt string, images, pastes []string) []string {
 
 	var args []string
 	if strings.TrimSpace(prompt) == "" {
@@ -969,6 +996,11 @@ func (u *UI) agentArgs(prompt string, images []string) []string {
 	// Numbered to match the [imageN] labels the composer list showed.
 	for _, img := range images {
 		args = append(args, "-image", img)
+	}
+	// Long pastes travel as files too, numbered like the [pasteN] tags in
+	// the prompt; the agent tells the model where each one is.
+	for _, p := range pastes {
+		args = append(args, "-paste", p)
 	}
 
 	// Pass config file
@@ -1018,7 +1050,7 @@ func (u *UI) agentArgs(prompt string, images []string) []string {
 // get, with --compact in place of the prompt, so the agent compacts with the
 // model and endpoint the session is using.
 func (u *UI) compactArgs(focus string) []string {
-	args := u.agentArgs("", nil)
+	args := u.agentArgs("", nil, nil)
 	args[0] = "--compact"
 	if f := strings.TrimSpace(focus); f != "" {
 		args = append(args, "--focus", f)
@@ -1063,7 +1095,10 @@ func (u *UI) runCompact(focus string) {
 	fmt.Println()
 }
 
-func (u *UI) runAgent(prompt string, images []string) {
+func (u *UI) runAgent(prompt string, images, pastes []string) {
+	// The agent copies each paste into the session when the turn starts, so
+	// the UI's copies go once the turn is over, or now if it never starts.
+	defer removePastes(pastes)
 	if !u.hasModel() {
 		fmt.Println("\033[38;5;136mNo model is set up, so nothing was sent. :setup adds one.\033[0m")
 		fmt.Println()
@@ -1075,10 +1110,11 @@ func (u *UI) runAgent(prompt string, images []string) {
 	u.title.Running(u.sessionLabel())
 	defer func() { u.title.Waiting(u.sessionLabel()) }()
 
-	args := u.agentArgs(prompt, images)
+	args := u.agentArgs(prompt, images, pastes)
 	for i, img := range images {
 		fmt.Printf("\033[38;5;136m[image%d: %s]\033[0m\n", i+1, img)
 	}
+	printPastes(pastes)
 
 	// Ctrl-C at the terminal signals every process in the foreground group,
 	// which is this UI as well as the agent it started. While the agent runs
