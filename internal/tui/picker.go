@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -222,15 +223,7 @@ func (m *pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m.finish(true)
 			}
 		case tea.KeySpace:
-			if m.spec.Multi {
-				if idx, ok := m.current(); ok && !m.spec.Items[idx].Disabled {
-					m.checked[idx] = !m.checked[idx]
-				}
-				m.move(1)
-				return m, nil
-			}
-			m.filter += " "
-			m.refilter()
+			m.space()
 		case tea.KeyBackspace:
 			if r := []rune(m.filter); len(r) > 0 {
 				m.filter = string(r[:len(r)-1])
@@ -239,7 +232,25 @@ func (m *pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.scroll()
 			}
 		case tea.KeyRunes:
-			m.filter += string(msg.Runes)
+			// On Windows bubbletea reports Space as the typed character
+			// " " rather than as KeySpace, and Ctrl or Alt pressed on its
+			// own as the character NUL, which would filter out every row.
+			typed := strings.Map(func(r rune) rune {
+				if unicode.IsControl(r) {
+					return -1
+				}
+				return r
+			}, string(msg.Runes))
+			if typed == "" {
+				break
+			}
+			if strings.Trim(typed, " ") == "" && !msg.Paste {
+				for range typed {
+					m.space()
+				}
+				break
+			}
+			m.filter += typed
 			m.refilter()
 			m.cursor = 0
 			m.skipDisabled(1)
@@ -248,6 +259,20 @@ func (m *pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// space ticks the row under the cursor and moves down in a list that takes
+// several, and is part of the filter in one that does not.
+func (m *pickerModel) space() {
+	if m.spec.Multi {
+		if idx, ok := m.current(); ok && !m.spec.Items[idx].Disabled {
+			m.checked[idx] = !m.checked[idx]
+		}
+		m.move(1)
+		return
+	}
+	m.filter += " "
+	m.refilter()
 }
 
 func (m *pickerModel) finish(deleted bool) (tea.Model, tea.Cmd) {

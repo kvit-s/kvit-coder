@@ -633,6 +633,20 @@ func TestPicker(t *testing.T) {
 		t.Errorf("ticked %v, want [0 3]", got)
 	}
 
+	// On Windows Space arrives as the typed character " ", and Ctrl or Alt
+	// pressed alone as NUL.
+	m = newPicker(pickSpec{Title: "t", Items: items, Multi: true})
+	key(m, runes(" "))    // tick alpha, move to gamma
+	key(m, runes("\x00")) // Ctrl pressed alone
+	key(m, runes("  "))   // tick gamma and delta
+	if m.filter != "" || len(m.visible) != 4 {
+		t.Errorf("typed spaces went into the filter %q", m.filter)
+	}
+	key(m, tea.KeyMsg{Type: tea.KeyEnter})
+	if got := m.result.Checked; len(got) != 3 || got[0] != 0 || got[1] != 2 || got[2] != 3 {
+		t.Errorf("ticked %v, want [0 2 3]", got)
+	}
+
 	m = newPicker(pickSpec{Title: "t", Items: items, Delete: true, Start: 3})
 	key(m, tea.KeyMsg{Type: tea.KeyDelete})
 	if !m.result.Deleted || m.result.Index != 3 {
