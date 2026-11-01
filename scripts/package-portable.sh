@@ -56,9 +56,19 @@ out="$ROOT/dist/portable"
 mkdir -p "$out"
 rm -f "$out"/kvit-coder_*_windows_*_portable.zip
 
+# The programs' Windows resources (their icon, and the description and version
+# Explorer and Task Manager show) say this version while they are built, and
+# are written back to the committed ones on the way out, however it ends.
+stage=""
+cleanup() {
+    [ -z "$stage" ] || rm -rf "$stage"
+    "$ROOT/packaging/icons/make-syso.sh" >/dev/null
+}
+trap cleanup EXIT
+"$ROOT/packaging/icons/make-syso.sh" "$version"
+
 for goarch in amd64 arm64; do
     stage=$(mktemp -d)
-    trap 'rm -rf "$stage"' EXIT
     echo "building windows/$goarch version ${version} commit ${commit_hash}"
     CGO_ENABLED=0 GOOS=windows GOARCH="$goarch" go build -trimpath -ldflags="$ldflags" \
         -o "$stage/kvit-coder.exe" ./cmd/kvit-coder
@@ -68,8 +78,8 @@ for goarch in amd64 arm64; do
     cp "$ROOT/config.example.yaml" "$ROOT/README.md" "$ROOT/LICENSE" "$stage/"
     archive="$out/kvit-coder_${number}_windows_${goarch}_portable.zip"
     (cd "$stage" && zip -j -9 -q "$archive" kvit-coder.exe kvit-coder-ui.exe install.ps1 config.example.yaml README.md LICENSE)
-    trap - EXIT
     rm -rf "$stage"
+    stage=""
 done
 
 echo "portable zips:"

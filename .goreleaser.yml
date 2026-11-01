@@ -1,5 +1,16 @@
 version: 2
 
+# Writes the release's version into both programs' Windows resources, the
+# cmd/*/rsrc_windows_*.syso files that hold their icon and the description
+# and version Explorer and Task Manager show. It leaves those files changed:
+# the release job writes the committed ones back right after goreleaser
+# (.github/workflows/release.yml), and after a local run
+# `packaging/icons/make-syso.sh` with no version does the same. The check for
+# uncommitted changes runs before this hook, so it does not stop the release.
+before:
+  hooks:
+    - packaging/icons/make-syso.sh {{ .Version }}
+
 builds:
   - id: kvit-coder
     main: ./cmd/kvit-coder

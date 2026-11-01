@@ -53,6 +53,20 @@ are not followed by `update.Resolve`, so `:update` replaces both names of each
 program (`internal/update`, `windowsShortNames`). `scripts/test-installer.ps1`
 installs, checks and uninstalls it; CI runs it on every push.
 
+The icon is `packaging/icons/kvit-coder.svg`. Kvit Works finds it by name and
+draws it on the project's rail tile. The Windows programs get it from the
+`rsrc_windows_amd64.syso` and `rsrc_windows_arm64.syso` files in
+`cmd/kvit-coder` and `cmd/kvit-coder-ui`, which `go build` links into every
+Windows build of those packages; the installer takes `kvit-coder.ico`. The
+`.syso` files also hold the description Task Manager shows ("kvit-coder",
+"kvit-coder agent") and a version, "dev" as committed.
+`packaging/icons/make-syso.sh <version>` rewrites them with a release's
+version: goreleaser's before hook, `package-portable.sh` and
+`package-installer.sh` run it before building and run it again with no
+version afterwards, which restores the committed bytes. After editing the
+SVG, run `go -C packaging/icons run .` (a module of its own, because its
+renderer needs cgo) and then `packaging/icons/make-syso.sh`.
+
 ## The two facts that shape everything
 
 **One operating-system process per turn.** The agent starts, reads the session

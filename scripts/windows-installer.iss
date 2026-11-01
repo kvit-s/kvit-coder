@@ -64,6 +64,10 @@ PrivilegesRequired=lowest
 DefaultDirName={autopf}\{#KvitAppName}
 ; A terminal program has nothing to put in the Start menu.
 DisableProgramGroupPage=yes
+; The installer's own icon. The programs carry the same one in their Windows
+; resources, so the uninstall entry takes it from kvit-coder-ui.exe. Both come
+; from packaging/icons/kvit-coder.svg; see packaging/icons/main.go.
+SetupIconFile=..\packaging\icons\kvit-coder.ico
 UninstallDisplayIcon={app}\kvit-coder-ui.exe
 ; Tells running programs to reload the environment after install and
 ; uninstall, so a terminal opened afterwards sees the PATH change.

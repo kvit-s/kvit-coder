@@ -32,6 +32,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Write back the committed Windows resources
+        # goreleaser's before hook wrote the release version into
+        # cmd/*/rsrc_windows_*.syso. With no version the script writes the
+        # committed files back, so the next step finds a clean tree and does
+        # not call its build dirty.
+        run: packaging/icons/make-syso.sh
+
       - name: Build portable Windows zips
         # scripts/package-portable.sh names the files with the tag's number
         # (0.3.0, not v0.3.0), matching goreleaser's convention.

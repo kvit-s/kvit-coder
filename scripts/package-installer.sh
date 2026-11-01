@@ -123,11 +123,21 @@ out="$ROOT/dist/installer"
 mkdir -p "$out"
 rm -f "$out"/kvit-coder_*_windows_*_setup.exe
 
+# The programs' Windows resources (their icon, and the description and version
+# Explorer and Task Manager show) say this version while they are built, and
+# are written back to the committed ones on the way out, however it ends.
+stage=""
+cleanup() {
+    [ -z "$stage" ] || rm -rf "$stage"
+    "$ROOT/packaging/icons/make-syso.sh" >/dev/null
+}
+trap cleanup EXIT
+"$ROOT/packaging/icons/make-syso.sh" "$version"
+
 echo "Inno Setup: $(win_path "$ISCC")"
 for goarch in "${archs[@]}"; do
     setup="kvit-coder_${number}_windows_${goarch}_setup.exe"
     stage=$(mktemp -d "$ROOT/dist/installer-stage.XXXXXX")
-    trap 'rm -rf "$stage"' EXIT
     echo "building windows/$goarch version ${version} commit ${commit_hash}"
     CGO_ENABLED=0 GOOS=windows GOARCH="$goarch" go build -trimpath -ldflags="$ldflags" \
         -o "$stage/kvit-coder.exe" ./cmd/kvit-coder
@@ -145,8 +155,8 @@ for goarch in "${archs[@]}"; do
         "/DOutputDir=$(win_path "$out")" \
         "$(win_path "$ROOT/scripts/windows-installer.iss")" | tr -d '\r'
     [ -f "$out/$setup" ] || { echo "package-installer.sh: Inno Setup did not write $out/$setup" >&2; exit 1; }
-    trap - EXIT
     rm -rf "$stage"
+    stage=""
 done
 
 echo "installers:"
