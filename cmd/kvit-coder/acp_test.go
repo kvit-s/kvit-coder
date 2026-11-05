@@ -349,6 +349,8 @@ const acpTestTools = `tools:
     enabled: true
   question:
     enabled: true
+  subagent:
+    enabled: true
 `
 
 func (f *acpFixture) write(t *testing.T, rel, content string) string {
@@ -934,4 +936,112 @@ func TestACPStopsABackgroundProcessOnRequest(t *testing.T) {
 	if u["state"] != "stopped" {
 		t.Errorf("the process ended as %v, want stopped", u["state"])
 	}
+}
+
+// TestACPSubagentWorkIsReportedToAClientThatShowsIt: a client that declares it
+// is told what a child does, each update naming the call that started it, and
+// where it stands; the turn's own updates are as ever. Another client would
+// draw a child's calls as the agent's own, so it is told nothing of them.
+func TestACPSubagentWorkIsReportedToAClientThatShowsIt(t *testing.T) {
+	start := func(t *testing.T, capabilities map[string]any) (*acpFixture, *acpClient) {
+		t.Helper()
+		f := newACPFixture(t, "")
+		f.write(t, "notes.txt", "the launch code is 1234\n")
+		c := startACP(t, f.config)
+		c.call("initialize", map[string]any{"protocolVersion": 1, "clientCapabilities": capabilities})
+		created := c.call("session/new", map[string]any{"cwd": f.workspace, "mcpServers": []any{}})
+		f.endpoint.script(
+			toolReply("call_sub", "Subagent", map[string]any{"description": "find the code", "prompt": "Find the launch code."}),
+			toolReply("call_child", "Read", map[string]any{"path": "notes.txt"}),
+			textReply("The code is 1234."),
+			textReply("It is 1234."),
+		)
+		id, _ := created["sessionId"].(string)
+		if result := c.call("session/prompt", textPrompt(id, "What is the code?")); result["stopReason"] != "end_turn" {
+			t.Fatalf("stopReason %v", result["stopReason"])
+		}
+		return f, c
+	}
+	parentOf := func(u map[string]any) string {
+		meta, _ := u["_meta"].(map[string]any)
+		kvit, _ := meta["kvit"].(map[string]any)
+		parent, _ := kvit["parentToolCallId"].(string)
+		return parent
+	}
+
+	t.Run("declared", func(t *testing.T) {
+		_, c := start(t, map[string]any{"_meta": map[string]any{"kvit": map[string]any{"subagentWork": true}}})
+		var childCalls, childEnds, childWords, topCalls []string
+		for _, u := range c.updates {
+			switch {
+			case u["sessionUpdate"] == "tool_call" && parentOf(u) == "call_sub":
+				childCalls = append(childCalls, u["toolCallId"].(string))
+			case u["sessionUpdate"] == "tool_call" && parentOf(u) == "":
+				topCalls = append(topCalls, u["toolCallId"].(string))
+			case u["sessionUpdate"] == "tool_call_update" && parentOf(u) == "call_sub" && u["status"] == "completed":
+				childEnds = append(childEnds, u["toolCallId"].(string))
+				if !strings.Contains(fmt.Sprint(u["content"]), "1234") {
+					t.Errorf("the child's call does not have its result: %v", u["content"])
+				}
+			case u["sessionUpdate"] == "agent_message_chunk" && parentOf(u) == "call_sub":
+				childWords = append(childWords, u["content"].(map[string]any)["text"].(string))
+			}
+		}
+		if len(childCalls) != 1 || childCalls[0] != "call_child" || len(childEnds) != 1 {
+			t.Errorf("the child's calls %v, ended %v: %v", childCalls, childEnds, c.updates)
+		}
+		if len(topCalls) != 1 || topCalls[0] != "call_sub" {
+			t.Errorf("the agent's own calls %v", topCalls)
+		}
+		if len(childWords) != 1 || childWords[0] != "The code is 1234." {
+			t.Errorf("the child's words %v", childWords)
+		}
+		// The reply is the agent's own, and the words of its child are not.
+		messages := c.updatesOf("agent_message_chunk")
+		if last := messages[len(messages)-1]; parentOf(last) != "" || last["content"].(map[string]any)["text"] != "It is 1234." {
+			t.Errorf("the last message %v", last)
+		}
+		standing := c.updatesOf("kvit_subagent_update")
+		if len(standing) < 3 {
+			t.Fatalf("where it stands was said %d times: %v", len(standing), standing)
+		}
+		first, last := standing[0], standing[len(standing)-1]
+		if first["toolCallId"] != "call_sub" || first["state"] != "running" || parentOf(first) != "" {
+			t.Errorf("at its start %v", first)
+		}
+		if last["toolCallId"] != "call_sub" || last["state"] != "completed" || last["report"] != "The code is 1234." {
+			t.Errorf("at its end %v", last)
+		}
+		if tokens, _ := last["tokens"].(float64); tokens <= 0 {
+			t.Errorf("its tokens %v", last["tokens"])
+		}
+		if _, ok := last["elapsedMs"].(float64); !ok {
+			t.Errorf("its time %v", last["elapsedMs"])
+		}
+		// Between its start and its end, its tokens as it uses them.
+		var counted bool
+		for _, u := range standing[1 : len(standing)-1] {
+			if tokens, _ := u["tokens"].(float64); tokens > 0 && u["state"] == "running" {
+				counted = true
+			}
+		}
+		if !counted {
+			t.Errorf("its tokens were not said as it ran: %v", standing)
+		}
+	})
+
+	t.Run("not declared", func(t *testing.T) {
+		_, c := start(t, map[string]any{})
+		if got := c.updatesOf("kvit_subagent_update"); len(got) != 0 {
+			t.Errorf("told %v", got)
+		}
+		for _, u := range c.updates {
+			if parentOf(u) != "" {
+				t.Errorf("told of the child: %v", u)
+			}
+		}
+		if calls := c.updatesOf("tool_call"); len(calls) != 1 || calls[0]["toolCallId"] != "call_sub" {
+			t.Errorf("the calls %v", calls)
+		}
+	})
 }

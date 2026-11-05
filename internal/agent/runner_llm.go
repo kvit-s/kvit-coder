@@ -263,6 +263,9 @@ func (r *Runner) processLLMResponse(ctx context.Context, resp *llm.ChatResponse,
 
 	state.agentStats.TotalPromptTokens += promptTokens
 	state.agentStats.TotalCompletionTokens += completionTokens
+	if r.usage != nil {
+		r.usage(state.agentStats.TotalPromptTokens, state.agentStats.TotalCompletionTokens)
+	}
 	if state.totalTokens > state.agentStats.MaxContextUsed {
 		state.agentStats.MaxContextUsed = state.totalTokens
 	}

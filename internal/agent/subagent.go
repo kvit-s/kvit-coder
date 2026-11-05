@@ -68,6 +68,14 @@ func (r *Runner) StartSubagent(ctx context.Context, p tools.SubagentRunParams) (
 		// session.
 	})
 
+	if p.Report != nil {
+		// Handed what it does rather than recorded: the persist hook is how a
+		// loop tells anyone, and the child's transcript still goes nowhere.
+		child.SetPersist(p.Report.Messages, nil)
+		child.SetToolStart(p.Report.ToolStart)
+		child.usage = p.Report.Usage
+	}
+
 	msgs := []llm.Message{
 		{Role: llm.RoleSystem, Content: p.System},
 		{Role: llm.RoleUser, Content: p.Prompt},

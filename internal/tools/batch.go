@@ -577,7 +577,9 @@ func runBatchCall(ctx context.Context, index int, call batchCall, tool Tool) Bat
 		out.Error = err.Error()
 		return out
 	}
-	result, err := tool.Call(ctx, args)
+	// The call a client knows is the Batch, which is no child's, so what the
+	// tool starts is not reported under it (SubagentTool.reportOf).
+	result, err := tool.Call(WithCallID(ctx, ""), args)
 	if err != nil {
 		out.Error = err.Error()
 		return out

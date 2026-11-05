@@ -54,6 +54,9 @@ type subagentChild struct {
 	cancel      context.CancelFunc
 	done        chan struct{}
 
+	// report is told what the child does, nil for no one.
+	report SubagentReport
+
 	mu            sync.Mutex
 	status        string
 	result        *SubagentRunResult
@@ -169,6 +172,7 @@ func (t *SubagentTool) spawnBackground(ctx context.Context, parentReg *Registry,
 		cancel:      cancel,
 		done:        make(chan struct{}),
 		status:      subagentRunning,
+		report:      t.reportOf(ctx, parsed.Description),
 	}
 	h.handle = t.nextHandle()
 	t.poolMu.Lock()
@@ -203,15 +207,20 @@ func (t *SubagentTool) runBackground(runner SubRunner, h *subagentChild, ctx con
 		MaxIters:    prep.maxChild,
 		Registry:    prep.childReg,
 		ToolCtx:     prep.childCtx,
+		Report:      h.report,
 	})
 	if err != nil {
 		// A total failure to run: per-handle, never touching siblings.
 		h.mu.Lock()
-		defer h.mu.Unlock()
 		if h.status != subagentKilled {
 			h.status = subagentFailed
 		}
 		h.runErr = err
+		status := h.status
+		h.mu.Unlock()
+		if h.report != nil {
+			h.report.Ended(subagentEndOf(status), SubagentRunResult{Text: err.Error()})
+		}
 		return
 	}
 	if prep.wantSchema {
@@ -221,7 +230,6 @@ func (t *SubagentTool) runBackground(runner SubRunner, h *subagentChild, ctx con
 	}
 
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	if h.status == subagentKilled {
 		// Kill wins over whatever the run just produced: keep the killed
 		// status and whatever partial text came back.
@@ -231,6 +239,22 @@ func (t *SubagentTool) runBackground(runner SubRunner, h *subagentChild, ctx con
 	if h.status != subagentKilled {
 		h.status = subagentDone
 	}
+	status := h.status
+	h.mu.Unlock()
+	if h.report != nil {
+		h.report.Ended(subagentEndOf(status), res)
+	}
+}
+
+// subagentEndOf is a handle's final status as a report says it.
+func subagentEndOf(status string) string {
+	switch status {
+	case subagentKilled:
+		return SubagentEndStopped
+	case subagentFailed:
+		return SubagentEndFailed
+	}
+	return SubagentEndCompleted
 }
 
 // terminal reports whether the child reached a final state. Callers only

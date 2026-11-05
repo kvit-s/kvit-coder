@@ -624,3 +624,18 @@ func (tc *ToolContext) ClearStalePath(path string) {
 	defer tc.staleMu.Unlock()
 	delete(tc.stalePaths, absClean(path))
 }
+
+// callIDKey holds the id of the tool call a tool is running for.
+type callIDKey struct{}
+
+// WithCallID is ctx for a tool running for the call of an id.
+func WithCallID(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, callIDKey{}, id)
+}
+
+// CallIDFrom is the id of the call a tool is running for, "" when it was not
+// told, as one a test calls directly is not.
+func CallIDFrom(ctx context.Context) string {
+	id, _ := ctx.Value(callIDKey{}).(string)
+	return id
+}

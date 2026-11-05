@@ -84,6 +84,10 @@ type acpAgent struct {
 	// forms is set when the client declared that it shows questions as
 	// forms (clientCapabilities.elicitation.form).
 	forms bool
+	// subagentWork is set when the client declared that it shows what a
+	// subagent does (clientCapabilities._meta.kvit.subagentWork). Another
+	// client would draw a child's calls as the agent's own.
+	subagentWork bool
 
 	mu       sync.Mutex
 	sessions map[string]*acpSession
@@ -214,6 +218,11 @@ func (a *acpAgent) initialize(params json.RawMessage) (any, error) {
 			Elicitation struct {
 				Form json.RawMessage `json:"form"`
 			} `json:"elicitation"`
+			Meta struct {
+				Kvit struct {
+					SubagentWork bool `json:"subagentWork"`
+				} `json:"kvit"`
+			} `json:"_meta"`
 		} `json:"clientCapabilities"`
 	}
 	if err := decodeParams(params, &p); err != nil {
@@ -222,6 +231,7 @@ func (a *acpAgent) initialize(params json.RawMessage) (any, error) {
 	form := p.ClientCapabilities.Elicitation.Form
 	a.mu.Lock()
 	a.forms = len(form) > 0 && string(form) != "null"
+	a.subagentWork = p.ClientCapabilities.Meta.Kvit.SubagentWork
 	a.mu.Unlock()
 	return map[string]any{
 		"protocolVersion": acpProtocolVersion,
@@ -1021,9 +1031,17 @@ func (a *acpAgent) runPrompt(ctx context.Context, s *acpSession, text string, im
 	turn.toolCtx.SetPermissionAsker(r.askShell)
 	a.mu.Lock()
 	forms := a.forms
+	subagentWork := a.subagentWork
 	a.mu.Unlock()
 	if forms {
 		turn.toolCtx.SetFormAsker(r.askForm)
+	}
+	if subagentWork {
+		if sub, ok := turn.registry.Get("Subagent").(interface {
+			SetReporter(func(callID, description string) tools.SubagentReport)
+		}); ok {
+			sub.SetReporter(r.subagentReport)
+		}
 	}
 	config.SetLinePrompter(r.askLine)
 	mcp.SetLinePrompter(r.askLine)

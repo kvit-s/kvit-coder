@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/config"
+	"github.com/kvit-s/kvit-coder/internal/llm"
 	"github.com/kvit-s/kvit-coder/internal/stats"
 )
 
@@ -74,7 +75,32 @@ type SubagentRunParams struct {
 	MaxIters    int
 	Registry    *Registry
 	ToolCtx     *ToolContext
+	// Report, when set, is told what the child does as it does it.
+	Report SubagentReport
 }
+
+// SubagentReport is told what one child does, for a client that shows it. A
+// child's messages are otherwise never seen outside its loop, since only its
+// summary reaches the parent. Everything but Ended is called from the child's
+// own goroutine; none of it may block the child for long.
+type SubagentReport interface {
+	// Messages is the child loop's persist hook, and ToolStart its tool-start
+	// hook (agent.Runner.SetPersist, SetToolStart).
+	Messages(batch []llm.Message) error
+	ToolStart(internalName string, tc llm.ToolCall)
+	// Usage is told the tokens the child has used so far after each request.
+	Usage(promptTokens, completionTokens int)
+	// Ended is told how the child ended, once: SubagentEndCompleted and the
+	// others.
+	Ended(state string, result SubagentRunResult)
+}
+
+// How a child ended, as SubagentReport.Ended is told.
+const (
+	SubagentEndCompleted = "completed"
+	SubagentEndFailed    = "failed"
+	SubagentEndStopped   = "stopped"
+)
 
 // SubagentRunResult is what the child loop hands back.
 type SubagentRunResult struct {
@@ -162,6 +188,9 @@ type SubagentTool struct {
 	parentRemaining int
 	hasRemaining    bool
 
+	// reporter makes the report of a child started by the tool call of an id.
+	reporter func(callID, description string) SubagentReport
+
 	// Background-child pool (phase 3, spec/subagents.md 5.6). Handles live
 	// in memory only: one process per turn means they die with the turn,
 	// so there is nothing to persist and nothing to reap beyond cancelling.
@@ -184,6 +213,24 @@ func (t *SubagentTool) SetRegistry(r *Registry) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.registry = r
+}
+
+// SetReporter has each child report what it does, to a client that shows it:
+// make is given the id of the tool call starting the child and what it is for,
+// and is the child's report, nil for none.
+func (t *SubagentTool) SetReporter(make func(callID, description string) SubagentReport) {
+	t.reporter = make
+}
+
+// reportOf is the report of a child the running tool call starts. A call made
+// through Batch has no id of its own that a client knows, so nothing could show
+// what it reports.
+func (t *SubagentTool) reportOf(ctx context.Context, description string) SubagentReport {
+	id := CallIDFrom(ctx)
+	if t.reporter == nil || id == "" {
+		return nil
+	}
+	return t.reporter(id, description)
 }
 
 // SetRunner injects the child-loop driver (the parent Runner).
@@ -399,6 +446,7 @@ func (t *SubagentTool) Call(ctx context.Context, args json.RawMessage) (any, err
 		return nil, err
 	}
 
+	report := t.reportOf(ctx, parsed.Description)
 	sess, result, err := runner.StartSubagent(callCtx, SubagentRunParams{
 		System:      prep.system,
 		Prompt:      parsed.Prompt,
@@ -406,8 +454,12 @@ func (t *SubagentTool) Call(ctx context.Context, args json.RawMessage) (any, err
 		MaxIters:    maxChild,
 		Registry:    prep.childReg,
 		ToolCtx:     prep.childCtx,
+		Report:      report,
 	})
 	if err != nil {
+		if report != nil {
+			report.Ended(SubagentEndFailed, SubagentRunResult{Text: err.Error()})
+		}
 		// A child that exhausts its budget or its deadline returns its
 		// partial summary as a labeled result, not an error — half a
 		// transcript beats a bare error. Only a failure to run at all is
@@ -419,6 +471,9 @@ func (t *SubagentTool) Call(ctx context.Context, args json.RawMessage) (any, err
 		result = t.enforceSchema(callCtx, runner, sess, prep.capture, result)
 	} else {
 		result = t.nudgeEmptySummary(callCtx, runner, sess, result)
+	}
+	if report != nil {
+		report.Ended(SubagentEndCompleted, result)
 	}
 
 	t.finishCollect(prep.childCtx)

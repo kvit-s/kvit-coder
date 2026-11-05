@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/llm"
 	"github.com/kvit-s/kvit-coder/internal/procs"
@@ -31,6 +33,9 @@ import (
 //
 // session/load replays a session's history through the same function, so
 // the client draws a reopened session the way it drew it live.
+//
+// A client that declares clientCapabilities._meta.kvit.subagentWork is also
+// told what each subagent does (subagentReporter).
 type turnReporter struct {
 	a         *acpAgent
 	s         *acpSession
@@ -46,6 +51,9 @@ type turnReporter struct {
 
 	calls   map[string]*reportedCall
 	current string // the tool call running now
+	// parent is the id of the call that started the subagent this reports,
+	// "" for the turn's own loop.
+	parent string
 }
 
 // reportedCall is a tool call the client has been told about.
@@ -71,7 +79,92 @@ func (r *turnReporter) update(u map[string]any) {
 	if r.a.conn == nil {
 		return
 	}
+	if r.parent != "" {
+		u["_meta"] = map[string]any{"kvit": map[string]any{"parentToolCallId": r.parent}}
+	}
 	_ = r.a.conn.Notify("session/update", map[string]any{"sessionId": r.s.id, "update": u})
+}
+
+// subagentReporter tells the client what one subagent does, which the
+// protocol has no words for. Its messages and calls are reported as the turn's
+// are, each update with the call that started it in its _meta:
+//
+//	"_meta":{"kvit":{"parentToolCallId":"call_01…"}}
+//
+// and where it stands, when it starts, after each request and when it ends, in
+// an update of its own:
+//
+//	{"sessionUpdate":"kvit_subagent_update","toolCallId":"call_01…",
+//	 "state":"running","tokens":1200,"elapsedMs":3400}
+//
+// where state is running, completed, failed or stopped, and the last one has
+// "report" too, cut as a call's result is. Its child is not recorded in the
+// session, so session/load has none of this to replay.
+type subagentReporter struct {
+	*turnReporter
+	// top is the turn's reporter, for the updates that are not the subagent's
+	// own work.
+	top     *turnReporter
+	started time.Time
+	// tokens is the most recent count: Usage comes from the child's goroutine,
+	// and Ended from whichever ends it.
+	tokens atomic.Int64
+}
+
+func (r *turnReporter) subagentReport(callID, _ string) tools.SubagentReport {
+	c := &subagentReporter{top: r, started: time.Now(), turnReporter: &turnReporter{
+		a:         r.a,
+		s:         r.s,
+		ctx:       r.ctx,
+		workspace: r.workspace,
+		registry:  r.registry,
+		toolCtx:   r.toolCtx,
+		calls:     map[string]*reportedCall{},
+		parent:    callID,
+	}}
+	c.standing("running", "")
+	return c
+}
+
+// standing tells the client where the subagent stands.
+func (c *subagentReporter) standing(state, report string) {
+	u := map[string]any{
+		"sessionUpdate": "kvit_subagent_update",
+		"toolCallId":    c.parent,
+		"state":         state,
+		"tokens":        c.tokens.Load(),
+		"elapsedMs":     time.Since(c.started).Milliseconds(),
+	}
+	if report != "" {
+		if len(report) > reportedResultLimit {
+			report = report[:reportedResultLimit] + "\n[… cut here; the model had the whole result]"
+		}
+		u["report"] = report
+	}
+	c.top.update(u)
+}
+
+// Messages tells the client what the child's loop has produced.
+func (c *subagentReporter) Messages(batch []llm.Message) error {
+	c.observe(batch)
+	return nil
+}
+
+// ToolStart tells the client a call of the child's is starting.
+func (c *subagentReporter) ToolStart(name string, tc llm.ToolCall) { c.toolStart(name, tc) }
+
+// Usage tells the client the tokens the child has used so far.
+func (c *subagentReporter) Usage(promptTokens, completionTokens int) {
+	c.tokens.Store(int64(promptTokens + completionTokens))
+	c.standing("running", "")
+}
+
+// Ended tells the client how the child ended, and what it reported.
+func (c *subagentReporter) Ended(state string, result tools.SubagentRunResult) {
+	if tokens := result.PromptTokens + result.CompletionTokens; tokens > 0 {
+		c.tokens.Store(int64(tokens))
+	}
+	c.standing(state, result.Text)
 }
 
 func textContent(text string) map[string]any {

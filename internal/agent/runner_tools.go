@@ -507,7 +507,7 @@ func (r *Runner) executeToolWithTimeout(
 	// Time spent waiting for a person to answer a prompt is not the tool
 	// being slow, so it does not count towards the timeout.
 	promptWaitBefore := r.toolCtx.PromptWait()
-	toolResult, toolErr := tool.Call(toolCtx, normalizedArgs)
+	toolResult, toolErr := tool.Call(tools.WithCallID(toolCtx, tc.ID), normalizedArgs)
 	waitedOnPerson := r.toolCtx.PromptWait() - promptWaitBefore
 
 	if applied15s && toolCtx.Err() == context.DeadlineExceeded &&

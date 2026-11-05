@@ -76,6 +76,14 @@ and writes its output into its tool result.
   `session/request_permission`, offering "Allow once", "Allow for this
   session" and "Refuse". The answers that would write a permanent grant are
   not offered.
+- When the client declares `_meta.kvit.subagentWork` in `initialize`, it is told
+  what each subagent does: the child's messages and calls as the turn's are
+  reported, each update with the call that started it in
+  `_meta.kvit.parentToolCallId`, and a `kvit_subagent_update` with that call's
+  `toolCallId`, `state` (`running`, `completed`, `failed` or `stopped`), `tokens`
+  and `elapsedMs` at the child's start, after each of its requests and at its
+  end, the last with `report`. A child started through `Batch` is not reported,
+  since no call the client knows stands for it.
 - When the client declares `elicitation.form` in `initialize`, the `Question`
   tool puts each call's questions to it as one `elicitation/create` form, a
   field per question (`q01`, `q02`, …): a choice for a question with options,

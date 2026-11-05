@@ -41,6 +41,9 @@ type Runner struct {
 	persist      func([]llm.Message) error
 	rollback     func(int) error
 	toolStart    func(internalName string, tc llm.ToolCall)
+	// usage is told the tokens used so far after each request, for a child
+	// whose report wants them; see tools.SubagentReport.
+	usage func(promptTokens, completionTokens int)
 	// compactor rewrites the context when it nears the model's window, and
 	// notice records something that happened to the turn. Both are set by a
 	// caller with a session; see SetCompactor and SetNotice.

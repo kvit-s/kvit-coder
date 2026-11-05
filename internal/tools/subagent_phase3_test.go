@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/kvit-s/kvit-coder/internal/config"
+	"github.com/kvit-s/kvit-coder/internal/llm"
 )
 
 // gateStubRunner is a SubRunner whose children stay running until released,
@@ -576,3 +577,101 @@ func TestSubagentUnknownHandle(t *testing.T) {
 }
 
 var _ = json.Marshal
+
+// reportSpy is a SubagentReport that keeps how its child ended.
+type reportSpy struct {
+	mu     sync.Mutex
+	call   string
+	ended  []string
+	result SubagentRunResult
+}
+
+func (s *reportSpy) Messages([]llm.Message) error   { return nil }
+func (s *reportSpy) ToolStart(string, llm.ToolCall) {}
+func (s *reportSpy) Usage(int, int)                 {}
+func (s *reportSpy) Ended(state string, r SubagentRunResult) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ended = append(s.ended, state)
+	s.result = r
+}
+
+func (s *reportSpy) endedStates() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.ended...)
+}
+
+// A child's report is named by the call that started the child and told how
+// it ended, however that was; a call the client does not know of has none.
+func TestSubagentReportIsToldHowAChildEnded(t *testing.T) {
+	cfg := &config.Config{}
+	gate := newGateStubRunner()
+	gate.fail["task C"] = true
+	tool, reg := phase3Fixture(t, cfg, gate)
+	reports := map[string]*reportSpy{}
+	var mu sync.Mutex
+	tool.SetReporter(func(callID, description string) SubagentReport {
+		mu.Lock()
+		defer mu.Unlock()
+		spy := &reportSpy{call: callID}
+		reports[description] = spy
+		return spy
+	})
+	start := func(callID, description string) string {
+		t.Helper()
+		res, err := reg.Get("Subagent.start").Call(WithCallID(context.Background(), callID), mustJSON(map[string]any{
+			"description": description, "prompt": "work",
+		}))
+		if err != nil {
+			t.Fatalf("start %s: %v", description, err)
+		}
+		return res.(map[string]any)["handle"].(string)
+	}
+	ended := func(description string) []string {
+		t.Helper()
+		mu.Lock()
+		spy := reports[description]
+		mu.Unlock()
+		if spy == nil {
+			t.Fatalf("%s has no report", description)
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for len(spy.endedStates()) == 0 && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		return spy.endedStates()
+	}
+
+	start("call_a", "task A")
+	gate.releaseDesc("task A")
+	if got := ended("task A"); len(got) != 1 || got[0] != SubagentEndCompleted {
+		t.Errorf("a finished child's report was told %v", got)
+	}
+	if reports["task A"].call != "call_a" || reports["task A"].result.Text != "result task A" {
+		t.Errorf("its report: %+v", reports["task A"])
+	}
+
+	b := start("call_b", "task B")
+	if _, err := reg.Get("Subagent.kill").Call(context.Background(), mustJSON(map[string]any{"handle": b})); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+	if got := ended("task B"); len(got) != 1 || got[0] != SubagentEndStopped {
+		t.Errorf("a killed child's report was told %v", got)
+	}
+
+	start("call_c", "task C")
+	if got := ended("task C"); len(got) != 1 || got[0] != SubagentEndFailed {
+		t.Errorf("a failed child's report was told %v", got)
+	}
+
+	// Through Batch, or called directly, no client knows the call.
+	startChild(t, reg, "task D", "work")
+	gate.releaseDesc("task D")
+	mu.Lock()
+	_, reported := reports["task D"]
+	mu.Unlock()
+	if reported {
+		t.Error("a child with no known call has a report")
+	}
+}
