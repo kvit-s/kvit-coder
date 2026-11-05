@@ -1,0 +1,14 @@
+{
+    "runners": [
+        {
+            "command": "./scripts/tag-release.sh --patch -m \"release patch\"",
+            "id": "release-patch",
+            "label": "release-patch"
+        },
+        {
+            "command": "./scripts/tag-release.sh --minor -m \"release minor\"",
+            "id": "release-minor",
+            "label": "release-minor"
+        }
+    ]
+}
