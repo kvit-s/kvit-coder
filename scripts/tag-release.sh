@@ -18,19 +18,26 @@ set -euo pipefail
 # annotated ("v0.7.1: <message>"), matching the existing tags, and the push
 # is of the tag only, which is what CI listens for.
 #
-# By default the script refuses a dirty tree (like scripts/release.sh),
-# refuses when HEAD already carries a version tag, shows the commits since
-# the previous tag, runs go test ./... as a sanity check, asks for
-# confirmation, then creates and pushes the tag.
+# The script refuses a dirty tree (like scripts/release.sh), refuses when
+# HEAD already carries a version tag, shows the commits since the previous
+# tag, runs go test ./... as a sanity check, then creates and pushes the tag.
+#
+# It never asks anything, because it is run from Kvit Works' command buttons,
+# where nobody can answer: running it is the decision to release. Use
+# --dry-run to see what it would do. Git and ssh are told not to prompt
+# either, so a missing credential fails with an error instead of waiting, and
+# a failed push removes the local tag so the command can simply be run again.
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT"
+
+export GIT_TERMINAL_PROMPT=0
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o BatchMode=yes"
 
 kind=""
 explicit=""
 message=""
 push=1
-confirm=1
 verify=1
 fetch_tags=1
 
@@ -47,7 +54,6 @@ usage: scripts/tag-release.sh (--patch|--minor|--major|--set VERSION) [options]
                        (default: first line of commits since last tag,
                        or just vX.Y.Z when there is nothing to summarize)
   --no-push        create the tag locally without pushing it
-  -y, --yes        skip the confirmation prompt
   --no-verify      skip go test ./... before tagging
   --no-fetch       skip git fetch origin --tags before computing the number
   -h, --help       show this help
@@ -80,7 +86,6 @@ while [ $# -gt 0 ]; do
             message="$1" ;;
         --message=*) message="${1#--message=}" ;;
         --no-push) push=0 ;;
-        -y|--yes) confirm=0 ;;
         --no-verify) verify=0 ;;
         --no-fetch) fetch_tags=0 ;;
         --dry-run) dry_run=1 ;;
@@ -173,22 +178,13 @@ if [ "$dry_run" -eq 1 ]; then
     exit 0
 fi
 
-if [ "$confirm" -eq 1 ]; then
-    if [ "$push" -eq 1 ]; then
-        printf 'create tag %s and push it to origin (CI releases from it)? [y/N] ' "$next"
-    else
-        printf 'create tag %s locally (no push)? [y/N] ' "$next"
-    fi
-    read -r answer
-    case "$answer" in
-        y|Y|yes|YES) ;;
-        *) echo "aborted"; exit 1 ;;
-    esac
-fi
-
 git tag -a "$next" -m "$tagline"
 if [ "$push" -eq 1 ]; then
-    git push origin "$next"
+    if ! git push origin "$next"; then
+        git tag -d "$next" >/dev/null
+        echo "tag-release.sh: push failed, removed the local tag $next; nothing was released" >&2
+        exit 1
+    fi
     echo "pushed $next; CI builds the release:"
     echo "  https://github.com/kvit-s/kvit-coder/releases/tag/$next"
 else
