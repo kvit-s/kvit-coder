@@ -13,7 +13,7 @@ Discovered tools are namespaced `mcp.<server>.<tool>` (e.g. `mcp.git.git_status`
 mcp:
   enabled: true
   startup_timeout: 20        # seconds to connect + list tools, per server
-  call_timeout: 120          # default per-tool-call deadline (overridable per server)
+  call_timeout: 120          # seconds a call may go without reply or progress (overridable per server)
   confirm: "ask_once"        # block | ask_once | ask_always | trust
   sanitize_schemas: false    # flatten $ref/oneOf/allOf for strict tool-calling templates
   servers:
@@ -39,7 +39,7 @@ mcp:
 |-----------|-------------|
 | `enabled` | Master toggle for the MCP client |
 | `startup_timeout` | Per-server connect + `tools/list` deadline, seconds (default 20) |
-| `call_timeout` | Default per-call deadline, seconds (default 120) |
+| `call_timeout` | Seconds a tool call may go without a reply or a progress notification from its server before it is given up on (default 120) |
 | `confirm` | Default trust policy (see below); default `ask_once` |
 | `sanitize_schemas` | Strip JSON Schema constructs (`$ref`, `oneOf`, `allOf`, …) some grammar-constrained templates reject (default false) |
 
@@ -70,7 +70,9 @@ In a headless/benchmark run with no controlling terminal, `ask_*` falls back to 
 
 A server whose tools are all removed by `tools.allow` / `tools.deny` has its instructions left out. Instructions that change from turn to turn, such as ones carrying a timestamp, change the system prompt and make the endpoint's prompt cache miss on that turn's first request.
 
-**Behavior notes.** Connections are made concurrently at startup; a server that fails or times out is logged and skipped, never fatal. MCP calls are exempt from the 15s blanket tool timeout and use `call_timeout` instead. Large text results are spilled to a temp file with a truncated preview; binary/image blocks are summarized rather than inlined. A server tool reporting an error is recoverable (the model can retry differently); a transport failure is not.
+**Behavior notes.** Connections are made concurrently at startup; a server that fails or times out is logged and skipped, never fatal. MCP calls are exempt from the 15s blanket tool timeout and use `call_timeout` instead.
+
+**Long calls and cancellation.** Every `tools/call` carries a progress token in `_meta.progressToken`, and each `notifications/progress` the server sends with that token restarts the call's `call_timeout`. A server that reports progress can therefore keep a call open as long as it needs, for example while a person answers a question, whereas a server that says nothing is given up on after `call_timeout`. When kvit-coder stops waiting for a request (the time ran out, or the turn was stopped), it sends `notifications/cancelled` with the request's id and a reason, so the server can stop the work. Large text results are spilled to a temp file with a truncated preview; binary/image blocks are summarized rather than inlined. A server tool reporting an error is recoverable (the model can retry differently); a transport failure is not.
 
 ## Project instructions
 

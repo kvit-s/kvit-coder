@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // httpClient speaks JSON-RPC 2.0 over the MCP "streamable HTTP" transport: one
@@ -58,9 +59,26 @@ func newHTTPClient(url string, headers []string, logger Logger) (*httpClient, er
 	return c, nil
 }
 
-// Call performs a single request/response POST.
+// cancelPostTimeout bounds the POST that tells a server a request was given
+// up on, so an unreachable server cannot hold the caller after its own wait
+// has already ended.
+const cancelPostTimeout = 5 * time.Second
+
+// Call performs a single request/response POST. When the context ends before
+// the response does, the request is cancelled with the server: the
+// specification says a dropped HTTP connection is not to be read as a
+// cancellation, so it takes a notifications/cancelled of its own.
 func (c *httpClient) Call(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	id := c.nextID.Add(1)
+	result, err := c.call(ctx, id, method, params)
+	if err != nil && ctx.Err() != nil {
+		c.abandon(id, method, ctx)
+		return nil, context.Cause(ctx)
+	}
+	return result, err
+}
+
+func (c *httpClient) call(ctx context.Context, id int64, method string, params any) (json.RawMessage, error) {
 	body, err := json.Marshal(rpcRequest{JSONRPC: jsonrpcVersion, ID: &id, Method: method, Params: params})
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -80,13 +98,31 @@ func (c *httpClient) Call(ctx context.Context, method string, params any) (json.
 	}
 }
 
+// abandon sends notifications/cancelled for a request the client gave up on;
+// see rpcEndpoint.abandon, which does the same over stdio.
+func (c *httpClient) abandon(id int64, method string, ctx context.Context) {
+	if method == "initialize" {
+		return
+	}
+	postCtx, cancel := context.WithTimeout(context.Background(), cancelPostTimeout)
+	defer cancel()
+	err := c.notify(postCtx, "notifications/cancelled", cancelledParams{RequestID: id, Reason: cancelReason(ctx)})
+	if err != nil {
+		c.logger.Debug(fmt.Sprintf("mcp: could not cancel %s request %d: %v", method, id, err))
+	}
+}
+
 // Notify performs a fire-and-forget POST (no response body consumed).
 func (c *httpClient) Notify(method string, params any) error {
+	return c.notify(context.Background(), method, params)
+}
+
+func (c *httpClient) notify(ctx context.Context, method string, params any) error {
 	body, err := json.Marshal(rpcRequest{JSONRPC: jsonrpcVersion, Method: method, Params: params})
 	if err != nil {
 		return fmt.Errorf("marshal notification: %w", err)
 	}
-	resp, _, err := c.post(context.Background(), body, method)
+	resp, _, err := c.post(ctx, body, method)
 	if err != nil {
 		return err
 	}
@@ -147,7 +183,8 @@ func (c *httpClient) readJSONResponse(r io.Reader, id int64) (json.RawMessage, e
 }
 
 // readSSEResponse reads SSE events until it finds the JSON-RPC response that
-// matches our request id (servers may interleave notifications first).
+// matches our request id. Notifications the server sends on the stream before
+// it, such as progress for this call, go to the protocol layer.
 func (c *httpClient) readSSEResponse(r io.Reader, id int64) (json.RawMessage, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), stdioBufSize)
@@ -167,6 +204,9 @@ func (c *httpClient) readSSEResponse(r io.Reader, id int64) (json.RawMessage, er
 				return nil, true, msg.Error
 			}
 			return msg.Result, true, nil
+		}
+		if msg.ID == nil && msg.Method != "" {
+			c.handleNotification(msg.Method, msg.Params)
 		}
 		return nil, false, nil
 	}

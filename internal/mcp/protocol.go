@@ -23,6 +23,10 @@ type proto struct {
 	logger       Logger
 	negotiated   string // protocol version the server agreed to
 	instructions string // what the server said about using it; see instructions.go
+
+	// progress maps each tools/call in flight to the callback that restarts
+	// its silence timer; see progress.go.
+	progress progressListeners
 }
 
 // initializeParams / initializeResult model the handshake.
@@ -117,16 +121,31 @@ func (p *proto) ListTools(ctx context.Context) ([]ToolDescriptor, error) {
 type callToolParams struct {
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments"`
+	Meta      *requestMeta   `json:"_meta,omitempty"`
 }
 
 // CallTool invokes a tool and decodes its content blocks. A JSON-RPC protocol
 // error (server crashed, unknown method) is returned as a Go error; a tool-level
 // failure is conveyed via CallResult.IsError, left for the adapter to map.
+//
+// Every call carries a progress token. Progress the server sends with it goes
+// to the callback withProgress put in ctx, when there is one.
 func (p *proto) CallTool(ctx context.Context, name string, args map[string]any) (*CallResult, error) {
 	if args == nil {
 		args = map[string]any{}
 	}
-	raw, err := p.conn.Call(ctx, "tools/call", callToolParams{Name: name, Arguments: args})
+	onProgress := progressFrom(ctx)
+	if onProgress == nil {
+		onProgress = func() {}
+	}
+	token := p.progress.add(onProgress)
+	defer p.progress.remove(token)
+
+	raw, err := p.conn.Call(ctx, "tools/call", callToolParams{
+		Name:      name,
+		Arguments: args,
+		Meta:      &requestMeta{ProgressToken: token},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("tools/call %s: %w", name, err)
 	}
@@ -135,4 +154,16 @@ func (p *proto) CallTool(ctx context.Context, name string, args map[string]any) 
 		return nil, fmt.Errorf("tools/call %s: decode result: %w", name, err)
 	}
 	return &res, nil
+}
+
+// handleNotification acts on a notification from the server. The transports
+// pass every one they receive here. Only progress is acted on; the rest are
+// logged.
+func (p *proto) handleNotification(method string, params json.RawMessage) {
+	switch method {
+	case "notifications/progress":
+		p.progress.notify(params)
+	default:
+		p.logger.Debug(fmt.Sprintf("mcp: ignoring server notification method=%s", method))
+	}
 }

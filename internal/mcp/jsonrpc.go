@@ -57,6 +57,10 @@ type rpcResponse struct {
 type rpcEndpoint struct {
 	writeFn func([]byte) error
 	logger  Logger
+	// onNotification, when set, receives every notification the server sends.
+	// It runs on the transport's reader, so it must not block. Set it before
+	// the first message can arrive.
+	onNotification func(method string, params json.RawMessage)
 
 	mu       sync.Mutex
 	nextID   int64
@@ -77,7 +81,9 @@ func newRPCEndpoint(writeFn func([]byte) error, logger Logger) *rpcEndpoint {
 }
 
 // Call sends a request and blocks until the matching response arrives, the
-// context is cancelled, or the endpoint is closed.
+// context is cancelled, or the endpoint is closed. A request given up on because
+// its context ended is cancelled with the server (see abandon), and the error
+// returned is the context's cause.
 func (e *rpcEndpoint) Call(ctx context.Context, method string, params any) (json.RawMessage, error) {
 	e.mu.Lock()
 	if e.closed {
@@ -110,13 +116,39 @@ func (e *rpcEndpoint) Call(ctx context.Context, method string, params any) (json
 	}
 
 	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
 	case resp := <-ch:
-		if resp.err != nil {
-			return nil, resp.err
+		return resp.unwrap()
+	case <-ctx.Done():
+		// An answer that came in as the context ended is still the answer.
+		select {
+		case resp := <-ch:
+			return resp.unwrap()
+		default:
 		}
-		return resp.result, nil
+		e.abandon(id, method, ctx)
+		return nil, context.Cause(ctx)
+	}
+}
+
+func (r rpcResponse) unwrap() (json.RawMessage, error) {
+	if r.err != nil {
+		return nil, r.err
+	}
+	return r.result, nil
+}
+
+// abandon tells the server that the client no longer waits for request id, so
+// the server can stop the work and, for a question shown to a person, take the
+// question down. Without it the server keeps going and its answer goes to a
+// request nobody is waiting for. The specification forbids cancelling
+// initialize, so that request is left alone.
+func (e *rpcEndpoint) abandon(id int64, method string, ctx context.Context) {
+	if method == "initialize" {
+		return
+	}
+	err := e.Notify("notifications/cancelled", cancelledParams{RequestID: id, Reason: cancelReason(ctx)})
+	if err != nil {
+		e.logger.Debug(fmt.Sprintf("mcp: could not cancel %s request %d: %v", method, id, err))
 	}
 }
 
@@ -157,15 +189,32 @@ func (e *rpcEndpoint) dispatch(raw []byte) {
 		ch, ok := e.pending[*msg.ID]
 		e.mu.Unlock()
 		if ok {
-			ch <- rpcResponse{result: msg.Result, err: msg.Error}
+			deliver(ch, rpcResponse{result: msg.Result, err: msg.Error})
 		}
 		return
 	}
 
-	// Otherwise it's a notification or a server→client request. We don't act on
-	// either yet (tools-only milestone); just record it for debugging.
+	// A notification goes to the protocol layer, which acts on progress.
+	if msg.ID == nil && msg.Method != "" && e.onNotification != nil {
+		e.onNotification(msg.Method, msg.Params)
+		return
+	}
+
+	// Otherwise it's a server→client request. This client advertises no
+	// capability a server could ask it to use; just record it for debugging.
 	if msg.Method != "" {
 		e.logger.Debug(fmt.Sprintf("mcp: ignoring server message method=%s", msg.Method))
+	}
+}
+
+// deliver hands a response to a waiting Call without blocking. Each channel
+// holds one response; when it is already full -- a response arrived and then
+// the connection closed before Call read it, or Call gave up -- the later one
+// is dropped rather than left to block the reader forever.
+func deliver(ch chan rpcResponse, resp rpcResponse) {
+	select {
+	case ch <- resp:
+	default:
 	}
 }
 
@@ -183,6 +232,6 @@ func (e *rpcEndpoint) closeWith(err error) {
 	e.mu.Unlock()
 
 	for _, ch := range pending {
-		ch <- rpcResponse{err: &rpcError{Code: -1, Message: fmt.Sprintf("connection closed: %v", err)}}
+		deliver(ch, rpcResponse{err: &rpcError{Code: -1, Message: fmt.Sprintf("connection closed: %v", err)}})
 	}
 }

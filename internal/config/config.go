@@ -405,9 +405,12 @@ type MCPConfig struct {
 	// StartupTimeout is the per-server connect + tools/list deadline, in seconds
 	// (default 20). A server that exceeds it is logged and skipped, never fatal.
 	StartupTimeout int `yaml:"startup_timeout"`
-	// CallTimeout is the default per-tool-call deadline, in seconds (default 120),
-	// overridable per server. MCP calls are exempt from the agent loop's blanket
-	// 15s tool timeout and use this deadline instead.
+	// CallTimeout is how long, in seconds, a tool call may go without a reply
+	// or a progress notification from its server before it is given up on
+	// (default 120), overridable per server. Each progress notification
+	// restarts the wait, so a call whose server keeps reporting progress has
+	// no limit. MCP calls are exempt from the agent loop's blanket 15s tool
+	// timeout and use this limit instead.
 	CallTimeout int `yaml:"call_timeout"`
 	// Confirm is the default trust policy for MCP tool calls, overridable per
 	// server: "block" | "ask_once" | "ask_always" | "trust" (default "ask_once").
@@ -468,8 +471,8 @@ func (s *MCPServerConfig) GetTransport() string {
 	return s.Transport
 }
 
-// GetCallTimeout returns the per-call deadline for this server in seconds,
-// preferring the server override, then the group default, then 120.
+// GetCallTimeout returns how long a call to this server may stay silent, in
+// seconds, preferring the server override, then the group default, then 120.
 func (s *MCPServerConfig) GetCallTimeout(group *MCPConfig) int {
 	if s.CallTimeout > 0 {
 		return s.CallTimeout
@@ -494,7 +497,8 @@ func (m *MCPConfig) GetStartupTimeout() int {
 	return m.StartupTimeout
 }
 
-// GetCallTimeout returns the default per-call deadline in seconds, default 120.
+// GetCallTimeout returns how long a call may stay silent by default, in
+// seconds, default 120.
 func (m *MCPConfig) GetCallTimeout() int {
 	if m.CallTimeout <= 0 {
 		return 120

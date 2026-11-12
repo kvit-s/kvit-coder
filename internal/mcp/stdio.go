@@ -77,6 +77,7 @@ func newStdioClient(command string, args, extraEnv []string, cwd string, logger 
 	}
 	c.endpoint = newRPCEndpoint(c.write, logger)
 	c.proto = proto{conn: c.endpoint, logger: logger}
+	c.endpoint.onNotification = c.proto.handleNotification
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start %q: %w", command, err)

@@ -88,8 +88,8 @@ func (t *MCPTool) Check(ctx context.Context, args json.RawMessage) error {
 	return t.confirmer.Confirm(t.name, t.server, t.confirm, argsPreview(args))
 }
 
-// Call issues tools/call with the raw tool name under the per-call deadline and
-// maps the typed result back to something the model can read.
+// Call issues tools/call with the raw tool name under the call's silence limit
+// and maps the typed result back to something the model can read.
 func (t *MCPTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
 	var argMap map[string]any
 	if len(strings.TrimSpace(string(args))) > 0 {
@@ -98,12 +98,15 @@ func (t *MCPTool) Call(ctx context.Context, args json.RawMessage) (any, error) {
 		}
 	}
 
-	// Derive a deadline from the (un-capped) tool context. The agent loop
-	// exempts MCP tools from its blanket 15s timeout; this is their real bound.
+	// The agent loop exempts MCP tools from its blanket 15s timeout; this is
+	// their real bound. It limits how long the server may stay silent, not how
+	// long the call may take: each progress notification the server sends for
+	// the call restarts it (progress.go), so a call waiting on a person goes on
+	// as long as the server keeps saying it is waiting.
 	callCtx := ctx
 	if t.callTimeout > 0 {
 		var cancel context.CancelFunc
-		callCtx, cancel = context.WithTimeout(ctx, t.callTimeout)
+		callCtx, cancel = withSilenceTimeout(ctx, t.callTimeout)
 		defer cancel()
 	}
 

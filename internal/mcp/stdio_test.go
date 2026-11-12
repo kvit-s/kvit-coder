@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,16 +27,31 @@ func TestHelperMCPServer(t *testing.T) {
 
 func runEchoServer() {
 	out := bufio.NewWriter(os.Stdout)
+	var outMu sync.Mutex
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
-	respond := func(id *int64, result any) {
-		resp := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
-		b, _ := json.Marshal(resp)
+	send := func(msg map[string]any) {
+		b, _ := json.Marshal(msg)
+		outMu.Lock()
+		defer outMu.Unlock()
 		_, _ = out.Write(b)
 		_ = out.WriteByte('\n')
 		_ = out.Flush()
 	}
+	respond := func(id *int64, result any) {
+		send(map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
+	}
+	text := func(s string) map[string]any {
+		return map[string]any{"content": []any{map[string]any{"type": "text", "text": s}}, "isError": false}
+	}
+
+	// What the "wait" and "report" tools share: the wait calls still running,
+	// the id of every wait call, and every cancellation received.
+	var mu sync.Mutex
+	running := map[int64]chan struct{}{}
+	var waitIDs []int64
+	var cancelled []cancelledParams
 
 	for scanner.Scan() {
 		var msg rpcMessage
@@ -43,6 +59,17 @@ func runEchoServer() {
 			continue
 		}
 		if msg.ID == nil { // notification
+			if msg.Method == "notifications/cancelled" {
+				var p cancelledParams
+				_ = json.Unmarshal(msg.Params, &p)
+				mu.Lock()
+				cancelled = append(cancelled, p)
+				if stop, ok := running[p.RequestID]; ok {
+					close(stop)
+					delete(running, p.RequestID)
+				}
+				mu.Unlock()
+			}
 			continue
 		}
 		switch msg.Method {
@@ -75,13 +102,55 @@ func runEchoServer() {
 			var p struct {
 				Name      string         `json:"name"`
 				Arguments map[string]any `json:"arguments"`
+				Meta      struct {
+					ProgressToken json.RawMessage `json:"progressToken"`
+				} `json:"_meta"`
 			}
 			_ = json.Unmarshal(msg.Params, &p)
-			text := fmt.Sprintf("echo: %v", p.Arguments["message"])
-			respond(msg.ID, map[string]any{
-				"content": []any{map[string]any{"type": "text", "text": text}},
-				"isError": false,
-			})
+			switch p.Name {
+			case "wait":
+				// Answers after ms milliseconds, sending progress every
+				// every_ms meanwhile when the call has a progress token, as
+				// Kvit Works' ask_user does. A cancelled call is not answered.
+				ms, _ := p.Arguments["ms"].(float64)
+				everyMS, _ := p.Arguments["every_ms"].(float64)
+				stop := make(chan struct{})
+				mu.Lock()
+				running[*msg.ID] = stop
+				waitIDs = append(waitIDs, *msg.ID)
+				mu.Unlock()
+				go func(id *int64, token json.RawMessage) {
+					done := time.After(time.Duration(ms) * time.Millisecond)
+					var tick <-chan time.Time
+					if everyMS > 0 && len(token) > 0 {
+						ticker := time.NewTicker(time.Duration(everyMS) * time.Millisecond)
+						defer ticker.Stop()
+						tick = ticker.C
+					}
+					for n := 1; ; n++ {
+						select {
+						case <-stop:
+							return
+						case <-tick:
+							send(map[string]any{"jsonrpc": "2.0", "method": "notifications/progress",
+								"params": map[string]any{"progressToken": token, "progress": n}})
+						case <-done:
+							mu.Lock()
+							delete(running, *id)
+							mu.Unlock()
+							respond(id, text("waited"))
+							return
+						}
+					}
+				}(msg.ID, p.Meta.ProgressToken)
+			case "report":
+				mu.Lock()
+				b, _ := json.Marshal(map[string]any{"waits": waitIDs, "cancelled": cancelled})
+				mu.Unlock()
+				respond(msg.ID, text(string(b)))
+			default:
+				respond(msg.ID, text(fmt.Sprintf("echo: %v", p.Arguments["message"])))
+			}
 		}
 	}
 }
