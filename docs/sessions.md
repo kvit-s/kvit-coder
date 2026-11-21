@@ -46,6 +46,24 @@ its file is, and the model reads the file with `Read`. Files in `tmp/` are remov
 a day after they were written, whereas files in `pastes/` stay for as long as the
 session does, so a paste can still be read when the session is picked up later.
 
+## After a turn that stopped
+
+A turn writes the model's tool calls to `history.jsonl` before it runs them and
+each tool's result after, so a turn whose process stopped in between (a crash, a
+killed process, a power cut) leaves calls with no result, and model APIs refuse
+a history like that ("No tool output found for function call ..."). The next
+turn in the session, or `--compact`, first appends a result for each such call
+saying that kvit-coder stopped before the call returned, so the tool did not run
+or did not finish and none of its output was kept, and prints a `[warn]` line
+saying so. The model reads that result in place of the output and can run the
+tool again.
+
+A call that is followed by later messages, which only a session continued by a
+version without this repair can have, is answered in each request instead,
+right after the call, since the history file is never rewritten. An endpoint
+that still refuses a history because a tool call and its result do not pair up
+ends the turn at once, without retrying.
+
 ## When a session outgrows the context window
 
 Every request sends the whole conversation, and a long session eventually

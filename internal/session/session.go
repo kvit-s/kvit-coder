@@ -368,6 +368,34 @@ func (s *Session) AppendMessages(messages []llm.Message) error {
 	return nil
 }
 
+// AnswerStoppedCalls records a result for each tool call at the end of the
+// conversation that has none, and returns what it recorded.
+//
+// A turn records the model's tool calls before it runs them and each result
+// after, so a turn whose process stopped in between leaves its last calls
+// unanswered, and the endpoint refuses every later request in the session
+// until they are. The result says the tool did not run, or did not finish,
+// because kvit-coder stopped (llm.StoppedCallNote), and it is appended where
+// the missing result would have been: straight after the calls, before the
+// next turn's settings line, so it belongs to the turn that stopped.
+//
+// It is called while the session is locked for a turn, so the calls cannot
+// belong to a turn that is still running.
+func (s *Session) AnswerStoppedCalls() ([]llm.Message, error) {
+	tl, err := s.Timeline()
+	if err != nil {
+		return nil, err
+	}
+	results := llm.LastCallsUnanswered(tl.Messages)
+	if len(results) == 0 {
+		return nil, nil
+	}
+	if err := s.AppendMessages(results); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
 // Rollback records that the loop discarded the last n messages. The messages
 // stay in the file — it is append-only — and Load skips them.
 func (s *Session) Rollback(n int) error {

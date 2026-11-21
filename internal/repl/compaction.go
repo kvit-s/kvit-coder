@@ -75,6 +75,7 @@ func CompactSession(ctx context.Context, runner *agent.Runner, writer *ui.Writer
 	if comp == nil || sess == nil {
 		return errors.New("compaction needs a session")
 	}
+	answerStoppedCalls(sess, writer)
 	loaded, tl, err := sess.LoadContext()
 	if err != nil {
 		return err

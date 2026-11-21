@@ -55,6 +55,10 @@ func RunTurn(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 	var timeline *session.Timeline
 	if sess != nil {
 		sessionName = sess.Name()
+		// A turn that stopped between recording its tool calls and their
+		// results is answered for first, so the history this turn loads,
+		// compacts and sends is one the endpoint accepts.
+		answerStoppedCalls(sess, writer)
 		// The context rather than the whole history: a compaction recorded in
 		// it replaces older parts with shorter ones (docs/compaction.md).
 		loaded, tl, err := sess.LoadContext()
@@ -309,6 +313,24 @@ func RunTurn(ctx context.Context, runner *agent.Runner, writer *ui.Writer, cfg *
 	// A turn the loop could not finish has already said why on screen. It is
 	// in the result rather than reprinted, so the caller can exit non-zero.
 	return result, nil
+}
+
+// answerStoppedCalls records a result for each tool call the session's last
+// turn made and never answered, because its process stopped before the tool
+// ran or finished (Session.AnswerStoppedCalls), and says so. Without them the
+// endpoint refuses the history: "No tool output found for function call".
+func answerStoppedCalls(sess *session.Session, writer *ui.Writer) {
+	results, err := sess.AnswerStoppedCalls()
+	if err != nil {
+		writer.Error(fmt.Sprintf("cannot record the last turn's unanswered tool calls as not run: %v", err))
+		return
+	}
+	switch n := len(results); {
+	case n == 1:
+		writer.Warn(fmt.Sprintf("the last turn stopped before its %s call had a result; recorded it as not run", results[0].Name))
+	case n > 1:
+		writer.Warn(fmt.Sprintf("the last turn stopped before %d tool calls had results; recorded them as not run", n))
+	}
 }
 
 // isWakeTurn reports whether this turn carries no user prompt: the pending

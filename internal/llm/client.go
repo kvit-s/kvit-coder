@@ -284,6 +284,10 @@ func isPermanent500Error(respBody []byte) bool {
 // OpenAI chat completions by default, or the Responses API when the endpoint
 // only serves the model there.
 func (c *Client) Chat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	// A tool call left without a result by a turn that stopped would have
+	// every request refused; it is sent with a result saying so.
+	req.Messages = AnswerUnansweredCalls(req.Messages)
+
 	switch c.backend {
 	case BackendResponses:
 		return c.chatViaResponses(ctx, req)

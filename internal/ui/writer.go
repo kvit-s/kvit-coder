@@ -476,8 +476,13 @@ func visibleLen(s string) int {
 
 // wrapLine word-wraps one logical line (no newlines) to width, keeping the
 // first-line prefix and indenting wrapped continuations with contPrefix.
-// A single word longer than the width is split mid-word so a long path or
-// URL cannot push one display line off the side of the terminal.
+// A word that does not fit on a line of its own is split mid-word, so a long
+// path or URL cannot push one display line off the side of the terminal.
+//
+// Each piece cut from a word is at most what is left of the line and at most
+// what is left of the word, and at least one character, so no input can cut
+// past the end of the word or stop the loop from moving on. A prefix wider
+// than the line keeps the line it is on and the text starts below it.
 func wrapLine(prefix, text string, width int, contPrefix string) []string {
 	if visibleLen(prefix+text) <= width {
 		return []string{prefix + text}
@@ -488,47 +493,47 @@ func wrapLine(prefix, text string, width int, contPrefix string) []string {
 	}
 	var lines []string
 	cur := prefix
-	curIsPrefix := true
+	bare := true // cur is a prefix with no text after it yet
 	flush := func() {
 		lines = append(lines, cur)
 		cur = contPrefix
-		curIsPrefix = true
+		bare = true
+	}
+	// When the prefix itself already fills the line (a long "● (status)" on
+	// a narrow terminal), start the text below it rather than emitting an
+	// overlong first line.
+	if visibleLen(prefix) >= width {
+		flush()
 	}
 	for _, wd := range words {
-		// Split an overlong word into width-sized chunks first.
-		for visibleLen(wd) > width-visibleLen(contPrefix) {
-			if !curIsPrefix || visibleLen(cur) > visibleLen(prefix) {
-				flush()
-			}
-			room := width - visibleLen(cur)
-			if room <= 0 {
-				flush()
-				room = width - visibleLen(cur)
-			}
-			runes := []rune(wd)
-			cur += string(runes[:room])
-			wd = string(runes[room:])
-			flush()
-		}
-		sep := ""
-		if !curIsPrefix || visibleLen(cur) > visibleLen(prefix) {
-			sep = " "
-		}
-		// When the prefix itself already fills the line (a long
-		// "● (status)" on a narrow terminal), start the text below it
-		// rather than emitting an overlong first line.
-		if curIsPrefix && visibleLen(prefix) >= width {
-			flush()
+		sep := " "
+		if bare {
 			sep = ""
 		}
 		if visibleLen(cur+sep+wd) <= width {
 			cur += sep + wd
-			curIsPrefix = false
+			bare = false
 			continue
 		}
-		flush()
-		cur += wd
-		curIsPrefix = false
+		// The word does not fit after what the line already has, so it starts
+		// the next line. Only a word too wide for a continuation line as well
+		// is cut, and that from where it stands, the first line's bare prefix
+		// included; each piece fills what is left of a line.
+		if !bare || visibleLen(contPrefix+wd) <= width {
+			flush()
+		}
+		runes := []rune(wd)
+		for {
+			room := max(1, width-visibleLen(cur))
+			if len(runes) <= room {
+				cur += string(runes)
+				bare = false
+				break
+			}
+			cur += string(runes[:room])
+			runes = runes[room:]
+			flush()
+		}
 	}
 	lines = append(lines, cur)
 	return lines
@@ -842,9 +847,23 @@ func (w *Writer) ToolCall(name, argsDisplay, context string) {
 	}
 	_ = context
 	w.clearProgressLine()
-	for _, plain := range buildToolLines(name, argsDisplay) {
+	for _, plain := range toolLinesOrPlain(name, argsDisplay) {
 		fmt.Fprintln(w.out(), w.paint(ansiGray, plain))
 	}
+}
+
+// toolLinesOrPlain is buildToolLines, or the call on one unwrapped line when
+// laying it out fails. A tool call is printed just before the tool runs, so a
+// fault in the layout must cost the layout and not the run: wrapLine once
+// panicked on a long Shell command and ended a turn with exit status 2 before
+// the command ran.
+func toolLinesOrPlain(name, argsDisplay string) (lines []string) {
+	defer func() {
+		if recover() != nil {
+			lines = []string{stepIndent + name + "[" + SingleLine(argsDisplay, maxToolArgChars) + "]"}
+		}
+	}()
+	return buildToolLines(name, argsDisplay)
 }
 
 // progressLine accumulates the current progress output

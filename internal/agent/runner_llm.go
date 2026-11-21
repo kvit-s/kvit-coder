@@ -150,6 +150,20 @@ func (r *Runner) handleLLMError(ctx context.Context, err error, state *runState,
 		return result, nil
 	}
 
+	// A history whose tool calls and results do not pair up is refused again
+	// however often it is sent, and the retries below would each append a
+	// "[System: Server error occurred...]" message to the session for nothing.
+	if llm.IsUnpairedToolCall(err) {
+		r.writer.Error(fmt.Sprintf("the endpoint refused the history, not retried: %s", ui.SingleLine(errStr, 160)))
+		r.logger.Error("history refused: unpaired tool call", err)
+		state.failure = fmt.Errorf("history refused: a tool call and its result do not pair up: %w", err)
+		state.agentStats.TotalAgentTime = time.Since(state.requestStartTime)
+		state.agentStats.TotalLLMTime = state.totalLLMTime
+		state.agentStats.TotalToolTime = state.totalToolTime
+		result.shouldBreak = true
+		return result, nil
+	}
+
 	// Handle 400 errors (likely context overflow)
 	if strings.Contains(errStr, "API error 400") && state.contextOverflowRetries < maxContextOverflowRetries {
 		state.contextOverflowRetries++

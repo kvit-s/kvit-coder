@@ -420,7 +420,18 @@ func displayTimeout(args map[string]any) (int, bool) {
 // displayToolCall formats and displays a tool call to the user.
 // The step header already showed the context share, so only the call itself
 // is printed here, indented and gray.
+//
+// It runs between recording the model's call and running the tool, so a panic
+// here used to end the process with the call written and its result never
+// produced. Printing is not worth a turn: a fault in it is logged, the line is
+// left out, and the tool runs.
 func (r *Runner) displayToolCall(internalName string, tc llm.ToolCall) {
+	defer func() {
+		if p := recover(); p != nil {
+			r.logger.Error("printing a tool call failed", fmt.Errorf("%s: %v", internalName, p))
+			r.writer.Warn(fmt.Sprintf("could not print the %s call (%v); running it", internalName, p))
+		}
+	}()
 	var args map[string]any
 	_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
 

@@ -1,0 +1,43 @@
+IN="/d/kvit-hub-rehearsal-2/settings/jobs/20261120-161851-018.scratch/echo-ha-reports.txt"; OUT="/d/kvit-hub-rehearsal-2/settings/jobs/20261120-161851-018.scratch/echo-ha-blocks.txt"; /usr/bin/rm -f "$OUT"; /usr/bin/python3 -c "
+import re
+text=open(r'$IN',encoding='utf-8',errors='replace').read()
+# Split by day markers
+import re
+days=re.split(r'==================== (\d{4}-\d{2}-\d{2}) ====================',text)
+# days[0] empty, then pairs
+out=open(r'$OUT','w',encoding='utf-8')
+for i in range(1,len(days),2):
+    d=days[i]; body=days[i+1] if i+1<len(days) else ''
+    # Find echo-ha blocks: headings containing echo-ha or Block sections that mention echo-ha in table? Simpler: find all '## Block.*' sections where body contains echo-ha relevant, plus table lines
+    # Extract lines with echo-ha and surrounding block sections
+    lines=body.splitlines()
+    # Find block headings
+    for idx,line in enumerate(lines):
+        if line.startswith('## Block') and ('echo-ha' in line.lower() or 'echo-ha' in ''.join(lines[idx:idx+5]).lower() or 'counter-light' in line.lower() or 'voice' in line.lower() or 'Show' in line):
+            pass
+    # Simpler: extract any '## Block' section whose heading or first 10 lines mention echo-ha/Echo Show/voice pipeline etc, plus B-sections
+    # We'll just extract sections whose heading contains echo-ha explicitly, plus the table row
+    out.write(f'===== {d} =====\n')
+    # table rows with echo-ha
+    for line in lines:
+        if 'echo-ha' in line:
+            out.write(line+'\n')
+    out.write('\n')
+    # Now extract full block sections headed with echo-ha
+    cur=None; buf=[]
+    for line in lines:
+        if line.startswith('## Block') or line.startswith('## B'):
+            if buf and cur and 'echo-ha' in cur.lower():
+                out.write('\n'.join(buf)+'\n\n')
+            cur=line; buf=[line]
+        else:
+            if cur is not None:
+                buf.append(line)
+                if len(buf)>200:
+                    # flush if too long? keep
+                    pass
+    if buf and cur and 'echo-ha' in cur.lower():
+        out.write('\n'.join(buf)+'\n\n')
+    out.write('\n')
+print('done')
+"; /usr/bin/wc -l "$OUT"; /usr/bin/cat "$OUT" | /usr/bin/head -n 400
